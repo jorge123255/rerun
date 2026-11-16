@@ -1,11 +1,12 @@
 import { z } from 'zod'
-import { desktopForemanIntakeCompleteInputSchema, desktopForemanIntakeSaveInputSchema, foremanChatRefSchema, industryHint, type DesktopForemanChatRef } from '@rerun/contracts'
+import { DESKTOP_GITHUB_PROJECT_LIMITS, desktopGithubProjectsEditSchema, desktopForemanIntakeCompleteInputSchema, desktopForemanIntakeSaveInputSchema, foremanChatRefSchema, industryHint, type DesktopForemanChatRef } from '@rerun/contracts'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopForeman } from '@/lib/desktop/server/foreman/binding'
 import { ownedForemanChat } from '@/lib/desktop/server/foreman/chat-store'
 import { createDesktopForemanIntakeBinding } from '@/lib/desktop/server/foreman/intake'
 import { desktopCompanyProfile } from '@/lib/desktop/server/company-profile/binding'
+import { desktopGithubProjects } from '@/lib/desktop/server/github-projects/binding'
 import { readDesktopSiteProfile } from '@/lib/desktop/server/company-profile/site-profile'
 import { assertDesktopCompanyProfileIntakeHints } from '@/lib/desktop/server/company-profile/intake-hints'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
@@ -21,6 +22,9 @@ const inputSchema = z.discriminatedUnion('action', [
     z.strictObject({ action: z.literal('decide-industry'), chat: foremanChatRefSchema, hint: z.string().trim().min(1).max(500) }),
     z.strictObject({ action: z.literal('analyze-site'), chat: foremanChatRefSchema, hint: z.string().trim().min(1).max(500) }),
     z.strictObject({ action: z.literal('site-profile'), chat: foremanChatRefSchema }),
+    z.strictObject({ action: z.literal('github-read'), chat: foremanChatRefSchema }),
+    z.strictObject({ action: z.literal('github-analyze'), chat: foremanChatRefSchema, links: z.string().max(DESKTOP_GITHUB_PROJECT_LIMITS.maxInput), again: z.boolean().optional() }),
+    z.strictObject({ action: z.literal('github-edit'), chat: foremanChatRefSchema, key: z.string().regex(/^[a-f0-9]{64}$/), edit: desktopGithubProjectsEditSchema }),
 ])
 
 /** The intake with its optional helpers for this chat: industry suggestion, website read, and the first name saved on this Mac. */
@@ -63,6 +67,15 @@ export async function POST(request: Request) {
                 const saved = (await service.read(chat)).session
                 const website = saved.draft.websiteSkipped ? null : saved.draft.companyUrl.trim() || null
                 return Response.json({ profile: await readDesktopSiteProfile(app.db, chat, website) }, { headers: { 'cache-control': 'no-store' } })
+            }
+            if (input.action === 'github-read' || input.action === 'github-analyze' || input.action === 'github-edit') {
+                // The owner's GitHub projects: public repositories read as data, and the owner's review of them.
+                const projects = desktopGithubProjects(runtime, app, chat)
+                const fresh = { headers: { 'cache-control': 'no-store' } }
+                if (input.action === 'github-read') return Response.json({ record: await projects.read(chat), message: null }, fresh)
+                assertDesktopWorkspaceAdmission(runtime)
+                if (input.action === 'github-edit') return Response.json({ record: await projects.edit(chat, input.key, input.edit), message: null }, fresh)
+                return Response.json(await projects.analyze(chat, input.links, { again: input.again }), fresh)
             }
             if (input.action === 'save') {
                 // An automatic value is accepted only when it is the current suggestion for these exact

@@ -24,7 +24,10 @@ import { desktopApp, assertDesktopProvider } from '../desktop/policy.js'
 import { claimDesktopSchedule, recordDesktopSchedule, finishDesktopSchedule, replayDesktopSchedule } from './desktop-schedule-state.js'
 import { DesktopPlanOutError, UsageWaitError, clearUsageWait, gateScheduledStart, listUsageWaits, markUsageWaitRunning, noteStillWaiting, parkSchedule, settleUsageWait, usageWaitDue, type UsageGateTarget, type UsageWait } from '../desktop/usage-gate.js'
 import { resolveRunModel } from '../agents/availability.js'
-import { desktopRoutineAutoDisabledSince } from '../desktop/routine-runs.js'
+import { countDesktopRoutineStartFailure, desktopRoutineAutoDisabledSince } from '../desktop/routine-runs.js'
+import { classifyRoutineStartFailure, isConflict, nameRoutineStartFailure as named, routineStartFailureCounts, routineStartStep as step } from '../desktop/routine-start-faults.js'
+import { announceDesktopRoutineAutoOff } from '../desktop/routine-auto-off-notice.js'
+import { nextCronRun } from '../schedules/next-run.js'
 
 type DesktopScheduleHooks = {
     /** Read CURRENT coworker identity, enabled state and explicit schedule grant; throw if unavailable. */
@@ -54,9 +57,9 @@ const inFlight = new Map<string, Promise<{ runId: string; sessionId: string }>>(
 
 export function fireSchedule(agentId: string, schedule: Schedule, opts?: FireOptions): Promise<{ runId: string; sessionId: string }> {
     let admission: number
-    try { admission = assertDesktopRunAdmission() } catch (error) { return Promise.reject(error) }
+    try { admission = assertDesktopRunAdmission() } catch (error) { return Promise.reject(named(error,'shutdown')) }
     const key = `${agentId}/${schedule.slug}`
-    if(stopped)return Promise.reject(new Error('Scheduler stopped'))
+    if(stopped)return Promise.reject(named(new Error('Scheduler stopped'),'shutdown'))
     const existing = inFlight.get(key)
     if (existing) {
         if (!desktopApp()) return existing
@@ -73,7 +76,7 @@ export function fireSchedule(agentId: string, schedule: Schedule, opts?: FireOpt
             }
             throw new Error('Task already active under another occurrence')
         }
-        const pending=existing.then(replay,replay)
+        const pending=existing.then(replay,replay).catch(error=>{throw named(error,'skipped')})
         preparing.add(pending)
         void pending.finally(()=>preparing.delete(pending)).catch(()=>{})
         return pending
@@ -98,14 +101,16 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
     const gated=desktopApp() && (opts?.markFired!==false || opts.usageResume===true)
     let gateTarget:UsageGateTarget|null=null
     try {
-        const check=()=>opts?.assertActive?.()
-        const authorize=async()=>{
+        // Every way out of here before a run starts is named, so a firing that could not start
+        // can be counted, or not, toward the routine's failures in a row (routine-start-faults.ts).
+        const check=()=>{try {opts?.assertActive?.()} catch(error) {throw named(error,'shutdown')}}
+        const authorize=()=>step('authorization',async()=>{
             check()
             if(desktopApp()) {
                 if(!desktopHooks)throw new Error('Desktop schedule integration unavailable')
                 await desktopHooks.authorize(agentId);check()
             }
-        }
+        })
         check();await authorize()
         if(desktopApp() && manualId) {
             const replay=await replayDesktopSchedule(agentId,schedule.slug,manualId);check();await authorize();check()
@@ -114,15 +119,15 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
         // Run now probes the exact definition the human reviewed; it never resumes
         // recurrence. Automatic occurrences still require the current enabled task.
         const requested = schedule
-        schedule = await readSchedule(agentId,schedule.slug);check()
+        schedule = await step('changed',()=>readSchedule(agentId,schedule.slug));check()
         if (desktopApp()) {
-            if (!schedule.enabled && (opts?.markFired !== false || requested.enabled !== false)) throw new HttpError(409, 'Task is paused. Refresh it before running a manual test.')
-            if (opts?.markFired === false && desktopScheduleDefinitionRevision(schedule) !== desktopScheduleDefinitionRevision(requested)) throw new HttpError(409, 'Task changed. Refresh it before running a manual test.')
-            if (opts?.markFired !== false && !isDue(schedule,new Date())) throw new HttpError(409, 'Task is no longer due')
+            if (!schedule.enabled && (opts?.markFired !== false || requested.enabled !== false)) throw named(new HttpError(409, 'Task is paused. Refresh it before running a manual test.'),'paused')
+            if (opts?.markFired === false && desktopScheduleDefinitionRevision(schedule) !== desktopScheduleDefinitionRevision(requested)) throw named(new HttpError(409, 'Task changed. Refresh it before running a manual test.'),'changed')
+            if (opts?.markFired !== false && !isDue(schedule,new Date())) throw named(new HttpError(409, 'Task is no longer due'),'skipped')
         }
         const agent = await getAgent(agentId);check()
-        if (!agent.config.enabled) throw agentDisabled()
-        if (desktopApp() && !schedule.enabled && agent.config.setup?.required && !agent.config.setup.completedAt && hasPendingSetup(agent)) throw setupPending()
+        if (!agent.config.enabled) throw named(agentDisabled(),'coworker-off')
+        if (desktopApp() && !schedule.enabled && agent.config.setup?.required && !agent.config.setup.completedAt && hasPendingSetup(agent)) throw named(setupPending(),'setup-pending')
         // Resolved before markFired so a budget skip leaves the schedule due: it resumes on the first
         // tick after the latch clears, with no session, no run and no notification in the meantime.
         // Only the managed provider burns the workspace budget, so an agent on its own key still fires.
@@ -131,16 +136,17 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
             try {return await desktopHooks?.model?.(agentId)}
             catch(error) {
                 // A Rerun preset with no plan left: the routine waits for the plan instead of failing.
-                if(!gated || !(error instanceof DesktopPlanOutError))throw error
+                // A preset no connected plan can answer at all is a provider that is not connected.
+                if(!gated || !(error instanceof DesktopPlanOutError))throw isConflict(error) ? named(error,'provider') : error
                 check()
                 const parked=await parkSchedule(agentId,schedule.slug,error.target,error.resetsAt,new Date());check()
                 if(opts?.markFired!==false)await consumeDesktopSchedule(agentId,schedule,nowIso())
                 throw new UsageWaitError(parked.text)
             }
         }
-        let pinned=desktopApp()?await resolveDesktopScheduleModel(agent,schedule) ?? await resolveDesktopPresetModel(agent,await presetPick()):undefined;check()
+        let pinned=desktopApp()?await step('saved-model',()=>resolveDesktopScheduleModel(agent,schedule),isConflict) ?? await resolveDesktopPresetModel(agent,await presetPick()):undefined;check()
         let override = pinned ?? await automationModel(agent, desktopApp() ? {...schedule,connectionId:null,provider:null,model:null} : schedule, 'schedule');check()
-        if(desktopApp())assertDesktopProvider(override.provider ?? agent.resolved.provider,override.connectionId ?? agent.resolved.connection?.id)
+        if(desktopApp())await step('provider',()=>assertDesktopProvider(override.provider ?? agent.resolved.provider,override.connectionId ?? agent.resolved.connection?.id))
         if(gated) {
             const target=await resolveRunModel(agent,override);check()
             gateTarget=target.connection ? {connectionId:target.connection.id,plan:target.connection.config?.name ?? target.provider,provider:target.provider} : null
@@ -152,7 +158,7 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
             if(gate.kind==='backup') {
                 // The owner's backup answers. It is the exact pair they picked, so it is held to it.
                 override=pinned=gate.override as typeof override
-                assertDesktopProvider(override.provider ?? agent.resolved.provider,override.connectionId)
+                await step('provider',()=>assertDesktopProvider(override.provider ?? agent.resolved.provider,override.connectionId))
                 gateTarget=null
                 logger.info({agent:agentId,schedule:schedule.slug,note:gate.note},'scheduled run on the backup model')
             } else if(gate.kind!=='run') {
@@ -161,8 +167,8 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
             }
         }
         await authorize();check()
-        const latest=await readSchedule(agentId,schedule.slug);check()
-        if(JSON.stringify(latest)!==JSON.stringify(schedule))throw new Error('Task changed during preparation')
+        const latest=await step('changed',()=>readSchedule(agentId,schedule.slug));check()
+        if(JSON.stringify(latest)!==JSON.stringify(schedule))throw named(new Error('Task changed during preparation'),'changed')
         if (!opts?.ignoreBudgetLatch && override.provider === 'rerun' && isBudgetLatched()) throw budgetExhausted()
         if(desktopApp()) {
             if(opts?.markFired===false && !manualId)throw new Error('Manual occurrence identity required')
@@ -170,8 +176,8 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
                 // A crash can consume a durable claim before its file stamp. Skip that baseline,
                 // advance to now, and let future intervals remain eligible without replaying it.
                 check()
-                if(opts?.markFired!==false) {await consumeDesktopSchedule(agentId,schedule,nowIso());check()}
-                throw new Error('Occurrence already claimed or task already active')
+                if(opts?.markFired!==false) {await step('changed',()=>consumeDesktopSchedule(agentId,schedule,nowIso()));check()}
+                throw named(new Error('Occurrence already claimed or task already active'),'skipped')
             }
             claimed=true
         }
@@ -181,14 +187,14 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
         // crash mid-run costs that occurrence instead of replaying work that may already be done.
         let expectedSchedule=schedule
         if (opts?.markFired !== false) {
-            if(desktopApp()) expectedSchedule=await consumeDesktopSchedule(agentId,schedule,nowIso())
+            if(desktopApp()) expectedSchedule=await step('changed',()=>consumeDesktopSchedule(agentId,schedule,nowIso()))
             else {await markFired(agentId,schedule.slug,nowIso());expectedSchedule=await readSchedule(agentId,schedule.slug)}
         }
         check();await authorize();check()
         if(opts?.usageResume) {await markUsageWaitRunning(agentId,schedule.slug);resuming=true;check()}
-        const session = await createSession(agentId, `schedule: ${schedule.slug}`, undefined, 'schedule')
+        const session = await step('preparation',()=>createSession(agentId, `schedule: ${schedule.slug}`, undefined, 'schedule'))
         check()
-        if(desktopApp()) {await desktopHooks!.adopt(agentId,session.id,null,schedule.name);check()}
+        if(desktopApp()) {await step('authorization',()=>desktopHooks!.adopt(agentId,session.id,null,schedule.name));check()}
         await sendNotification({
             event: 'agent.session.created',
             kind: 'info',
@@ -200,18 +206,20 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
             source: 'schedule',
         })
         check();await authorize();check()
-        const beforeLaunch=async()=>{
+        const beforeLaunch=()=>step('changed',async()=>{
             check();await authorize();check()
             const [current,currentAgent]=await Promise.all([readSchedule(agentId,schedule.slug),getAgent(agentId)]);check()
-            if(!currentAgent.config.enabled)throw agentDisabled()
+            if(!currentAgent.config.enabled)throw named(agentDisabled(),'coworker-off')
             if(JSON.stringify(current)!==JSON.stringify(expectedSchedule) || JSON.stringify(currentAgent.config)!==JSON.stringify(agent.config))throw new Error('Task or coworker changed during preparation')
-        }
+        })
         await beforeLaunch();check()
         // On the Mac the saved text goes to the model inside the firing frame, and Run now is marked a test.
         // A parked routine run again at reset is its scheduled firing, not a test: it reports and counts as one.
         const firing = desktopApp() ? { test: opts?.markFired === false && opts.usageResume !== true } : undefined
         const routine = firing && { parts: routineParts(schedule.body.trim()), test: firing.test }
-        const { runId, settled } = await startHeadlessRun(agent, session.id, buildScheduledRunMessage(schedule, firing), override, { source: 'schedule', slug: schedule.slug, name: schedule.name, ...(pinned && { requireExactModel: true }), ...(gateTarget && { usageGate: gateTarget }), ...(routine && { routine }) }, {beforeLaunch,assertActive:check})
+        // What the run's own preparation throws has been settled by its terminal; what is thrown
+        // before the run exists (its record could not be created) is named here.
+        const { runId, settled } = await step('preparation',()=>startHeadlessRun(agent, session.id, buildScheduledRunMessage(schedule, firing), override, { source: 'schedule', slug: schedule.slug, name: schedule.name, ...(pinned && { requireExactModel: true }), ...(gateTarget && { usageGate: gateTarget }), ...(routine && { routine }) }, {beforeLaunch,assertActive:check}))
 
         launched=true
         // Install settlement tracking BEFORE post-launch callbacks, so failures cannot strand admission.
@@ -237,6 +245,8 @@ async function launchScheduledRun(agentId: string, schedule: Schedule, key: stri
             }
             inFlight.delete(key)
         }
+        // Past the launch the run exists and answers for itself.
+        else named(err,'inside-run',true)
         throw err
     }
 }
@@ -282,10 +292,37 @@ async function attendUsageWait(agentId:string,schedule:Schedule,wait:UsageWait,n
     }
 }
 
+/**
+ * A firing of the scheduler's own that ended before a run started. A standing fault of the routine
+ * or its coworker counts toward the ten failures in a row, once per firing; the tenth switches the
+ * routine off and tells the person. Everything else is left alone.
+ */
+async function noteStartFailure(agentId:string,schedule:Schedule,error:unknown,assertActive:()=>void):Promise<void> {
+    let active=!stopped
+    try {assertActive();assertDesktopRunAdmission()} catch {active=false}
+    const kind=classifyRoutineStartFailure({error,scheduled:true,active})
+    if(!routineStartFailureCounts(kind))return
+    try {
+        const now=new Date()
+        const cron=schedule.cron
+        const result=await countDesktopRoutineStartFailure({agentId,slug:schedule.slug,now,firedSince:since=>{
+            // A one-shot routine fires once. A recurring one has fired again when its schedule came round.
+            if(!cron || schedule.runAt)return false
+            const next=nextCronRun({cron,timezone:schedule.timezone},since)
+            return Boolean(next && next.getTime()<=now.getTime())
+        }})
+        if(result.counted)logger.warn({agent:agentId,schedule:schedule.slug,kind},'scheduled run could not start: counted toward switching the routine off')
+        if(result.autoDisabledAt)await announceDesktopRoutineAutoOff({agentId,slug:schedule.slug,name:schedule.name,disabledAt:result.autoDisabledAt,sessionId:null,runId:null,lastError:error instanceof Error ? error.message : String(error)})
+    } catch(err) {
+        logger.error({agent:agentId,schedule:schedule.slug,err:String(err)},'a scheduled run that could not start was not counted')
+    }
+}
+
 async function fire(agentId: string, schedule: Schedule, assertActive:()=>void): Promise<void> {
     try {
         await fireSchedule(agentId, schedule,{assertActive})
     } catch (err) {
+        if(desktopApp())await noteStartFailure(agentId,schedule,err,assertActive)
         if (err instanceof UsageWaitError) {
             logger.info({ agent: agentId, schedule: schedule.slug, reason: err.message }, 'scheduled run parked: plan out of usage')
             return

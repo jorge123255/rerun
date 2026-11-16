@@ -38,7 +38,7 @@ export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<
     })
 }
 
-function connect(url: URL, destination: { address: string; family: number }, signal: AbortSignal): Promise<IncomingMessage> {
+function connect(url: URL, destination: { address: string; family: number }, signal: AbortSignal, extra: Record<string, string> = {}): Promise<IncomingMessage> {
     return new Promise((resolve, reject) => {
         const hostname = url.hostname.replace(/^\[|\]$/g, '')
         // Direct numeric destination: no second DNS lookup, proxy, cookie jar or pooled socket.
@@ -51,7 +51,7 @@ function connect(url: URL, destination: { address: string; family: number }, sig
             checkServerIdentity: (_peer: string, certificate: PeerCertificate) => checkServerIdentity(hostname, certificate),
             path: `${url.pathname}${url.search}`, method: 'GET', agent: false, signal,
             maxHeaderSize: 16_384,
-            headers: { Host: url.host, 'User-Agent': 'rerun-engine/1.0', Accept: 'text/html, text/plain, application/json, application/xml;q=0.8', 'Accept-Encoding': 'identity' },
+            headers: { ...extra, Host: url.host, 'User-Agent': 'rerun-engine/1.0', Accept: 'text/html, text/plain, application/json, application/xml;q=0.8', 'Accept-Encoding': 'identity' },
         }, response => {
             if (signal.aborted) {
                 response.on('error', () => {})
@@ -64,14 +64,22 @@ function connect(url: URL, destination: { address: string; family: number }, sig
     })
 }
 
-export async function readPublicPage(value: string, signal: AbortSignal, assertPermission: () => Promise<void>): Promise<PublicPage> {
+/**
+ * `allowHost` pins every hop, redirects included, to hosts the caller names: a read that is meant
+ * for one service is refused before any request leaves for another.
+ */
+export async function readPublicPage(value: string, signal: AbortSignal, assertPermission: () => Promise<void>, options?: { allowHost?: (hostname: string) => boolean; headers?: Record<string, string> }): Promise<PublicPage> {
     let url = publicUrl(value)
+    // Extra headers may carry a credential, so they are only ever sent on a read pinned to named
+    // hosts: the check below runs on every hop before a request leaves.
+    if (options?.headers && !options.allowHost) throw new Error('Request headers need a pinned host')
     for (let hop = 0; ; hop++) {
+        if (options?.allowHost && !(url.protocol === 'https:' && options.allowHost(url.hostname.toLowerCase()))) throw new Error('Not a public host this read is allowed to reach')
         await abortable(assertPermission(), signal)
         const destination = await abortable(publicDestination(url), signal)
         await abortable(assertPermission(), signal)
         signal.throwIfAborted()
-        const response = await abortable(connect(url, destination, signal), signal)
+        const response = await abortable(connect(url, destination, signal, options?.headers), signal)
         // Keep an error listener even for responses discarded without reading their bodies.
         response.on('error', () => {})
         const status = response.statusCode ?? 0

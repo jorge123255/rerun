@@ -16,6 +16,7 @@ import { readDesktopQuestion } from './questions'
 import type { DesktopRuntime } from './runtime'
 import { findDesktopSession } from './store'
 import { acknowledgeDesktopUserNotification } from './user-notifications'
+import { acknowledgeDesktopRoutineAutoOff } from './routine-auto-off'
 
 export const DESKTOP_PENDING_INBOX_CONCURRENCY = 4
 export const DESKTOP_PENDING_INBOX_DEADLINE_MS = 2_500
@@ -63,7 +64,7 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
     let marked = 0
     for (const item of targets) {
         if (item.kind !== 'info') continue
-        if (await acknowledgeDesktopUserNotification(db, runtime, item)) marked++
+        if (await acknowledgeDesktopUserNotification(db, runtime, item) || await acknowledgeDesktopRoutineAutoOff(db, runtime, item)) marked++
         else failed.add(item.id)
     }
     const remaining = targets.filter(item => item.kind !== 'info')

@@ -364,4 +364,42 @@ describe('filters, search and the routes the app reads', () => {
         expect((await app.request('/', { method: 'DELETE' })).status).toBe(200)
         expect(desktopActivityPageSchema.parse(await (await app.request('/')).json())).toEqual({ records: [], next: null, total: 0, dropped: 0 })
     })
+
+    it('clearing one coworker removes only its rows, and leaves the others and the dropped count', async () => {
+        const app = createDesktopActivityRouter(async () => store)
+        await store.addDropped(3)
+        // `departed` is a coworker deleted since: its rows are cleared the same way, by its id.
+        await store.append([row({ id: 'departed-1', agentId: 'departed' }), row({ id: 'departed-2', agentId: 'departed', kind: 'send' })])
+        const before = desktopActivityPageSchema.parse(await (await app.request('/')).json())
+        const scoutRows = before.records.filter(record => record.agentId === 'scout').length
+        expect(scoutRows).toBeGreaterThan(0)
+
+        const response = await app.request('/?coworker=scout', { method: 'DELETE' })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ cleared: true, removed: scoutRows })
+        const after = desktopActivityPageSchema.parse(await (await app.request('/')).json())
+        expect(after.records.some(record => record.agentId === 'scout')).toBe(false)
+        expect(after.records.map(record => record.id).sort()).toEqual(before.records.filter(record => record.agentId !== 'scout').map(record => record.id).sort())
+        expect(after.dropped).toBe(3)
+
+        expect(await (await app.request('/?coworker=departed', { method: 'DELETE' })).json()).toEqual({ cleared: true, removed: 2 })
+        const last = desktopActivityPageSchema.parse(await (await app.request('/')).json())
+        expect(last.records.some(record => record.agentId === 'departed')).toBe(false)
+        expect(last.total).toBe(before.total - scoutRows - 2)
+        expect(last.dropped).toBe(3)
+        // A coworker with no rows is not an error.
+        expect(await (await app.request('/?coworker=nobody', { method: 'DELETE' })).json()).toEqual({ cleared: true, removed: 0 })
+    })
+
+    it('refuses an invalid coworker id and clears nothing, rather than everything', async () => {
+        const app = createDesktopActivityRouter(async () => store)
+        await store.addDropped(2)
+        const before = desktopActivityPageSchema.parse(await (await app.request('/')).json())
+        expect(before.total).toBeGreaterThan(0)
+        for (const bad of ['', 'a b', '../scout', 'scout,ledger', '%25', 'x'.repeat(129), "scout' OR 1=1"]) {
+            const response = await app.request(`/?coworker=${encodeURIComponent(bad)}`, { method: 'DELETE' })
+            expect(response.status).toBe(400)
+        }
+        expect(desktopActivityPageSchema.parse(await (await app.request('/')).json())).toEqual(before)
+    })
 })

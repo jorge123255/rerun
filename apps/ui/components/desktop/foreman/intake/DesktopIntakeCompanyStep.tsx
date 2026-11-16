@@ -12,6 +12,8 @@ import { CheckIcon } from '@/lib/icons'
 import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
 import type { IntakeDraft } from '@/lib/desktop/foreman-intake'
 import { desktopIntakeFieldHandlers } from './DesktopIntakeField'
+import { DesktopIntakeGithubField } from './DesktopIntakeGithubField'
+import type { DesktopIntakeGithubController } from '@/lib/desktop/foreman-intake/use-desktop-intake-github'
 
 type Props = {
     draft: IntakeDraft
@@ -21,6 +23,8 @@ type Props = {
     autoFocus?: boolean
     onChange: (patch: Partial<IntakeDraft>) => void
     onEnter: () => void
+    /** The second path of this step: the owner's GitHub projects. Absent where it is not offered. */
+    github?: DesktopIntakeGithubController
 }
 
 const ADORNMENT_MOTION = {
@@ -30,13 +34,13 @@ const ADORNMENT_MOTION = {
     transition: { duration: 0.16 },
 }
 
-export function DesktopIntakeCompanyStep({ draft, siteRead, platform, disabled, autoFocus = true, onChange, onEnter }: Props) {
+export function DesktopIntakeCompanyStep({ draft, siteRead, platform, disabled, autoFocus = true, onChange, onEnter, github }: Props) {
     const siteId = useId()
     const { t } = useDesktopLocale()
     const still = useReducedMotion()
     const motionProps = still ? { initial: false, animate: {}, exit: {}, transition: { duration: 0 } } : ADORNMENT_MOTION
 
-    return (
+    return (<>
         <Field label={t('foreman.intake.website.label')} htmlFor={siteId}>
             <div className="relative">
                 <Input
@@ -68,5 +72,6 @@ export function DesktopIntakeCompanyStep({ draft, siteRead, platform, disabled, 
             </div>
             {platform && <p id={siteId + '-platform'} className="text-xs text-destructive">{t('foreman.intake.website.platform', { domain: platform })}</p>}
         </Field>
-    )
+        {github && <DesktopIntakeGithubField github={github} disabled={disabled} />}
+    </>)
 }

@@ -2,6 +2,7 @@ import type { ModelOverride } from '../agents/providers.js'
 import type { LoadedAgent } from '../agents/types.js'
 import { startRun, cancelRun, setRunContext } from '../db/repos/runs.js'
 import { desktopApp } from '../desktop/policy.js'
+import { nameRoutineStartFailure } from '../desktop/routine-start-faults.js'
 import { runAgent, type AgentRun, type RunTrigger } from './loop.js'
 import { mergeRunStream } from './run-stream-merge.js'
 import { registerRun } from './stream.js'
@@ -50,6 +51,8 @@ export async function startHeadlessRun(agent: LoadedAgent, sessionId: string, me
         try {
             agentRun = await runAgent(agent, sessionId, message, override, writer, run.id, trigger)
         } catch (err) {
+            // The run's own terminal has settled this failure, a routine's failure count included.
+            nameRoutineStartFailure(err, 'inside-run', true)
             failed(err)
             throw err
         }

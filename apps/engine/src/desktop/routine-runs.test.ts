@@ -18,7 +18,7 @@ vi.mock('../runtime/notify.js', async importOriginal => ({
 
 const { afterAll, beforeEach, describe, expect, it } = await import('vitest')
 const { ROUTINE_FAILURES_BEFORE_OFF, ROUTINE_GUARD_MESSAGES, desktopRoutineHealthSchema, routineChecklistSummary } = await import('@rerun/contracts')
-const { readDesktopRoutineHealth, settleDesktopRoutineRun } = await import('./routine-runs.js')
+const { countDesktopRoutineStartFailure, readDesktopRoutineHealth, settleDesktopRoutineRun } = await import('./routine-runs.js')
 const { createDesktopWorkspaceRoutineRouter } = await import('./workspace-routines/router.js')
 const { emitRunTerminal } = await import('../runtime/run-events.js')
 const { listRunCompletions } = await import('../db/completed-runs.js')
@@ -116,17 +116,56 @@ describe('auto-off after repeated failures', () => {
         expect((await readSchedule('uncounted', slug)).enabled).toBe(true)
     })
 
-    it('announces the switch-off on the failing run’s own notification', async () => {
+    it('tells the person about the switch-off in one notification of its own, after the failed run’s', async () => {
         const { slug } = await routine('announced')
         const trigger = { source: 'schedule' as const, slug, name: 'Daily digest', routine: { parts: [], test: false } }
         for (let index = 0; index < ROUTINE_FAILURES_BEFORE_OFF; index += 1) {
             await emitRunTerminal({ agentId: 'announced', sessionId: 's1', runId: `fail-${index}`, trigger, kind: 'error', error: 'model unavailable' })
         }
-        expect(sent).toHaveLength(ROUTINE_FAILURES_BEFORE_OFF)
-        expect(sent.at(-2)!.metadata).toMatchObject({ error: 'model unavailable' })
-        expect(sent.at(-2)!.metadata.routineAutoDisabled).toBeUndefined()
-        expect(sent.at(-1)!.metadata).toMatchObject({ routineAutoDisabled: true, error: `${ROUTINE_GUARD_MESSAGES.autoOff} Last error: model unavailable` })
-        expect(sent.at(-1)!.kind).toBe('error')
+        // Ten failed runs, each with its own plain failure, then the one notice.
+        expect(sent).toHaveLength(ROUTINE_FAILURES_BEFORE_OFF + 1)
+        const failed = sent.slice(0, ROUTINE_FAILURES_BEFORE_OFF)
+        expect(failed.every(item => item.event === 'agent.schedule.completed' && item.metadata.error === 'model unavailable')).toBe(true)
+        expect(failed.at(-2)!.metadata.routineAutoDisabled).toBeUndefined()
+        expect(failed.at(-1)!.metadata.routineAutoDisabled).toBe(true)
+        expect(sent.at(-1)).toMatchObject({
+            event: 'agent.notification', kind: 'error', agentId: 'announced', sessionId: 's1', runId: `fail-${ROUTINE_FAILURES_BEFORE_OFF - 1}`, source: 'schedule',
+            metadata: { routineAutoOff: true, scheduleSlug: slug, sourceName: 'Daily digest', disabledAt: expect.any(String) },
+        })
+        expect(sent.at(-1)!.message).toMatch(/^Daily digest was turned off after 10 failed runs in a row\. Turn it back on in .+’s Routines\.$/)
+        // An eleventh failure of the routine, switched back on, is an ordinary failure again.
+        await setScheduleEnabled('announced', slug, true)
+        await emitRunTerminal({ agentId: 'announced', sessionId: 's1', runId: 'fail-again', trigger, kind: 'error', error: 'model unavailable' })
+        expect(sent.filter(item => item.metadata.routineAutoOff === true)).toHaveLength(1)
+    })
+
+    it('counts a firing that could not start once per firing, and switches off on the tenth', async () => {
+        const { slug } = await routine('cannot-start')
+        const at = (hour: number) => new Date(Date.UTC(2026, 10, 16, hour))
+        let again = true
+        const count = (hour: number) => countDesktopRoutineStartFailure({ agentId: 'cannot-start', slug, now: at(hour), firedSince: () => again })
+        expect(await count(1)).toEqual({ counted: true, autoDisabledAt: null })
+        // The same firing tried again on a later tick is not a second failure.
+        again = false
+        expect(await count(1)).toEqual({ counted: false, autoDisabledAt: null })
+        expect((await healthOf('cannot-start', slug)).consecutiveFailures).toBe(1)
+        again = true
+        for (let hour = 2; hour < ROUTINE_FAILURES_BEFORE_OFF; hour += 1) expect((await count(hour)).autoDisabledAt).toBeNull()
+        // Failed runs and firings that could not start add up to the same ten.
+        expect((await healthOf('cannot-start', slug)).consecutiveFailures).toBe(ROUTINE_FAILURES_BEFORE_OFF - 1)
+        const last = await count(ROUTINE_FAILURES_BEFORE_OFF)
+        expect(last).toEqual({ counted: true, autoDisabledAt: at(ROUTINE_FAILURES_BEFORE_OFF).toISOString() })
+        expect((await readSchedule('cannot-start', slug)).enabled).toBe(false)
+        expect((await healthOf('cannot-start', slug)).consecutiveFailures).toBe(0)
+    })
+
+    it('adds a firing that could not start to the failed runs before it, and a success clears both', async () => {
+        const { slug } = await routine('mixed-failures')
+        await settleDesktopRoutineRun(terminal('mixed-failures', slug, { kind: 'error' }))
+        await countDesktopRoutineStartFailure({ agentId: 'mixed-failures', slug, firedSince: () => true })
+        expect((await healthOf('mixed-failures', slug)).consecutiveFailures).toBe(2)
+        await settleDesktopRoutineRun(terminal('mixed-failures', slug, { text: 'Sent.' }))
+        expect((await healthOf('mixed-failures', slug)).consecutiveFailures).toBe(0)
     })
 })
 

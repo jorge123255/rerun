@@ -1,7 +1,7 @@
 import { APICallError } from 'ai'
 import { describe, expect, it } from 'vitest'
 import { createStreamRetryMiddleware } from './openrouter-stream-retry.js'
-import { createTransientStreamRetryMiddleware, type StreamRetryNotice, type StreamRetryOptions } from './transient-stream-retry.js'
+import { createTransientStreamRetryMiddleware, STREAM_STALL_MS, type StreamRetryNotice, type StreamRetryOptions } from './transient-stream-retry.js'
 
 const usage = {
     inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
@@ -178,6 +178,11 @@ describe('transient stream retry', () => {
         expect(cancelledStreams).toBe(1)
         expect(parts.at(-1)).toEqual(finish)
         expect(statuses(notices)).toEqual(['reconnecting', 'resumed'])
+    })
+
+    // Ten minutes, not five: a model reasoning silently for longer than the timeout is sent, and billed, twice.
+    it('waits ten minutes of silence before it calls a stream dropped', () => {
+        expect(STREAM_STALL_MS).toBe(10 * 60_000)
     })
 
     it('does not time a step out once it has shown text, and never without a stall timeout', async () => {

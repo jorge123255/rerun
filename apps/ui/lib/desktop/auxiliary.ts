@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const desktopAuxiliaryPurposes = ['search', 'keirolabs-search', 'browser-use-search', 'keenable-search', 'embedding', 'local-embedding', 'transcription', 'elevenlabs-transcription'] as const
+export const desktopAuxiliaryPurposes = ['search', 'keirolabs-search', 'browser-use-search', 'keenable-search', 'embedding', 'local-embedding', 'transcription', 'elevenlabs-transcription', 'github-read'] as const
 /** Keenable needs no key: this row only records that the owner turned it on. */
 export const DESKTOP_KEYLESS_SEARCH_ON = 'on'
 /** Voice notes can be turned into text when either transcription service has a key. */

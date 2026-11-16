@@ -16,6 +16,8 @@ import { readDesktopQuestion } from './questions'
 import type { DesktopRuntime } from './runtime'
 import { findDesktopSession, listDesktopAgents, listDesktopSessions, type DesktopAgent, type DesktopSession } from './store'
 import { readDesktopUserAttention } from './user-notifications'
+import { readDesktopRoutineAutoOffAttention } from './routine-auto-off'
+import { readDesktopLocale } from './language'
 
 export const DESKTOP_ATTENTION_CONCURRENCY = 4
 export const DESKTOP_ATTENTION_DEADLINE_MS = 2_500
@@ -123,7 +125,9 @@ async function collect(runtime: DesktopRuntime): Promise<DesktopAttention> {
                 requestedAt: item.requestedAt ?? current.updatedAt })
         } catch { unavailable.add(agent.id) }
     }
-    const noted = await readDesktopUserAttention(db, runtime)
+    // A routine switched off after ten failed runs in a row stays here until it is marked as read.
+    const switchedOff = await readDesktopLocale(runtime, null).then(locale => readDesktopRoutineAutoOffAttention(db, runtime, locale)).catch(() => [])
+    const noted = [...await readDesktopUserAttention(db, runtime), ...switchedOff]
     for (const item of noted) if (!ownedItems.some(existing => existing.id === item.id)) ownedItems.push(item)
     // Newest request first: the source request message's own timestamp, never the chat activity.
     ownedItems.sort((a, b) => time(b.requestedAt ?? b.updatedAt) - time(a.requestedAt ?? a.updatedAt) || a.agentId.localeCompare(b.agentId) || a.sessionId.localeCompare(b.sessionId) || a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id))

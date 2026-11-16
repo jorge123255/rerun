@@ -2,6 +2,7 @@ import 'server-only'
 import { engineCreatedEventSchema, notificationPayloadSchema } from '@/lib/engine/types'
 import { authenticateDesktopEngineRequest, DesktopHttpError } from './auth'
 import { recordDesktopRunTerminal } from './notifications'
+import { isDesktopRoutineAutoOffNotice, recordDesktopRoutineAutoOff } from './routine-auto-off'
 import { handleDesktopScheduleBridge } from './schedules-binding'
 import { adoptDesktopScheduleEvent } from './schedules/adoption'
 import { openDesktopDatabase } from './database'
@@ -30,6 +31,11 @@ export async function handleDesktopEngineCallback(request: Request): Promise<Res
 
         const notification = notificationPayloadSchema.safeParse(body)
         if (!notification.success) return Response.json({ error: 'Invalid payload' }, { status: 400 })
+        // A routine switched off after ten failed runs in a row: kept once, for the notification
+        // that passes the coworker's own rule and for the inbox.
+        if (isDesktopRoutineAutoOffNotice(notification.data)) {
+            return Response.json({ ok: true, persisted: await recordDesktopRoutineAutoOff(runtime, notification.data) }, { status: 202 })
+        }
         if (!SUPPORTED_NOTIFICATION_EVENTS.has(notification.data.event)) return Response.json({ ok: true, ignored: 'unsupported_m1_event', persisted: false }, { status: 202 })
         if (notification.data.event === 'agent.schedule.completed' && notification.data.agentId) {
             await adoptDesktopScheduleEvent(await openDesktopDatabase(runtime.dataRoot), engineOf(runtime), {

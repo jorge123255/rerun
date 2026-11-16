@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS desktop_routine_health (
     schedule_slug TEXT PRIMARY KEY,
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     auto_disabled_at TEXT,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    start_fault_at TEXT
 );`
 
 const KEPT_PER_ROUTINE = 50
@@ -31,7 +32,11 @@ const initialized = new WeakMap<Client, Promise<void>>()
 function ensure(client: Client): Promise<void> {
     let ready = initialized.get(client)
     if (!ready) {
-        ready = client.executeMultiple(DDL).then(() => undefined)
+        ready = client.executeMultiple(DDL).then(async () => {
+            // Added November 16, 2026: when a firing that could not start was last counted.
+            const columns = (await client.execute('PRAGMA table_info(desktop_routine_health)')).rows.map(row => String(row.name))
+            if (!columns.includes('start_fault_at')) await client.execute('ALTER TABLE desktop_routine_health ADD COLUMN start_fault_at TEXT')
+        })
         initialized.set(client, ready)
         void ready.catch(() => initialized.delete(client))
     }
@@ -62,6 +67,28 @@ export type DesktopRoutineSettlement = {
     text: string | undefined
     /** Set on the failure that switched the routine off. */
     autoDisabled: string | null
+    /** When that happened; the person is told once, by a notice of its own. */
+    autoDisabledAt?: string
+}
+
+/**
+ * One more failed firing in a row. The tenth switches the routine off, stamps when, and starts the
+ * count over, so switching the routine back on gives it a fresh ten. Answers the stamp only then.
+ * The caller holds the routine's health lock.
+ */
+async function countFailure(client: Client, agentId: string, slug: string, now: string, startFault = false): Promise<string | null> {
+    const row = (await client.execute({
+        sql: `INSERT INTO desktop_routine_health (schedule_slug, consecutive_failures, auto_disabled_at, updated_at, start_fault_at) VALUES (?,1,NULL,?,?)
+              ON CONFLICT(schedule_slug) DO UPDATE SET consecutive_failures = consecutive_failures + 1, updated_at = excluded.updated_at,
+                  start_fault_at = COALESCE(excluded.start_fault_at, start_fault_at)
+              RETURNING consecutive_failures`,
+        args: [slug, now, startFault ? now : null],
+    })).rows[0]
+    if (Number(row?.consecutive_failures ?? 0) < ROUTINE_FAILURES_BEFORE_OFF || !scheduleExists(agentId, slug)) return null
+    await setScheduleEnabled(agentId, slug, false)
+    await client.execute({ sql: 'UPDATE desktop_routine_health SET consecutive_failures = 0, auto_disabled_at = ?, updated_at = ? WHERE schedule_slug = ?', args: [now, now, slug] })
+    logger.warn({ agent: agentId, schedule: slug }, 'routine switched off after repeated failures')
+    return now
 }
 
 async function recordOutcome(client: Client, terminal: DesktopRoutineTerminal, outcome: DesktopRoutineRunOutcome) {
@@ -107,18 +134,25 @@ export async function settleDesktopRoutineRun(terminal: DesktopRoutineTerminal):
         // An interrupted run rebuilt after a restart, or a hand-started test, is not the routine
         // failing on its schedule.
         if (!terminal.routine || terminal.routine.test) return settlement
-        const row = (await client.execute({
-            sql: `INSERT INTO desktop_routine_health (schedule_slug, consecutive_failures, auto_disabled_at, updated_at) VALUES (?,1,NULL,?)
-                  ON CONFLICT(schedule_slug) DO UPDATE SET consecutive_failures = consecutive_failures + 1, updated_at = excluded.updated_at
-                  RETURNING consecutive_failures`,
-            args: [terminal.slug, now],
-        })).rows[0]
-        if (Number(row?.consecutive_failures ?? 0) < ROUTINE_FAILURES_BEFORE_OFF || !scheduleExists(terminal.agentId, terminal.slug)) return settlement
-        await setScheduleEnabled(terminal.agentId, terminal.slug, false)
-        // The count starts over, so switching the routine back on gives it a fresh ten.
-        await client.execute({ sql: 'UPDATE desktop_routine_health SET consecutive_failures = 0, auto_disabled_at = ?, updated_at = ? WHERE schedule_slug = ?', args: [now, now, terminal.slug] })
-        logger.warn({ agent: terminal.agentId, schedule: terminal.slug }, 'routine switched off after repeated failures')
-        return { ...settlement, autoDisabled: ROUTINE_GUARD_MESSAGES.autoOff }
+        const autoDisabledAt = await countFailure(client, terminal.agentId, terminal.slug, now)
+        return autoDisabledAt ? { ...settlement, autoDisabled: ROUTINE_GUARD_MESSAGES.autoOff, autoDisabledAt } : settlement
+    })
+}
+
+/**
+ * A scheduled firing that could not start because of a standing fault of the routine or its
+ * coworker (the scheduler decides which failures those are). It counts like a failed run, once per
+ * firing: a routine that never got as far as being stamped stays due and is tried again on every
+ * tick, and those tries are the same firing until `firedSince` says its schedule has come round again.
+ */
+export async function countDesktopRoutineStartFailure(input: { agentId: string; slug: string; firedSince: (since: Date) => boolean; now?: Date }): Promise<{ counted: boolean; autoDisabledAt: string | null }> {
+    if (!input.slug) return { counted: false, autoDisabledAt: null }
+    return withKeyedLock(`desktop-routine-health:${input.agentId}:${input.slug}`, async () => {
+        const client = await db(input.agentId)
+        const row = (await client.execute({ sql: 'SELECT start_fault_at FROM desktop_routine_health WHERE schedule_slug = ?', args: [input.slug] })).rows[0]
+        const last = typeof row?.start_fault_at === 'string' ? Date.parse(row.start_fault_at) : NaN
+        if (Number.isFinite(last) && !input.firedSince(new Date(last))) return { counted: false, autoDisabledAt: null }
+        return { counted: true, autoDisabledAt: await countFailure(client, input.agentId, input.slug, (input.now ?? new Date()).toISOString(), true) }
     })
 }
 

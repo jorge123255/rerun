@@ -7,7 +7,7 @@ const agents = [
 ]
 vi.mock('server-only', () => ({}))
 vi.mock('./store', () => ({ listDesktopAgents: async () => agents }))
-const { clearDesktopActivity, engineActivityQuery, exportDesktopActivity, readDesktopActivity } = await import('./activity')
+const { DesktopActivityCoworkerUnknown, clearDesktopActivity, engineActivityQuery, exportDesktopActivity, readDesktopActivity } = await import('./activity')
 
 const engine = { baseUrl: 'http://127.0.0.1:1', apiKey: 'test-key' }
 const record = (seq: number, overrides: Partial<DesktopActivityRecord> = {}) => ({
@@ -75,5 +75,34 @@ describe('export and clear', () => {
         const { urls, methods } = engineAnswers({ cleared: true })
         await clearDesktopActivity(engine)
         expect([urls, methods]).toEqual([['http://127.0.0.1:1/desktop/activity'], ['DELETE']])
+    })
+
+    it('clears one coworker by its engine id, and nothing else', async () => {
+        const { urls, methods } = engineAnswers({ cleared: true, removed: 4 })
+        await clearDesktopActivity(engine, db, 'app-ledger')
+        expect([urls, methods]).toEqual([['http://127.0.0.1:1/desktop/activity?coworker=eng-ledger'], ['DELETE']])
+    })
+
+    it('clears the coworkers that no longer exist one by one, leaving the Chief of Staff and helpers', async () => {
+        const { urls, methods } = engineAnswers(
+            { records: [record(5, { agentId: 'eng-gone' }), record(4, { agentId: 'eng-helper', source: 'delegated' }), record(3, { agentId: 'eng-left' })], next: 3, total: 4, dropped: 0 },
+            { records: [record(2, { agentId: 'eng-gone' })], next: null, total: 4, dropped: 0 },
+            { cleared: true, removed: 2 }, { cleared: true, removed: 1 },
+        )
+        await clearDesktopActivity(engine, db, 'deleted')
+        expect(urls).toEqual([
+            'http://127.0.0.1:1/desktop/activity?except=eng-scout%2Ceng-ledger%2Cforeman&limit=500',
+            'http://127.0.0.1:1/desktop/activity?except=eng-scout%2Ceng-ledger%2Cforeman&limit=500&before=3',
+            'http://127.0.0.1:1/desktop/activity?coworker=eng-gone',
+            'http://127.0.0.1:1/desktop/activity?coworker=eng-left',
+        ])
+        expect(methods).toEqual(['GET', 'GET', 'DELETE', 'DELETE'])
+    })
+
+    it('clears nothing for a coworker the app does not know, or an empty one, rather than everything', async () => {
+        const { urls } = engineAnswers()
+        await expect(clearDesktopActivity(engine, db, 'unknown')).rejects.toBeInstanceOf(DesktopActivityCoworkerUnknown)
+        await expect(clearDesktopActivity(engine, db, '')).rejects.toBeInstanceOf(DesktopActivityCoworkerUnknown)
+        expect(urls).toEqual([])
     })
 })

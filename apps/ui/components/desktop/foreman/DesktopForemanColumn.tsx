@@ -26,7 +26,8 @@ import { DesktopPlanBoardPreview } from './plan/DesktopPlanBoardPreview'
 import { projectPlanCard } from '@/lib/desktop/foreman-client'
 import { useDesktopForemanUi } from './useDesktopForemanUi'
 import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
-import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader, DesktopIntakeSiteProfile } from './intake'
+import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader, DesktopIntakeGithubProjects, DesktopIntakeSiteProfile } from './intake'
+import { useDesktopIntakeGithub } from '@/lib/desktop/foreman-intake/use-desktop-intake-github'
 import { DesktopStarterPack } from './starter-pack'
 import { DesktopStarterOfferCard } from './starter-pack/DesktopStarterOfferCard'
 import type { DesktopLocalStarterDecision, DesktopStarterView } from '@/lib/desktop/foreman-client/starter'
@@ -153,6 +154,8 @@ export function DesktopForemanColumn({
     const answerFeedback = useDesktopForemanFeedback(chat, !hidden && foreman.restored && savedAnswers)
     const opened = useRef(false)
     const column = useRef<HTMLDivElement>(null)
+    // The owner's GitHub projects, asked beside the website in the first intake question. Nothing is read while the questions are closed or hidden.
+    const github = useDesktopIntakeGithub({ chat, active: !!intake && foreman.ui.open && !hidden })
     useEffect(() => {
         if (openOnMount && foreman.restored && !opened.current) { opened.current = true; foreman.setOpen(true) }
     }, [openOnMount, foreman.restored, foreman.setOpen])
@@ -336,12 +339,14 @@ export function DesktopForemanColumn({
                     {intake ? <>
                         <div className="relative flex min-h-0 flex-1 flex-col justify-center overflow-y-auto px-3 py-6">
                             {/* Where no board is behind the questions, what the website read found is shown above them. */}
-                            {!renderBoardOverlay && <div className="absolute inset-x-0 top-0 z-30 max-h-[45%] overflow-y-auto px-3 pt-3">
-                                <DesktopIntakeSiteProfile chat={chat} intake={intake} active={ui.open && !hidden} />
-                            </div>}
+                            {/* The GitHub projects are reviewed here in every layout: their cards are edited, which the board preview is not. */}
+                            <div className="absolute inset-x-0 top-0 z-30 max-h-[45%] space-y-2 overflow-y-auto px-3 pt-3">
+                                {!renderBoardOverlay && <DesktopIntakeSiteProfile chat={chat} intake={intake} active={ui.open && !hidden} />}
+                                <DesktopIntakeGithubProjects github={github} intake={intake} />
+                            </div>
                             <DesktopForemanIntakeHeader intake={intake} />
                         </div>
-                        <div className="shrink-0 px-3 pb-3"><DesktopForemanIntakeCard intake={intake} autoFocus={ui.open && !hidden} /></div>
+                        <div className="shrink-0 px-3 pb-3"><DesktopForemanIntakeCard intake={intake} github={github} autoFocus={ui.open && !hidden} /></div>
                     </> : <>
                     <DesktopForemanChatLayer
                         messages={messages}

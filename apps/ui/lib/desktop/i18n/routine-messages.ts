@@ -50,6 +50,7 @@ const en = {
     warnCap: 'This workspace has more than 20 routines turned on, which is over the limit. They keep running, but no other routine can be turned on until some are off.',
     autoOff: 'Turned off after 10 failed runs in a row. Fix the cause, then switch it back on here.',
     autoOffBadge: 'Turned off after failures',
+    autoOffNotice: '{routine} was turned off after 10 failed runs in a row. Turn it back on in {coworker}’s Routines.',
     warningBadge: 'Over limit',
     describeButton: 'Describe schedule',
     describeField: 'Describe the schedule',
@@ -110,6 +111,7 @@ const mac = {
         warnCap: 'Cet espace de travail compte plus de 20 routines activées, ce qui dépasse la limite. Elles continuent de s’exécuter, mais aucune autre routine ne peut être activée tant que certaines ne sont pas désactivées.',
         autoOff: 'Désactivée après 10 échecs consécutifs. Corrigez la cause, puis réactivez-la ici.',
         autoOffBadge: 'Désactivée après des échecs',
+        autoOffNotice: '{routine} a été désactivée après 10 échecs consécutifs. Réactivez-la dans les Routines de {coworker}.',
         warningBadge: 'Limite dépassée',
         describeButton: 'Décrire la planification',
         describeField: 'Décrivez la planification',
@@ -167,6 +169,7 @@ const mac = {
         warnCap: 'Este espacio de trabajo tiene más de 20 rutinas activadas, por encima del límite. Siguen ejecutándose, pero no se puede activar ninguna otra hasta desactivar algunas.',
         autoOff: 'Desactivada tras 10 ejecuciones fallidas seguidas. Corrige la causa y vuelve a activarla aquí.',
         autoOffBadge: 'Desactivada tras fallos',
+        autoOffNotice: '{routine} se desactivó tras 10 ejecuciones fallidas seguidas. Vuelve a activarla en las Rutinas de {coworker}.',
         warningBadge: 'Por encima del límite',
         describeButton: 'Describir la programación',
         describeField: 'Describe la programación',
@@ -224,6 +227,7 @@ const mac = {
         warnCap: 'Este espaço de trabalho tem mais de 20 rotinas ativadas, acima do limite. Elas continuam em execução, mas nenhuma outra rotina pode ser ativada até que algumas sejam desativadas.',
         autoOff: 'Desativada após 10 execuções com falha seguidas. Corrija a causa e ative-a novamente aqui.',
         autoOffBadge: 'Desativada após falhas',
+        autoOffNotice: '{routine} foi desativada após 10 execuções com falha seguidas. Ative-a novamente nas Rotinas de {coworker}.',
         warningBadge: 'Acima do limite',
         describeButton: 'Descrever o agendamento',
         describeField: 'Descreva o agendamento',
@@ -281,6 +285,7 @@ const mac = {
         warnCap: 'In diesem Arbeitsbereich sind mehr als 20 Routinen eingeschaltet, das liegt über dem Limit. Sie laufen weiter, aber keine weitere Routine kann eingeschaltet werden, bis einige ausgeschaltet sind.',
         autoOff: 'Nach 10 fehlgeschlagenen Läufen in Folge ausgeschaltet. Beheben Sie die Ursache und schalten Sie sie dann hier wieder ein.',
         autoOffBadge: 'Nach Fehlern ausgeschaltet',
+        autoOffNotice: '{routine} wurde nach 10 fehlgeschlagenen Läufen in Folge ausgeschaltet. Schalten Sie sie in den Routinen von {coworker} wieder ein.',
         warningBadge: 'Über dem Limit',
         describeButton: 'Zeitplan beschreiben',
         describeField: 'Beschreibe den Zeitplan',
@@ -293,6 +298,14 @@ const mac = {
         notifyLoadFailed: 'Die Benachrichtigungseinstellungen konnten nicht geladen werden.',
     },
 } satisfies Record<Locale, typeof en>
+
+/**
+ * The notice a routine sends when ten failed runs in a row switched it off. Written on the Mac's own
+ * side, in the person's language; the two names are the person's own text and are put in as they are.
+ */
+export function desktopRoutineAutoOffNotice(locale: Locale, routine: string, coworker: string): string {
+    return mac[locale].autoOffNotice.replace('{routine}', () => routine).replace('{coworker}', () => coworker)
+}
 
 type Source = { agent: typeof agent; foreman: typeof foreman; kit: typeof kit; layout: typeof layout }
 

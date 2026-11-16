@@ -46,7 +46,7 @@ test('an empty trail explains what will appear here', async () => {
     expect(host.textContent).toContain('whether it was allowed by a permission, allowed once by you, declined or refused, and by which rule')
     expect(host.textContent).toContain('Kept on this Mac for 90 days')
     expect(button('Export CSV').disabled).toBe(true)
-    expect(button('Clear activity').disabled).toBe(true)
+    expect(button('Clear all activity').disabled).toBe(true)
     expect(host.querySelector('[role=status]')).toBeNull()
 })
 
@@ -110,15 +110,54 @@ test('a filter with no matches says so rather than showing the first-run text', 
     expect(host.textContent).not.toContain('No activity yet')
 })
 
+test('filtered to one coworker, the button clears that coworker’s activity only, with its own confirmation', async () => {
+    let cleared = false
+    const { host, requests } = await mount((url, init) => {
+        if (init?.method === 'DELETE') { cleared = true; return { cleared: true } }
+        return cleared && url.includes('coworker=app-ledger') ? view() : view({ total: 2, rows: [row({ coworker: 'Ledger', coworkerId: 'app-ledger' })] })
+    })
+    expect(button('Clear all activity')).toBeTruthy()
+    await act(async () => { choose(host.querySelector('select[aria-label="Coworker"]')!, 'app-ledger') })
+    await settle()
+    expect(button('Clear all activity')).toBeUndefined()
+    await act(async () => { button('Clear Ledger’s activity').click() })
+    expect(requests.some(request => request.method === 'DELETE')).toBe(false)
+    const dialog = document.querySelector('[role=alertdialog]')!
+    expect(dialog.textContent).toContain('Clear Ledger’s activity?')
+    expect(dialog.textContent).toContain('This removes every recorded action of Ledger, not only the rows shown. Other coworkers’ activity is kept. It cannot be undone.')
+    expect(dialog.textContent).not.toContain('every coworker in this workspace')
+    const confirm = [...dialog.querySelectorAll('button')].find(node => node.textContent === 'Clear Ledger’s activity') as HTMLButtonElement
+    await act(async () => { confirm.click() })
+    await settle()
+    expect(requests.filter(request => request.method === 'DELETE')).toEqual([{ url: '/api/desktop/activity?coworker=app-ledger', method: 'DELETE' }])
+    // It reads the same filter again, and with nothing left there is nothing more to clear.
+    expect(requests.at(-1)).toEqual({ url: '/api/desktop/activity?coworker=app-ledger', method: 'GET' })
+    expect(button('Clear Ledger’s activity').disabled).toBe(true)
+})
+
+test('filtered to deleted coworkers, the button clears only theirs', async () => {
+    const { host, requests } = await mount((_url, init) => init?.method === 'DELETE' ? { cleared: true } : view({ total: 1, rows: [row({ coworker: 'Deleted coworker', coworkerId: null, deleted: true })] }))
+    await act(async () => { choose(host.querySelector('select[aria-label="Coworker"]')!, 'deleted') })
+    await settle()
+    await act(async () => { button('Clear deleted coworkers’ activity').click() })
+    const dialog = document.querySelector('[role=alertdialog]')!
+    expect(dialog.textContent).toContain('Clear deleted coworkers’ activity?')
+    expect(dialog.textContent).toContain('This removes every recorded action of coworkers that no longer exist')
+    await act(async () => { ([...dialog.querySelectorAll('button')].find(node => node.textContent === 'Clear deleted coworkers’ activity') as HTMLButtonElement).click() })
+    await settle()
+    expect(requests.filter(request => request.method === 'DELETE')).toEqual([{ url: '/api/desktop/activity?coworker=deleted', method: 'DELETE' }])
+})
+
 test('Clear activity asks first, then clears everything and reads again', async () => {
     let cleared = false
     const { host, requests } = await mount((_url, init) => {
         if (init?.method === 'DELETE') { cleared = true; return { cleared: true } }
         return cleared ? view() : view({ total: 1, rows: [row()] })
     })
-    await act(async () => { button('Clear activity').click() })
+    await act(async () => { button('Clear all activity').click() })
     expect(requests.some(request => request.method === 'DELETE')).toBe(false)
     expect(document.body.textContent).toContain('Clear all activity?')
+    expect(document.body.textContent).toContain('This removes every recorded action for every coworker in this workspace, not only the rows shown.')
     expect(document.body.textContent).toContain('It cannot be undone.')
     const confirm = [...document.querySelectorAll('[role=alertdialog] button')].find(node => node.textContent === 'Clear activity') as HTMLButtonElement
     await act(async () => { confirm.click() })

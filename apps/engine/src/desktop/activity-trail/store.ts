@@ -8,7 +8,8 @@ import { openStore } from '../../db/sqlStore.js'
 
 // One database for the workspace, in the engine's data folder on this Mac. It sits beside the
 // coworkers' own databases rather than inside one, so deleting a coworker leaves its past actions
-// in the owner's history. Rows are only ever added, pruned by age or count, or cleared as a whole.
+// in the owner's history. Rows are only ever added, pruned by age or count, or cleared: all of
+// them, or all of one coworker's.
 const DDL = [
     `CREATE TABLE IF NOT EXISTS desktop_activity (
         seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,6 +122,11 @@ export function createActivityStore(client: Client) {
         async clear(): Promise<void> {
             await ensure(client)
             await client.batch(['DELETE FROM desktop_activity', 'DELETE FROM desktop_activity_meta'], 'write')
+        },
+        /** Removes one coworker's rows, a deleted coworker's included. Other rows and the dropped count stay. */
+        async clearAgent(agentId: string): Promise<number> {
+            await ensure(client)
+            return (await client.execute({ sql: 'DELETE FROM desktop_activity WHERE agent_id = ?', args: [agentId] })).rowsAffected
         },
         /** Actions an earlier launch could not record, kept so the count survives a restart. */
         async dropped(): Promise<number> {
