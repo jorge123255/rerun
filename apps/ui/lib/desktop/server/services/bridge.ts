@@ -7,6 +7,7 @@ import type {ServiceStore} from './store'
 import type {LocalServices,ServiceRun} from './lifecycle'
 import type {remoteMcpTools} from '../mcp/tools'
 import type {DesktopMcpCallAdmission} from '../mcp/bridge'
+import type {DesktopActivityDecision} from '@rerun/contracts'
 type RemoteTool = Awaited<ReturnType<typeof remoteMcpTools>>[number]
 type VaultTool = Omit<RemoteTool, 'execute' | 'destructive'> & { destructive?: boolean } & {
  execute(args:Record<string,unknown>,signal:AbortSignal,toolCallId:string):ReturnType<RemoteTool['execute']>
@@ -60,9 +61,10 @@ export function serviceEngineBridge(store:ServiceStore,service:LocalServices,own
    const record='vault' in capability ? undefined : await service.liveRecord(owner,capability.key,capability.revision,active)
    const runtime=record && service.transport(record,body,active)
    // An action that asks first is answered here, before the call is claimed or anything reaches the app.
-   const held=await admit?.({owner,sessionId:body.sessionId,tool:'vault' in capability?capability.vault.name:capability.name,destructive:'vault' in capability&&capability.vault.destructive===true,arguments:body.arguments},active)
+   let trail:DesktopActivityDecision|undefined
+   const held=await admit?.({owner,sessionId:body.sessionId,tool:'vault' in capability?capability.vault.name:capability.name,destructive:'vault' in capability&&capability.vault.destructive===true,arguments:body.arguments},active,said=>{trail=said})
    active.throwIfAborted()
-   if(typeof held==='string')return Response.json({toolCallId:body.toolCallId,result:{source:'local_service',untrusted:true,result:{isError:true,content:[{type:'text',text:held}]}}})
+   if(typeof held==='string')return Response.json({toolCallId:body.toolCallId,result:{source:'local_service',untrusted:true,result:{isError:true,content:[{type:'text',text:held}]}},...(trail&&{trail})})
    const claimed=await store.db.execute({sql:'INSERT INTO desktop_service_calls(owner,run_id,call_id) VALUES(?,?,?) ON CONFLICT DO NOTHING',args:[owner,body.runId,body.toolCallId]});if(claimed.rowsAffected!==1)throw new Error('Call already submitted; it will not be replayed')
    await service.current(owner,'use',body,active);active.throwIfAborted()
    let result:unknown
@@ -76,7 +78,7 @@ export function serviceEngineBridge(store:ServiceStore,service:LocalServices,own
     result={source:'local_service',untrusted:true,result:called.result}
    } else throw new Error('Service unavailable')
    if(await ownerForRun(body,active,body.action)!==owner)throw new Error('Owner changed');active.throwIfAborted()
-   return Response.json({toolCallId:body.toolCallId,result},{headers:{'Cache-Control':'no-store'}})
+   return Response.json({toolCallId:body.toolCallId,result,...(trail&&{trail})},{headers:{'Cache-Control':'no-store'}})
   }catch{return Response.json({error:'Service tool unavailable or acknowledgement unknown. Submitted calls are not replayed.'},{status:400})}
  },releaseOwner(owner:string){for(const [id,catalog] of catalogs)if(catalog.owner===owner)release(id)},async shutdown(){closed=true;for(const id of catalogs.keys())release(id);service.shutdown();await service.drain()}}
 }

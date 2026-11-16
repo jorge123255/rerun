@@ -1,7 +1,7 @@
 'use client'
 
 import { useDesktopLocale } from './DesktopLocale'
-import { Brain, Cloud, Database, Folder, Import, KeyRound, Package, Keyboard, LayoutGrid, Search, Server, Settings, UserRound } from 'lucide-react'
+import { Brain, Cloud, ScrollText, Database, Folder, Import, KeyRound, Package, Keyboard, LayoutGrid, Search, Server, Settings, UserRound } from 'lucide-react'
 import { ChromePill } from '@rerun/ui/chrome'
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import { HelpCircleIcon } from '@/lib/icons'
@@ -16,7 +16,7 @@ import { createDesktopWorkspaceClient } from '@/lib/desktop/workspaces'
 import { DesktopWorkspaceSwitcher } from './workspaces/DesktopWorkspaceSwitcher'
 import { DesktopWorkspaceSwitchLoader } from './workspaces/DesktopWorkspaceSwitchLoader'
 
-export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, profilePhoto, agents, selected, providerLabel, modelLabel, connections, workspaceDefault, onBoard, onCoworker, onSettings, onProfile, onWorkspaceSettings, onControlCenter, onShortcuts, onHelp, onSharedData, onSharedFiles, onBrain, onTemplates, onVault, onExternalMcp, onServers, onRerunCloud, onImportCoworker, viewRow, navigationDisabled = false, settingsDisabled = false }: {
+export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadId, profileName, profilePhoto, agents, selected, providerLabel, modelLabel, connections, workspaceDefault, onBoard, onCoworker, onSettings, onProfile, onWorkspaceSettings, onControlCenter, onShortcuts, onHelp, onSharedData, onSharedFiles, onBrain, onActivity, onTemplates, onVault, onExternalMcp, onServers, onRerunCloud, onImportCoworker, viewRow, navigationDisabled = false, settingsDisabled = false }: {
     workspaceName: string
     iconCatalogId?: string | null
     iconUploadId?: string | null
@@ -40,6 +40,8 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
     onSharedData?: () => void
     onSharedFiles?: () => void
     onBrain?: () => void
+    /** The activity trail: every action coworkers took and which rule decided it. */
+    onActivity?: () => void
     onTemplates?: () => void
     onVault?: () => void
     viewRow?: ReactNode
@@ -81,6 +83,7 @@ export function DesktopWorkspaceMenu({ workspaceName, iconCatalogId, iconUploadI
                 {onVault && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onVault() }}><KeyRound /> Vault{vaultSignedOut && <span role="img" className="ml-auto size-2 rounded-full bg-orange-500" aria-label="An app of the Vault is signed out" />}</DropdownMenuItem>}
                 {onImportCoworker && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onImportCoworker() }}><Import /> Import coworker</DropdownMenuItem>}
                 {onBrain && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onBrain() }}><Brain /> {t('brainDesktop.title')}</DropdownMenuItem>}
+                {onActivity && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onActivity() }}><ScrollText /> Activity</DropdownMenuItem>}
                 {onControlCenter && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onControlCenter() }}><Search /> {t('controlCenter.title')}</DropdownMenuItem>}
                 <DropdownMenuItem disabled={settingsDisabled} onSelect={onSettings}><Settings /> {t('settings')}</DropdownMenuItem>
                 {onExternalMcp && <DropdownMenuItem disabled={navigationDisabled} onSelect={() => { openingControlCenter.current = true; onExternalMcp() }}><KeyRound /> {t('controlCenter.commands.api_keys')}</DropdownMenuItem>}

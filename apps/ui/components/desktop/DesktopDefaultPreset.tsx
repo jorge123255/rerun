@@ -1,8 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import type { DesktopBackupModelView } from '@/lib/desktop/server/usage-gate-model'
+import { DesktopBackupModel } from './DesktopBackupModel'
 
-type View = { tier: string | null; presets: { id: string; label: string; runsOn: string | null }[] }
+type View = { tier: string | null; presets: { id: string; label: string; runsOn: string | null }[]; backup?: DesktopBackupModelView }
 
 /**
  * The workspace default as a Rerun preset. A preset is not one model: each message goes to the
@@ -31,7 +33,7 @@ export function DesktopDefaultPreset({ onChanged }: { onChanged?: () => void }) 
             onChanged?.()
         } catch { setError('The preset could not be saved. Try again.') } finally { setSaving(false) }
     }
-    return <div className="space-y-2 pt-3">
+    return <><div className="space-y-2 pt-3">
         <label htmlFor="desktop-default-preset" className="font-semibold">Rerun preset</label>
         <p className="text-sm text-muted-foreground">Let the default follow a preset instead of one model. Each message runs on the first of your plans that has usage left; the model above is the fallback. Routines follow the preset too.</p>
         <select id="desktop-default-preset" className="w-full rounded-md border bg-background px-3 py-2 text-sm" disabled={saving || (!available.length && !view.tier)} value={view.tier ?? ''}
@@ -45,4 +47,5 @@ export function DesktopDefaultPreset({ onChanged }: { onChanged?: () => void }) 
         {!available.length && !view.tier && <p className="text-xs text-muted-foreground">Presets need a ChatGPT or Claude plan, or an OpenAI, Anthropic or OpenRouter key.</p>}
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     </div>
+    {view.backup && <DesktopBackupModel initial={view.backup} />}</>
 }

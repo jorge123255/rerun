@@ -13,6 +13,7 @@ import { readDesktopAttention } from './attention'
 import { DesktopHttpError } from './auth'
 import { desktopInfoNotificationWanted, ensureDesktopUserNotifications, pendingDesktopUserNotificationEvents, takeDesktopUserNotificationDelivery } from './user-notifications'
 import { openDesktopDatabase } from './database'
+import { readDesktopRoutineAutoOffBinding, readDesktopRoutineAutoOffEvents } from './routine-auto-off'
 import type { DesktopRuntime } from './runtime'
 import { withRosterWrite } from './roster-writes'
 import { findDesktopAgent } from './store'
@@ -267,7 +268,8 @@ export async function readDesktopTerminalBinding(db: Client, id: string): Promis
               WHERE t.id = ? AND t.status = 'error' AND d.agent_id IS NULL`,
         args: [id],
     })).rows[0]
-    return row ? { agentId: String(row.agent_id), sessionId: String(row.session_id) } : null
+    // A routine's switch-off notice opens its own conversation, revalidated the same way.
+    return row ? { agentId: String(row.agent_id), sessionId: String(row.session_id) } : readDesktopRoutineAutoOffBinding(db, id)
 }
 
 // The events a mounted delivery should announce, newest first: everything the scope and the
@@ -349,6 +351,13 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime, acc
                 title: String(row.agent_name), subtitle: subtitle('error', typeof row.source_name === 'string' ? row.source_name : slug),
                 body: row.message ? String(row.message).slice(0, 180) : null, silent: false, terminalId: String(row.id),
             } })
+        }
+        // The one event that is not asked `wantedByPrefs`: a routine switched off after ten failed
+        // runs in a row reaches the person even when they muted that coworker or its tasks.
+        // Notifications switched off for the whole workspace (the branch above) still silence it.
+        for (const notice of await readDesktopRoutineAutoOffEvents(db, locale)) {
+            if (seen.has(notice.event.key) || !Number.isFinite(notice.at) || notice.at < enabledAtMs) continue
+            scored.push(notice)
         }
     }
     for (const event of pendingDesktopUserNotificationEvents(runtime)) {

@@ -8,7 +8,7 @@ import type { Logger } from '../lib/logger.js'
 import type { HostBreaker } from '../tools/host-breaker.js'
 import type { ScreenshotStore } from './screenshots.js'
 
-export type RunTrigger = { source: 'chat'; coworkerMentions?: DesktopCoworkerMention[]; author?: MessageAuthor; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment; workspaceAttachments?: DesktopWorkspaceAttachment[]; desktopAttachments?: DesktopResolvedAttachment[]; desktopDocuments?: DesktopResolvedDocument[]; savedUser?: MessageRow; queuedUser?: MessageRow; calledBy?: string; foremanAlternate?: true } | { source: 'schedule'; slug: string; name: string; requireExactModel?: boolean } | { source: 'trigger'; slug: string; name: string }
+export type RunTrigger = { source: 'chat'; coworkerMentions?: DesktopCoworkerMention[]; author?: MessageAuthor; userLanguage?: string; workspaceAttachment?: DesktopWorkspaceAttachment; workspaceAttachments?: DesktopWorkspaceAttachment[]; desktopAttachments?: DesktopResolvedAttachment[]; desktopDocuments?: DesktopResolvedDocument[]; savedUser?: MessageRow; queuedUser?: MessageRow; calledBy?: string; foremanAlternate?: true } | { source: 'schedule'; slug: string; name: string; requireExactModel?: boolean; usageGate?: { connectionId: string; plan: string; provider: string }; /** The Mac's firing frame: the saved text's numbered parts, and whether Run now started it. */ routine?: { parts: string[]; test: boolean } } | { source: 'trigger'; slug: string; name: string }
 
 export type PartialResult = { label: string; text: string }
 

@@ -4,10 +4,13 @@ import type { Client } from '@libsql/client'
 import { z } from 'zod'
 import { getAgent } from '@/lib/engine/client'
 import { DesktopHttpError } from './auth'
-import { resolveDesktopRoutinePreset } from './chat-model'
+import { desktopPlanWait } from '@rerun/contracts'
+import { desktopConnections } from '../chat-model'
+import { PresetUnavailable, resolveDesktopRoutinePreset } from './chat-model'
+import { desktopBackupFor, desktopPlanOutOfPreset, readDesktopBackupModel } from './usage-gate-model'
 import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
-import { engineOf } from './settings'
+import { engineOf, readDesktopProviders } from './settings'
 import { withRosterWrite } from './roster-writes'
 import { desktopSchedulesApi } from './schedules/api'
 import { adoptDesktopScheduleEvent } from './schedules/adoption'
@@ -17,6 +20,7 @@ const bridgeSchema = z.discriminatedUnion('event', [
     z.object({ event: z.literal('desktop.schedule.authorize'), agentId: identity }).strict(),
     z.object({ event: z.literal('desktop.schedule.adopt'), agentId: identity, sessionId: identity, runId: identity.nullable(), title: z.string().max(160) }).strict(),
     z.object({ event: z.literal('desktop.schedule.model'), agentId: identity }).strict(),
+    z.object({ event: z.literal('desktop.schedule.backup'), agentId: identity, outConnectionId: identity }).strict(),
     z.object({ event: z.literal('desktop.schedule.shutdown') }).strict(),
 ])
 // Next can load the callback and browser routes in different bundles in the same UI process.
@@ -76,16 +80,33 @@ export async function handleDesktopScheduleBridge(runtime: DesktopRuntime, body:
     }
     if (event.event === 'desktop.schedule.model') {
         // A Rerun preset is turned into the plan that can answer now, each time a routine starts.
-        let answer: { model: { connectionId: string; model: string } | null; unavailable?: string }
+        let answer: { model: { connectionId: string; model: string } | null; unavailable?: string; waiting?: { connectionId: string; plan: string; provider: string; resetsAt: string | null } }
         try {
             const pick = await resolveDesktopRoutinePreset(runtime, event.agentId)
             answer = { model: pick ? { connectionId: pick.connectionId, model: pick.model } : null }
         } catch (error) {
             if (!(error instanceof DesktopHttpError) || error.status !== 409) throw error
             answer = { model: null, unavailable: error.message.slice(0, 500) }
+            // A preset whose plan is out of usage: the owner's backup model runs the routine when
+            // it may. Otherwise the engine is told which plan to wait for, and parks the routine.
+            if (error instanceof PresetUnavailable) {
+                const connections = desktopConnections((await readDesktopProviders(runtime)).connections)
+                const out = desktopPlanOutOfPreset(error.tier, connections)
+                const backup = out ? desktopBackupFor(connections, await readDesktopBackupModel(runtime).catch(() => null), out) : null
+                if (backup) answer = { model: { connectionId: backup.connectionId, model: backup.model } }
+                else if (out) answer.waiting = { connectionId: out.id, plan: out.name, provider: out.provider, resetsAt: desktopPlanWait(out.planLimits, new Date()).resetsAt }
+            }
         }
         assertActive(runtime, signal)
         return Response.json({ ok: true, persisted: true, ...answer }, { headers: { 'Cache-Control': 'no-store' } })
+    }
+    if (event.event === 'desktop.schedule.backup') {
+        // Only ever the pair the owner saved as the backup, and only when it may run now.
+        const connections = desktopConnections((await readDesktopProviders(runtime)).connections)
+        const out = connections.find(item => item.id === event.outConnectionId)
+        const backup = out ? desktopBackupFor(connections, await readDesktopBackupModel(runtime).catch(() => null), out) : null
+        assertActive(runtime, signal)
+        return Response.json({ ok: true, persisted: true, model: backup ? { connectionId: backup.connectionId, model: backup.model, note: backup.note.slice(0, 500) } : null }, { headers: { 'Cache-Control': 'no-store' } })
     }
     assertActive(runtime, signal)
     return Response.json({ ok: true, persisted: true }, { headers: { 'Cache-Control': 'no-store' } })

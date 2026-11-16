@@ -327,3 +327,77 @@ test('describe preview is truthfully unavailable and preserves timezone model an
     await setControlValue('input[aria-label="Cron expression"]', '0 9 * * *')
     expect(container.querySelector<HTMLInputElement>('input[aria-label="Cron expression"]')?.value).toBe('0 9 * * *')
 })
+
+// ---- Checklist, quiet runs, limits and auto-off ----
+const resultChat = { agentId: 'alice', sessionId: 'result', engineSessionId: 'engine-result', tabUid: 'schedule:result', title: 'Daily', runId: 'run' }
+const resultOf = (outcome: Record<string, unknown>) => ({ status: 'done', runId: 'run', chat: resultChat, outcome: { quiet: false, test: false, checklist: null, ...outcome } })
+test('shows what the last run reported: the checklist count with its reason, a quiet run, and a missing checklist', async () => {
+    const part = (number: number, status: string, reason: string | null = null) => ({ number, text: `Part ${number}`, status, reason })
+    respond = async url => url.endsWith('/model') ? Response.json(modelView) : Response.json([
+        task('steps', { lastResult: resultOf({ checklist: { reported: true, parts: [part(1, 'done'), part(2, 'done'), part(3, 'done'), part(4, 'blocked', 'Notion returned 403')] } }) }),
+        task('quiet', { lastResult: resultOf({ quiet: true }) }),
+        task('silent', { lastResult: resultOf({ test: true, checklist: { reported: false, parts: [part(1, 'open'), part(2, 'open')] } }) }),
+        task('plain', { lastResult: { status: 'done', runId: 'run', chat: resultChat } }),
+    ])
+    await render()
+    expect(row('Saved steps').textContent).toContain('Last result: Done · 3 done, 1 blocked: Notion returned 403')
+    expect(row('Saved quiet').textContent).toContain('Last result: Done · Nothing to report')
+    expect(row('Saved silent').textContent).toContain('Last result: Done · Test run · no checklist reported')
+    expect(row('Saved plain').textContent).toMatch(/Last result: Done$/)
+})
+
+test('warns about saved routines over a limit and says how a failing routine was turned off', async () => {
+    respond = async url => url.endsWith('/model') ? Response.json(modelView) : Response.json([
+        task('fast', { cron: '*/5 * * * *', warnings: ['interval', 'cap'] }),
+        task('broken', { enabled: false, autoDisabledAt: '2026-11-10T08:00:00.000Z' }),
+        task('paused', { enabled: false }),
+    ])
+    await render()
+    expect(row('Saved fast').textContent).toContain('Over limit')
+    expect(row('Saved broken').textContent).toContain('Turned off after failures')
+    expect(row('Saved paused').textContent).not.toContain('Turned off after failures')
+    await act(async () => { row('Saved fast').click() })
+    expect(container.querySelector('[data-routine-warning="interval"]')?.textContent).toContain('more often than every 15 minutes')
+    expect(container.querySelector('[data-routine-warning="cap"]')?.textContent).toContain('more than 20 routines turned on')
+    expect(container.querySelector('[data-routine-auto-off]')).toBeNull()
+})
+
+test('a parked routine shows the waiting line in place of its last result, and keeps its warning', async () => {
+    const wait = { slug: 'parked', plan: 'ChatGPT', parkedAt: '2026-11-16T10:00:00.000Z', resetsAt: '2026-11-16T15:00:00.000Z', nextCheckAt: '2026-11-16T15:00:30.000Z', skippedWhileWaiting: 0 }
+    respond = async url => url.endsWith('/model') ? Response.json(modelView) : Response.json([
+        task('parked', { warnings: ['cap'], usageWait: wait, lastResult: resultOf({ quiet: true }) }),
+        task('quiet', { lastResult: resultOf({ quiet: true }) }),
+        task('broken', { enabled: false, autoDisabledAt: '2026-11-10T08:00:00.000Z' }),
+    ])
+    await render()
+    expect(row('Saved parked').textContent).toContain('Waiting for ChatGPT to reset at ')
+    expect(row('Saved parked').textContent).not.toContain('Last result')
+    expect(row('Saved parked').textContent).not.toContain('Nothing to report')
+    expect(row('Saved parked').textContent).toContain('Over limit')
+    // The rows beside it are as they were.
+    expect(row('Saved quiet').textContent).toContain('Last result: Done · Nothing to report')
+    expect(row('Saved broken').textContent).toContain('Turned off after failures')
+    await act(async () => { row('Saved parked').click() })
+    expect(container.querySelector('[data-routine-warning="cap"]')?.textContent).toContain('more than 20 routines turned on')
+})
+
+test('says in the editor how a routine switched off after failures is turned back on', async () => {
+    respond = async url => url.endsWith('/model') ? Response.json(modelView) : Response.json([task('broken', { enabled: false, autoDisabledAt: '2026-11-10T08:00:00.000Z' })])
+    await render()
+    await act(async () => { row('Saved broken').click() })
+    expect(container.querySelector('[data-routine-auto-off]')?.textContent).toBe('Turned off after 10 failed runs in a row. Fix the cause, then switch it back on here.')
+})
+
+test('shows the plain refusal when a save would break a routine limit and keeps the draft', async () => {
+    const message = 'A recurring routine can run at most once every 15 minutes. Choose a slower schedule; nothing was saved.'
+    respond = async (url, init) => {
+        if (url.endsWith('/model')) return Response.json(modelView)
+        if (init?.method === 'PUT') return Response.json({ error: message }, { status: 422 })
+        return Response.json([task('daily')])
+    }
+    await render()
+    await act(async () => { row('Saved daily').click() })
+    await act(async () => { button('Save changes').click() })
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(message)
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Name"]')?.value).toBe('Saved daily')
+})

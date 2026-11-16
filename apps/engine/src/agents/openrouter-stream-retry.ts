@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { APICallError, type LanguageModelMiddleware } from 'ai'
 import { STREAM_CUT_RAW_REASON } from '../runtime/provider-errors.js'
+import type { StreamRetryHooks } from './transient-stream-retry.js'
 
 type WrapStream = NonNullable<LanguageModelMiddleware['wrapStream']>
 type StreamResult = Awaited<ReturnType<Parameters<WrapStream>[0]['doStream']>>
@@ -41,9 +42,16 @@ function cutFinish(finish: FinishPart | undefined): FinishPart {
  * Replays a step whose stream was cut before it produced anything that cannot be taken back, which
  * is what a hub deploy or crash does to a step still reasoning. A cut it cannot replay ends the step
  * on a failed finish, so the run stops as interrupted instead of passing for a turn the model chose
- * to end.
+ * to end. The hooks let the run show that it is reconnecting and veto a replay it must not make.
  */
-export function createStreamRetryMiddleware(retryDelaysMs: readonly number[] = RETRY_DELAYS_MS): LanguageModelMiddleware {
+export function createStreamRetryMiddleware(retryDelaysMs: readonly number[] = RETRY_DELAYS_MS, hooks: StreamRetryHooks = {}): LanguageModelMiddleware {
+    const notify = (notice: Parameters<NonNullable<StreamRetryHooks['notify']>>[0]) => {
+        try {
+            hooks.notify?.(notice)
+        } catch {
+            // A closed conversation stream must not fail the step.
+        }
+    }
     return {
         specificationVersion: 'v3',
         wrapStream: async ({ doStream, params }) => {
@@ -56,6 +64,7 @@ export function createStreamRetryMiddleware(retryDelaysMs: readonly number[] = R
                 start(controller) {
                     const openBlocks = new Map<string, 'text-end' | 'reasoning-end'>()
                     let committed = false
+                    let announced = false
 
                     const forward = async (attempt: ReadableStream<StreamPart>, isReplay: boolean): Promise<AttemptEnd> => {
                         const current = attempt.getReader()
@@ -71,6 +80,10 @@ export function createStreamRetryMiddleware(retryDelaysMs: readonly number[] = R
                                 if (value.type === 'text-end') openBlocks.delete(`text:${value.id}`)
                                 if (value.type === 'reasoning-end') openBlocks.delete(`reasoning:${value.id}`)
                                 committed ||= commitsTheStep(value)
+                                if (announced && value.type !== 'response-metadata') {
+                                    announced = false
+                                    notify({ status: 'resumed' })
+                                }
                                 controller.enqueue(value)
                             }
                         } catch (error) {
@@ -96,12 +109,15 @@ export function createStreamRetryMiddleware(retryDelaysMs: readonly number[] = R
                                 if (end.kind === 'aborted') return controller.error(end.error)
                                 lastFinish = end.finish ?? lastFinish
                             }
-                            if (committed || retries >= retryDelaysMs.length || signal?.aborted) {
+                            if (committed || retries >= retryDelaysMs.length || signal?.aborted || hooks.canRetry?.() === false) {
+                                if (announced) notify({ status: 'failed' })
                                 closeOpenBlocks()
                                 controller.enqueue(cutFinish(lastFinish))
                                 return controller.close()
                             }
                             closeOpenBlocks()
+                            announced = true
+                            notify({ status: 'reconnecting', attempt: retries + 1, of: retryDelaysMs.length })
                             await sleep(retryDelaysMs[retries], undefined, { signal }).catch(() => {})
                             if (cancelled) return
                             if (signal?.aborted) {
@@ -112,6 +128,7 @@ export function createStreamRetryMiddleware(retryDelaysMs: readonly number[] = R
                                 attempt = (await doStream()).stream
                             } catch (error) {
                                 if (!isRetryableOpenError(error)) {
+                                    if (announced) notify({ status: 'failed' })
                                     controller.enqueue({ type: 'error', error } as StreamPart)
                                     return controller.close()
                                 }

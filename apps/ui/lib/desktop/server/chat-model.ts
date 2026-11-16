@@ -1,6 +1,7 @@
 import 'server-only'
 import { EngineRequestError, getAgent, patchAgent, setModelEffort } from '@/lib/engine/client'
 import { DESKTOP_PRESET_CONNECTION_ID, connectionReasoningOptions, desktopPresetFallbackNote, desktopPresetTier, desktopPresetUnavailable, resolveDesktopPreset, type ConnectionSummary, type DesktopPresetTier } from '@rerun/contracts'
+import { desktopPlanOutOfPreset, gateDesktopPick, readDesktopBackupModel, type DesktopUsageGated } from './usage-gate-model'
 import type { Client } from '@libsql/client'
 import { buildDesktopModelView, concreteDesktopPick, customReasoningUnavailable, desktopConnectionModelLabel, desktopConnections, offeredModelIds, usableConnection, type DesktopModelPick, type DesktopModelSource, type DesktopModelView } from '../chat-model'
 import { DesktopHttpError } from './auth'
@@ -55,7 +56,7 @@ function concrete(connections: ConnectionSummary[], pick: DesktopModelPick, stat
     if (!tier) return pick
     const usable = desktopConnections(connections)
     const found = concreteDesktopPick(usable, pick)
-    if (!found) throw new DesktopHttpError(status, desktopPresetUnavailable(tier, usable))
+    if (!found) throw new PresetUnavailable(status, desktopPresetUnavailable(tier, usable), tier)
     return found
 }
 
@@ -125,7 +126,39 @@ function fallbackNote(connections: ConnectionSummary[], tier: DesktopPresetTier 
     return desktopPresetFallbackNote(found, found ? desktopConnectionModelLabel(usable.find(item => item.id === found.connectionId), found.model) : '') ?? undefined
 }
 
-export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: DesktopAgent, session: DesktopSession | null, requested?: DesktopModelPick): Promise<{ connectionId: string; model: string; source: DesktopModelSource; presetNote?: string }> {
+type ResolvedChatModel = { connectionId: string; model: string; source: DesktopModelSource; presetNote?: string; viaBackup?: true }
+
+/**
+ * `usageGate` is set by a chat send. A plan that is certain to refuse the message (a full window
+ * whose reset is still ahead) is not tried: the owner's backup model answers when one may, and
+ * otherwise the send is refused with the reset time, so the chat can offer to send it then.
+ */
+export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: DesktopAgent, session: DesktopSession | null, requested?: DesktopModelPick, options: { usageGate?: boolean } = {}): Promise<ResolvedChatModel> {
+    if (!options.usageGate) return chatModel(runtime, agent, session, requested)
+    const backup = await readDesktopBackupModel(runtime).catch(() => null)
+    const gated = (found: Omit<ResolvedChatModel, 'viaBackup'>, connections: ConnectionSummary[], out = false): ResolvedChatModel => {
+        const result: DesktopUsageGated = gateDesktopPick(desktopConnections(connections), found, backup, new Date(), out)
+        return result.note ? { ...found, connectionId: result.connectionId, model: result.model, presetNote: result.note, viaBackup: true } : found
+    }
+    try {
+        const found = await chatModel(runtime, agent, session, requested)
+        return gated(found, (await readDesktopProviders(runtime)).connections)
+    } catch (error) {
+        // A preset with no plan left says which plan it is waiting for, so it can be gated the same way.
+        if (!(error instanceof PresetUnavailable)) throw error
+        const connections = desktopConnections((await readDesktopProviders(runtime)).connections)
+        const out = desktopPlanOutOfPreset(error.tier, connections)
+        if (!out) throw error
+        return gated({ connectionId: out.id, model: '', source: error.source }, connections, true)
+    }
+}
+
+export class PresetUnavailable extends DesktopHttpError {
+    source: DesktopModelSource = 'conversation'
+    constructor(status: number, message: string, readonly tier: DesktopPresetTier) { super(status, message) }
+}
+
+async function chatModel(runtime: DesktopRuntime, agent: DesktopAgent, session: DesktopSession | null, requested?: DesktopModelPick): Promise<{ connectionId: string; model: string; source: DesktopModelSource; presetNote?: string }> {
     // A missing workspace default still blocks chat, as it does today. A valid pin or chat
     // override then replaces it for this send without writing the workspace choice back.
     const workspace = await desktopModel(runtime)
@@ -149,7 +182,10 @@ export async function resolveDesktopChatModel(runtime: DesktopRuntime, agent: De
         return noted(select(conversation, 'conversation'), desktopPresetTier(chosen))
     }
     const preset = await coworkerPreset(await openDesktopDatabase(runtime.dataRoot), agent.id)
-    if (preset) return noted(select(concrete(connections, { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: preset }, 409), 'coworker'), preset)
+    if (preset) {
+        try { return noted(select(concrete(connections, { connectionId: DESKTOP_PRESET_CONNECTION_ID, model: preset }, 409), 'coworker'), preset) }
+        catch (error) { if (error instanceof PresetUnavailable) error.source = 'coworker'; throw error }
+    }
     if (coworker.model) {
         const pick = coworker.connectionId ? { connectionId: coworker.connectionId, model: coworker.model } : null
         if (!usableConnection(connections, pick)) throw new DesktopHttpError(409, 'This coworker’s default model is no longer available. Choose another model or follow the workspace default.')

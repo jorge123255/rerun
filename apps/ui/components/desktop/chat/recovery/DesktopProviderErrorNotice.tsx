@@ -4,7 +4,7 @@ import { NoticeActions, type NoticeAction } from '@/components/chat/NoticeAction
 import { Icon } from '@/components/ui/icon'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { BorderBeam } from '@rerun/ui'
-import { AlertTriangleIcon, GaugeIcon, MessageSquareIcon, PlugIcon, RotateCwIcon, ScrollTextIcon, ServerIcon, SquareIcon, UnplugIcon } from '@/lib/icons'
+import { AlertTriangleIcon, ClockIcon, GaugeIcon, MessageSquareIcon, PlugIcon, RotateCwIcon, ScrollTextIcon, ServerIcon, SquareIcon, UnplugIcon } from '@/lib/icons'
 import { MessageSquarePlus } from 'lucide-react'
 import { chatErrorTitle, describeSubscriptionLimit, friendlyError, isAnthropicKeyNotScoped, type ChatErrorKind } from '@/lib/chat-error'
 import type { ComponentType } from 'react'
@@ -38,7 +38,21 @@ function header(kind: NoticeKind, message: string): { title: string; icon: Compo
     return { title, icon: plan === 'claude' ? ClaudeGlyph : plan === 'anthropic' ? AnthropicGlyph : plan === 'opencode' ? OpencodeGlyph : OpenAIGlyph }
 }
 
-export function DesktopProviderErrorNotice({ kind, message, onRetry, onContinue, onStopRun, onNewConversation, onReconnect, onSwitchModel }: {
+/**
+ * What a plan that ran out lets the person do besides switching model: wait for it. `plan` is the
+ * plan the conversation is waiting for and when it resets; `queued` is true once the message is
+ * already set to be sent then.
+ */
+export type DesktopUsageWaitOffer = { plan: { name: string; resetsAt: string | null } | null; queued: boolean; busy?: boolean; error?: string; onSendAtReset?: () => void }
+
+export function usageResetLine(plan: { name: string; resetsAt: string | null }): string {
+    if (!plan.resetsAt) return `${plan.name} has not said when it resets. Rerun checks every 15 minutes, for up to 24 hours.`
+    const time = new Date(plan.resetsAt)
+    return `${plan.name} resets at ${Number.isNaN(time.getTime()) ? plan.resetsAt : time.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.`
+}
+
+export function DesktopProviderErrorNotice({ kind, message, onRetry, onContinue, onStopRun, onNewConversation, onReconnect, onSwitchModel, usage }: {
+    usage?: DesktopUsageWaitOffer
     kind: NoticeKind
     message: string
     onRetry?: () => void
@@ -91,7 +105,27 @@ export function DesktopProviderErrorNotice({ kind, message, onRetry, onContinue,
             onClick: onRetry,
         })
     }
-    if (onSwitchModel && (kind === 'usage_limit' || kind === 'provider_error' || kind === 'context_window' || kind === 'overloaded' || kind === 'generic')) {
+    const waitable = kind === 'usage_limit' && usage?.plan ? usage : null
+    if (waitable && !waitable.queued && waitable.onSendAtReset) {
+        actions.push({
+            key: 'send-at-reset',
+            leading: <Icon icon={ClockIcon} size="sm" />,
+            title: 'Send when it resets',
+            cta: waitable.busy ? 'Queuing…' : 'Send when it resets',
+            description: `Keeps this message and sends it once when ${waitable.plan!.name} has usage again. You can cancel it.`,
+            onClick: () => { if (!waitable.busy) waitable.onSendAtReset?.() },
+        })
+    }
+    if (onSwitchModel && waitable) {
+        actions.push({
+            key: 'switch',
+            leading: <Icon icon={GaugeIcon} size="sm" />,
+            title: 'Choose another model',
+            cta: 'Choose another model',
+            description: 'Pick another model for this conversation. Nothing moves to a paid key unless you pick it.',
+            onClick: onSwitchModel,
+        })
+    } else if (onSwitchModel && (kind === 'usage_limit' || kind === 'provider_error' || kind === 'context_window' || kind === 'overloaded' || kind === 'generic')) {
         actions.push({
             key: 'switch',
             leading: <Icon icon={GaugeIcon} size="sm" />,
@@ -120,6 +154,8 @@ export function DesktopProviderErrorNotice({ kind, message, onRetry, onContinue,
                 <span className="font-medium">{title}</span>
             </div>
             <p className="text-sm">{kind === 'run_in_flight' ? 'A run started earlier is still holding this conversation. Stop it to send your message.' : friendlyError(message)}</p>
+            {waitable && <p className="text-sm text-muted-foreground" data-usage-reset>{usageResetLine(waitable.plan!)}{waitable.queued ? ' Your message is set to be sent then.' : ''}</p>}
+            {waitable?.error && <p role="alert" className="text-xs text-destructive">{waitable.error}</p>}
             <NoticeActions actions={actions} />
         </div>
     )

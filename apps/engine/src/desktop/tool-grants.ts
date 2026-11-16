@@ -2,6 +2,7 @@ import { DESKTOP_TEAM_READ_PROMPT, desktopRerunGrantIds, desktopRerunGrantsOf, d
 import { DESKTOP_TABLE_VIEW_INSTRUCTION } from './table-view-tools/index.js'
 import { readAgentConfig } from '../agents/loader.js'
 import type { RunContext } from '../runtime/context.js'
+import { noteDesktopActivity } from './activity-trail/recorder.js'
 
 export function hasDesktopToolGrant(config: AgentConfig, id: DesktopRerunGrantId): boolean {
     if (!desktopRerunGrantsOf(config.tools)[id]) return false
@@ -28,7 +29,12 @@ export async function requireDesktopToolGrant(ctx: RunContext, id: DesktopRerunG
     ctx.abortSignal?.throwIfAborted()
     const current = await readAgentConfig(ctx.agent.id).catch(() => null)
     ctx.abortSignal?.throwIfAborted()
-    if (!current?.enabled || !hasDesktopToolGrant(current, id)) throw new Error('This tool is turned off for this coworker.')
+    // The activity trail records which permission decided the call in progress.
+    if (!current?.enabled || !hasDesktopToolGrant(current, id)) {
+        noteDesktopActivity({ outcome: 'refused-no-permission', rule: `permission:${id}` })
+        throw new Error('This tool is turned off for this coworker.')
+    }
+    noteDesktopActivity({ outcome: 'allowed-by-permission', rule: `permission:${id}` })
 }
 
 export function desktopToolInstruction(config: AgentConfig): string {

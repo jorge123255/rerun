@@ -45,6 +45,8 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (/^\/desktop\/brain\/semantic\/[A-Za-z0-9_-]+\/(?:search|index)$/.test(path)) return method === 'POST'
     if (path === '/desktop/company-brief') return method === 'GET'
     if (path === '/desktop/isolated-screen/setup') return method === 'GET' || method === 'POST'
+    // The activity trail: read a page of it, or clear it. Kept on this Mac; no other method is served.
+    if (path === '/desktop/activity') return method === 'GET' || method === 'DELETE'
     if (/^\/desktop\/company-profile\/(?:decide|enrich|projects)$/.test(path)) return method === 'POST'
     if (/^\/desktop\/company-brief\/(?:observe|synthesize|cancel|cancel-chat|edit|dismiss|retry|handoff|handoff-receipt)$/.test(path)) return method === 'POST'
     if (method === 'GET' && /^\/agents\/[^/]+\/setup\/?$/.test(path)) return true
