@@ -424,7 +424,7 @@ async function launch() {
         })
         app.once('will-quit', shortcutPreference.unregister)
         const refreshApplicationMenu = () => installMacApplicationMenu({
-            Menu, appName: app.name, isDesktopPage, locale: shellLanguage.locale(),
+            Menu, dock: app.dock, appName: app.name, isDesktopPage, locale: shellLanguage.locale(),
             settingsWindow: candidate => {
                 const target = workspaceMenuTarget(candidate)
                 return boardContext(target) && boards.get(target).drafts.ready ? target : null
