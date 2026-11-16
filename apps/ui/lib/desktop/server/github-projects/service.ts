@@ -42,6 +42,7 @@ export type DesktopGithubProjectsAnswer = { record: DesktopGithubProjectsRecord 
 
 const NO_MODEL = 'The selected model does not support this read, so only what the files show is listed.'
 const MODEL_FAILED = 'The model could not describe these projects, so only what the files show is listed.'
+const FILES_ONLY = 'Read from the links in your message: only what the files show is listed. Press Read again to have your model describe them.'
 
 function oneLine(value: string | null, max: number): string | null {
     const cleaned = value?.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ').replace(/\s+/g, ' ').trim()
@@ -92,6 +93,27 @@ export function buildGithubProjectsRecord(input: {
     return { key: input.key, revision: 0, inference: understood ? 'model' : 'none', inferenceNote: understood ? null : input.note, projects, links, readAt: input.now, updatedAt: input.now }
 }
 
+/**
+ * A set that grew by a link keeps what was already settled for the projects it had: their kind,
+ * their description, the roles the owner left ticked and the links between them.
+ */
+export function carryGithubProjectEdits(fresh: DesktopGithubProjectsRecord, before: DesktopGithubProjectsRecord | null): DesktopGithubProjectsRecord {
+    if (!before) return fresh
+    const projects = fresh.projects.map(project => {
+        const known = before.projects.find(item => item.id === project.id && !item.removed && item.state === 'read')
+        if (!known || project.state !== 'read') return project
+        return { ...project, kind: known.kind, kindSource: known.kindSource, purpose: known.purpose ?? project.purpose, stack: known.stack.length ? known.stack : project.stack, build: known.build ?? project.build, suggestedRoles: known.suggestedRoles, roles: known.roles }
+    })
+    const read = new Set(projects.filter(project => project.state === 'read').map(project => project.id))
+    const links = [...fresh.links]
+    for (const link of before.links) {
+        if (!read.has(link.from) || !read.has(link.to) || links.length >= DESKTOP_GITHUB_PROJECT_LIMITS.maxLinks) continue
+        if (links.some(known => (known.from === link.from && known.to === link.to) || (known.from === link.to && known.to === link.from))) continue
+        links.push(link)
+    }
+    return { ...fresh, projects, links }
+}
+
 const FLIGHTS = Symbol.for('rerun.desktop.github-projects.flights.v1')
 const QUEUES = Symbol.for('rerun.desktop.github-projects.edits.v1')
 const queues = () => ((globalThis as unknown as Record<symbol, Map<string, Promise<unknown>>>)[QUEUES] ??= new Map())
@@ -108,12 +130,19 @@ export function createDesktopGithubProjectsService(ports: DesktopGithubProjectsP
         return next
     }
 
-    async function run(chat: DesktopForemanChatRef, key: string, repositories: DesktopGithubRepositoryRef[], signal: AbortSignal): Promise<DesktopGithubProjectsRecord> {
+    async function run(chat: DesktopForemanChatRef, key: string, repositories: DesktopGithubRepositoryRef[], signal: AbortSignal, quick?: { carry: DesktopGithubProjectsRecord | null }): Promise<DesktopGithubProjectsRecord> {
         const reads = await readGithubRepositories(repositories, ports.read, signal)
         signal.throwIfAborted()
         const data = reads.flatMap(read => read.ok ? [read.data] : [])
         let outcome: DesktopGithubProjectsEngineOutcome | null = null
         let note: string | null = null
+        if (quick) {
+            // A message is answered at once: the files are read and no model is asked.
+            const fresh = buildGithubProjectsRecord({ key, repositories, reads, outcome: null, note: data.length ? FILES_ONLY : null, now: now() })
+            const record = carryGithubProjectEdits(fresh, quick.carry)
+            await ports.store.save(chat, record)
+            return record
+        }
         if (data.length) {
             // A model the research step does not support gets no inference, and no other account is used.
             const model = await ports.model(chat).catch(() => null)
@@ -159,6 +188,38 @@ export function createDesktopGithubProjectsService(ports: DesktopGithubProjectsP
                 flights().set(flightKey, flight)
             }
             return { record: await flight, message }
+        },
+
+        /**
+         * Repositories linked in a chat message: they join the conversation's set and the set is read
+         * from the files alone, so the message is not kept waiting on a model. `pending` says the
+         * read was still running after `waitMs`; it carries on and is saved when it ends.
+         */
+        async mention(chat: DesktopForemanChatRef, mentioned: readonly DesktopGithubRepositoryRef[], waitMs: number): Promise<{ record: DesktopGithubProjectsRecord | null; pending: boolean }> {
+            const current = await ports.store.current(chat)
+            const kept: DesktopGithubRepositoryRef[] = (current?.projects ?? []).filter(project => !project.removed).map(({ id, owner, name, url }) => ({ id, owner, name, url }))
+            const repositories = [...kept]
+            for (const repository of mentioned) {
+                if (repositories.length >= DESKTOP_GITHUB_PROJECT_LIMITS.maxRepositories) break
+                if (!repositories.some(known => known.id === repository.id)) repositories.push(repository)
+            }
+            if (!repositories.length) return { record: null, pending: false }
+            // Nothing new was named: the saved reading, with the owner's edits, stands.
+            if (current && repositories.length === kept.length) return { record: current, pending: false }
+            const key = desktopGithubLinksKey(repositories)
+            const flightKey = JSON.stringify([scope, chat.workspaceId, chat.chatId, key, 'files'])
+            let flight = flights().get(flightKey)
+            if (!flight) {
+                const deadline = AbortSignal.timeout(DESKTOP_GITHUB_PROJECT_LIMITS.runDeadlineMs + 15_000)
+                flight = run(chat, key, repositories, deadline, { carry: current }).finally(() => { if (flights().get(flightKey) === flight) flights().delete(flightKey) })
+                flights().set(flightKey, flight)
+            }
+            let timer: ReturnType<typeof setTimeout> | undefined
+            const late = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), waitMs) })
+            try {
+                const record = await Promise.race([flight.catch(() => null), late])
+                return { record, pending: record === null && flights().get(flightKey) === flight }
+            } finally { clearTimeout(timer) }
         },
 
         /** One review edit by the owner, on the set they were shown. */
