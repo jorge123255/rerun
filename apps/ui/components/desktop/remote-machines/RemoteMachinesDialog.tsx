@@ -11,7 +11,7 @@ import { ScrollFade } from '@rerun/ui/primitives'
 import { useRemoteMachines, type RemoteMachineActorSeed } from '@/lib/desktop/remote-machines/use-remote-machines'
 import { RemoteMachinePairing } from './RemoteMachinePairing'
 import { RemoteMachineRow } from './RemoteMachineRow'
-import { LocalMachineRow } from './LocalMachineRow'
+import { LocalMachineRow, RerunCloudRow } from './LocalMachineRow'
 
 /**
  * The Servers dialog of the Mac app, faithful to the original: the machine your
@@ -21,13 +21,13 @@ import { LocalMachineRow } from './LocalMachineRow'
  * connects as an effect of viewing the dialog; a lost acknowledgement keeps the
  * typed address and key and its request identity for retry.
  */
-type RemoteMachinesDialogProps = { open: boolean; onOpenChange: (open: boolean) => void; actor: RemoteMachineActorSeed; bridge?: DesktopRemoteMachineBridge }
+type RemoteMachinesDialogProps = { open: boolean; onOpenChange: (open: boolean) => void; actor: RemoteMachineActorSeed; bridge?: DesktopRemoteMachineBridge; /** Opens the owner's Rerun Cloud workspace in its own window. Absent where the app cannot open it. */ onRerunCloud?: () => void }
 export function RemoteMachinesDialog(props: RemoteMachinesDialogProps) {
     if (!props.open) return null
     const { actor } = props
     return <RemoteMachinesPanel key={JSON.stringify([actor.installId, actor.workspaceId, actor.launchNonce, actor.rendererEpoch])} {...props} />
 }
-function RemoteMachinesPanel({ open, onOpenChange, actor, bridge }: RemoteMachinesDialogProps) {
+function RemoteMachinesPanel({ open, onOpenChange, actor, bridge, onRerunCloud }: RemoteMachinesDialogProps) {
     const machines = useRemoteMachines(actor, { active: open, bridge })
     const [pairingOpen, setPairingOpen] = useState(false)
     const [removeOpen, setRemoveOpen] = useState(false)
@@ -118,7 +118,7 @@ function RemoteMachinesPanel({ open, onOpenChange, actor, bridge }: RemoteMachin
             <DialogContent className="flex flex-col sm:max-h-[85dvh] sm:max-w-lg sm:overflow-hidden">
                 <DialogHeaderBar icon={ServerIcon} title={REMOTE_MACHINE_COPY.title} description={REMOTE_MACHINE_COPY.description} />
                 <ScrollFade className="-mx-1 min-h-0 flex-1 px-1 py-1">
-                    <div className="space-y-4">{snapshot?.localRuntime && !snapshot.selected && <LocalMachineRow runtime={snapshot.localRuntime} />}{body}</div>
+                    <div className="space-y-4">{snapshot?.localRuntime && !snapshot.selected && <LocalMachineRow runtime={snapshot.localRuntime} />}{onRerunCloud && <RerunCloudRow onOpen={() => { onOpenChange(false); onRerunCloud() }} />}{body}</div>
                 </ScrollFade>
                 <ConfirmDialog
                     open={removeOpen}

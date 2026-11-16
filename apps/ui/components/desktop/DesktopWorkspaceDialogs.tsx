@@ -28,7 +28,7 @@ export function DesktopWorkspaceDialogStatus({ title, error, onClose, onRetry }:
     </Dialog>
 }
 
-export function DesktopServersNavigation({ workspaceId, onClose }: { workspaceId: number; onClose: () => void }) {
+export function DesktopServersNavigation({ workspaceId, onClose, onRerunCloud }: { workspaceId: number; onClose: () => void; onRerunCloud?: () => void }) {
     const [lease, setLease] = useState<{ actor: DesktopRemoteActor; bridge: DesktopRemoteMachineBridge } | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [attempt, setAttempt] = useState(0)
@@ -50,7 +50,7 @@ export function DesktopServersNavigation({ workspaceId, onClose }: { workspaceId
         return () => { current = false; clearTimeout(timer); controller.abort() }
     }, [workspaceId, attempt])
     if (!lease) return <DesktopWorkspaceDialogStatus title="Servers" error={error} onClose={onClose} onRetry={() => setAttempt(value => value + 1)} />
-    return <RemoteMachinesDialog open actor={lease.actor} bridge={lease.bridge} onOpenChange={next => { if (!next) onClose() }} />
+    return <RemoteMachinesDialog open actor={lease.actor} bridge={lease.bridge} onRerunCloud={onRerunCloud} onOpenChange={next => { if (!next) onClose() }} />
 }
 
 export function DesktopCoworkerShareLauncher({ workspaceId, agentId, agentName, onClose, onImported, onOpenCoworker }: { workspaceId: number; agentId: string; agentName: string; onClose: () => void; onImported?: (agentId: string) => void | Promise<void>; onOpenCoworker: (agentId: string) => void }) {
