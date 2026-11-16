@@ -23,7 +23,7 @@ import { DesktopPlanBoardPreview } from './plan/DesktopPlanBoardPreview'
 import { projectPlanCard } from '@/lib/desktop/foreman-client'
 import { useDesktopForemanUi } from './useDesktopForemanUi'
 import type { DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
-import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader } from './intake'
+import { DesktopForemanIntakeCard, DesktopForemanIntakeHeader, DesktopIntakeSiteProfile } from './intake'
 import { DesktopStarterPack } from './starter-pack'
 import { DesktopStarterOfferCard } from './starter-pack/DesktopStarterOfferCard'
 import type { DesktopLocalStarterDecision, DesktopStarterView } from '@/lib/desktop/foreman-client/starter'
@@ -299,6 +299,10 @@ export function DesktopForemanColumn({
                 <div className={onRoutines || alternates.open ? 'hidden' : 'contents'}>
                     {intake ? <>
                         <div className="relative flex min-h-0 flex-1 flex-col justify-center overflow-y-auto px-3 py-6">
+                            {/* Where no board is behind the questions, what the website read found is shown above them. */}
+                            {!renderBoardOverlay && <div className="absolute inset-x-0 top-0 z-30 max-h-[45%] overflow-y-auto px-3 pt-3">
+                                <DesktopIntakeSiteProfile chat={chat} intake={intake} active={ui.open && !hidden} />
+                            </div>}
                             <DesktopForemanIntakeHeader intake={intake} />
                         </div>
                         <div className="shrink-0 px-3 pb-3"><DesktopForemanIntakeCard intake={intake} autoFocus={ui.open && !hidden} /></div>

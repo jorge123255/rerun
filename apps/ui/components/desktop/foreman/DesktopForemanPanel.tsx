@@ -13,11 +13,14 @@ import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
 import { createDesktopForemanClient, desktopForemanMessages, readDesktopForemanState, type DesktopForemanClientState } from '@/lib/desktop/foreman-client/runtime-client'
 import { createClientDockFeed } from '@/lib/desktop/foreman-dock/feed'
 import { useMemo } from 'react'
+import { useIsMobile as useMediaQuery } from '@rerun/ui/primitives/use-is-mobile'
 import type { ForemanPlacement } from '@/lib/foreman-layout'
 import { useForemanVoiceSlot } from '@/lib/desktop/foreman-voice/useForemanVoiceSlot'
 import { ForemanVoiceSlot } from '@/components/desktop/foreman-voice/ForemanVoiceSlot'
 import { registerForemanVoiceQuit } from '@/lib/desktop/foreman-voice/quit'
 import { DesktopCompanyResearch } from './company-brief/DesktopCompanyResearch'
+import { DesktopCompanyProfile } from './company-profile/DesktopCompanyProfile'
+import type { DesktopCompanyProfileController } from '@/lib/desktop/company-profile/use-desktop-company-profile'
 import { DesktopForemanColumn } from './DesktopForemanColumn'
 import { useDesktopForemanIntake } from '@/lib/desktop/foreman-intake'
 import { createDesktopForemanIntakeClient } from '@/lib/desktop/foreman-intake/client'
@@ -89,6 +92,17 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const intake = useDesktopForemanIntake({ chat: initial.chat, ports: intakePorts, active: !!props.controlledOpen && !props.hidden && !initial.separateConversation })
     const intakeEligible = !initial.separateConversation && (initial.messages.length === 0 || intake.hasSavedProgress)
     const intakeOpen = intakeEligible && !intake.finished
+    // What the intake reads about the company is shown over the board while the questions are open.
+    // The intake starts the industry suggestion and the website read itself; this only reads them
+    // back, once when either starts (so a running read is followed) and once when it settles.
+    const companyProfile = useRef<DesktopCompanyProfileController | null>(null)
+    const compactBoard = useMediaQuery('(max-width: 767px)')
+    const { deciding, siteRead } = intake
+    useEffect(() => {
+        if (!intakeOpen) return
+        const timer = setTimeout(() => { void companyProfile.current?.read() }, deciding || siteRead === 'reading' ? 600 : 0)
+        return () => clearTimeout(timer)
+    }, [intakeOpen, deciding, siteRead])
     const pendingStarter = !!state.starter && !state.starter.decision?.settled
     const projectFeed = useMemo(() => createClientDockFeed(initial.chat), [initial.chat.workspaceId, initial.chat.chatId])
     const [dockFeed, setDockFeed] = useState(() => projectFeed(initial))
@@ -226,6 +240,13 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
         sessionId={state.sessionId} pendingSend={pendingSend} onRetryPendingSend={client.retryPendingMessage}
         imageModel={providers?.connections.some(connection => connection.id === voiceModel?.connectionId && connection.provider === 'codex')}
         controlledOpen={props.controlledOpen} hidden={props.hidden} centerOpen={props.centerOpen} findEnabled={props.findEnabled} onOpenChange={props.onOpenChange} onLayout={props.onLayout}
+        renderBoardOverlay={intakeOpen && !props.fill ? () => (
+            // The middle track is the part of the board the Chief of Staff column leaves visible.
+            <div data-desktop-company-profile-overlay className="pointer-events-none relative min-h-0 min-w-0" style={{ gridColumn: 2, gridRow: 1 }}>
+                <DesktopCompanyProfile chat={state.chat} active={!!props.controlledOpen && !props.hidden} emptyWorkspace={false} onboarding={false}
+                    draftRevision={intake.revision} compact={compactBoard} controllerRef={companyProfile} />
+            </div>
+        ) : undefined}
         dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
         question={state.question} onAnswerQuestion={client.answerQuestion}
         approval={state.approval} onDecideApproval={client.decideApproval}

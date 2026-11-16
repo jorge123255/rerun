@@ -2,6 +2,7 @@
 
 import { desktopForemanIntakeCompletionReceiptSchema, desktopForemanIntakeViewSchema, isTemplateCategory, type DesktopForemanChatRef } from '@rerun/contracts'
 import { DesktopForemanIntakeClientConflictError, type DesktopForemanIntakeClientPorts } from './ports'
+import { desktopIntakeSiteProfileSchema, type DesktopIntakeSiteProfile } from './site-profile'
 
 async function intakeRequest(chat: DesktopForemanChatRef, action?: Record<string, unknown>, signal?: AbortSignal) {
     const response = await fetch(`/api/desktop/foreman/intake${action ? '' : `?${new URLSearchParams(chat)}`}`, {
@@ -34,6 +35,13 @@ async function hinted(chat: DesktopForemanChatRef, action: 'decide-industry' | '
             signal?.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason) }, { once: true })
         })
     }
+}
+
+/** What the finished website read found for the saved website; null when nothing was read or it cannot be confirmed. */
+export async function readDesktopIntakeSiteProfile(chat: DesktopForemanChatRef, signal?: AbortSignal): Promise<DesktopIntakeSiteProfile | null> {
+    const body = await intakeRequest(chat, { action: 'site-profile', chat }, signal) as { profile?: unknown } | null
+    const parsed = desktopIntakeSiteProfileSchema.safeParse(body?.profile)
+    return parsed.success ? parsed.data : null
 }
 
 /** With `chat`, the intake can suggest an industry and read the company website; without it every question is asked. */
