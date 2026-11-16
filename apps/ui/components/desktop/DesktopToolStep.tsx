@@ -5,14 +5,17 @@ import { stripBridgePrefix } from '@rerun/contracts'
 import { ToolStepRow } from '@/components/chat/ToolStepRow'
 import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
 import { getToolMeta } from '@/lib/tool-meta'
+import { ranLabel } from '@/lib/chat/connector-tools'
 import { redactHistoricalText } from './tool-presentations/redact'
 import { projectDesktopToolStatus, type DesktopHistoricalContext } from './tool-presentations/status'
 import { projectDesktopGenericTool } from './tool-presentations/plan'
 import { DesktopHistoricalStepGroup } from './tool-presentations/DesktopHistoricalStepGroup'
 
-export function desktopToolStepDisplay(toolName: string) {
+export function desktopToolStepDisplay(toolName: string, input?: unknown) {
+    // A connector tool that runs other tools by name (Composio) is named after what it ran.
+    const ran = ranLabel(toolName, input)
     const display = getToolMeta(toolName === 'exec' ? 'shell_exec' : toolName === 'patch' ? 'fs_edit' : toolName)
-    return { icon: display.icon, label: toolName === 'functions.exec' ? 'Code mode' : display.label }
+    return { icon: display.icon, label: ran ?? (toolName === 'functions.exec' ? 'Code mode' : display.label) }
 }
 
 export function DesktopToolStep({ part, restored, context }: { part: ToolUIPart | DynamicToolUIPart; restored: boolean; context?: DesktopHistoricalContext }) {
@@ -23,7 +26,7 @@ export function DesktopToolStep({ part, restored, context }: { part: ToolUIPart 
         output: typeof part.output === 'string' ? redactHistoricalText(part.output) : undefined,
         errorText: typeof part.errorText === 'string' ? redactHistoricalText(part.errorText) : undefined,
     } : desktopToolPresentation(toolName, part.input, part.output, part.errorText)
-    const display = desktopToolStepDisplay(toolName)
+    const display = desktopToolStepDisplay(toolName, part.input)
     const status = projectDesktopToolStatus(part, context)
     if (status === 'pending' || status === 'cancelled' || status === 'unknown') {
         return <DesktopHistoricalStepGroup items={[projectDesktopGenericTool(part, 0, context)]} />
