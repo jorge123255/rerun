@@ -56,3 +56,21 @@ test('shared previews validate actual formats and dimensions rather than extensi
     expect(new Uint8Array(await result.arrayBuffer())).toEqual(new Uint8Array(png))
     await expect(previewResultBytes('unsafe.svg', new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), { signal })).rejects.toMatchObject({ status: 415 })
 })
+test('text-like previews are inert text/plain and require bounded UTF-8 without control bytes', async () => {
+    const signal = new AbortController().signal, text = (value: string) => new TextEncoder().encode(value)
+    const html = await previewResultBytes('page.html', text('<script>alert(1)</script>'), { signal })
+    expect(html.headers.get('content-type')).toBe('text/plain; charset=utf-8')
+    expect(html.headers.get('x-rerun-preview-kind')).toBe('text')
+    expect(html.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(html.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox")
+    expect(await html.text()).toBe('<script>alert(1)</script>')
+    for (const name of ['rows.csv', 'data.json', 'run.log', 'app.ts', 'deploy.yml', 'tool.py']) {
+        expect((await previewResultBytes(name, text('a,b\n1,2\n'), { signal })).headers.get('x-rerun-preview-kind')).toBe('text')
+    }
+    await expect(previewResultBytes('stream.ts', Uint8Array.from([0x47, 0, 1, 2]), { signal })).rejects.toMatchObject({ status: 415 })
+    await expect(previewResultBytes('bad.json', Uint8Array.from([0xff, 0xfe, 0x41]), { signal })).rejects.toMatchObject({ status: 415 })
+    await expect(previewResultBytes('esc.log', text('\u001b[31mred'), { signal })).rejects.toMatchObject({ status: 415 })
+    await expect(previewResultBytes('big.csv', text('x'.repeat(256 * 1024 + 1)), { signal })).rejects.toMatchObject({ status: 413 })
+    await expect(previewResultBytes('bundle.zip', text('plain'), { signal })).rejects.toMatchObject({ status: 415 })
+    await expect(previewResultBytes('deck.docx', text('plain'), { signal })).rejects.toMatchObject({ status: 415 })
+})

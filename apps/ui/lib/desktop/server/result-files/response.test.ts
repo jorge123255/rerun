@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { desktopResultFileDisposition, desktopResultFileName, desktopResultFileRoute, parseDesktopResultFileBody } from './contract'
+import { desktopResultFileDisposition, desktopResultFileName, desktopResultFileOptionalText, desktopResultFilePreviewKind, desktopResultFileRoute, parseDesktopResultFileBody } from './contract'
 import { bindDesktopResultFileRead, desktopResultFileResponse, handleDesktopResultFilePost, unboundDesktopResultFileResponse, type DesktopResultFileRead } from './handler'
 import type { DesktopRuntime } from '../runtime'
 
@@ -55,4 +55,26 @@ test('the actual route reader rejects an oversized body before database or file 
     const read = async () => { throw new Error('Must not read') }
     const request = new Request('http://127.0.0.1/result-files', { method: 'POST', body: JSON.stringify({ path: 'x'.repeat(13_000) }) })
     await expect(handleDesktopResultFilePost({ dataRoot: '/must-not-open' } as DesktopRuntime, 'owner', request, { read })).rejects.toMatchObject({ status: 413 })
+})
+
+test('source, data and config download tiles get an optional bounded text preview in either scope', () => {
+    for (const path of ['out/rows.csv', 'out/data.json', 'run.log', 'src/app.ts', 'site/index.html', 'deploy.yaml', 'q.sql', 'tool.py']) {
+        expect(desktopResultFilePreviewKind({ path, scope: 'agent', size: 10 })).toBe('text')
+        expect(desktopResultFilePreviewKind({ path, scope: 'shared', size: 10 })).toBe('text')
+        expect(desktopResultFileOptionalText({ path, size: 10 })).toBe(true)
+        // The ticket is still an ordinary 16 MB download tile, not a private preview type.
+        expect(parseDesktopResultFileBody('coworker-1', { path, scope: 'agent', identity: '7:8', size: 10 })?.path).toBe(path)
+        expect(desktopResultFilePreviewKind({ path, scope: 'agent', size: 256 * 1024 + 1 })).toBe('none')
+        expect(desktopResultFilePreviewKind({ path, scope: 'agent' })).toBe('none')
+        expect(desktopResultFilePreviewKind({ path, scope: 'agent', size: 0 })).toBe('none')
+    }
+    for (const path of ['bundle.zip', 'deck.pptx', 'sheet.xlsx', 'tool.exe', 'noext']) {
+        expect(desktopResultFilePreviewKind({ path, scope: 'agent', size: 10 })).toBe('none')
+        expect(desktopResultFilePreviewKind({ path, scope: 'shared', size: 10 })).toBe('none')
+    }
+    // The strict .txt/.md preview is not optional, and private media never previews through this route.
+    expect(desktopResultFileOptionalText({ path: 'notes.md', size: 10 })).toBe(false)
+    expect(desktopResultFilePreviewKind({ path: 'notes.md', scope: 'shared', size: 10 })).toBe('text')
+    expect(desktopResultFilePreviewKind({ path: 'notes.md', scope: 'agent', size: 10 })).toBe('none')
+    expect(desktopResultFilePreviewKind({ path: 'a.png', scope: 'agent', size: 10 })).toBe('none')
 })

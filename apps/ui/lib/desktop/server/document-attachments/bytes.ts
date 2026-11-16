@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { DESKTOP_DOCUMENT_IMAGE_MAX_BYTES, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_BYTES, desktopDocumentKindForName } from '@rerun/contracts'
+import { DESKTOP_DOCUMENT_IMAGE_MAX_BYTES, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_BYTES, desktopDocumentKindForName, isDesktopTextLikeDocumentName, type DesktopDocumentKind } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { desktopImageKindForName, type DesktopImageKind } from '../../composer-image'
 import { desktopAudioKind, inspectDesktopAudioBytes } from '../audio-bytes'
@@ -14,13 +14,24 @@ const imageTypes: Record<DesktopImageKind, readonly [string, ...string[]]> = {
     bmp: ['image/bmp', 'image/x-ms-bmp'], svg: ['image/svg+xml'],
 }
 
-export function inspectDesktopDocumentUpload(input: { name: string; mimeType: string }, bytes: Uint8Array) {
+// A source, data or config name becomes model text only when its bytes are bounded UTF-8 without
+// control bytes. Anything else under that name keeps the download-only binary rules, and a record
+// saved as binary before this reader existed is never reclassified.
+function textLikeDocument(input: { name: string; kind?: DesktopDocumentKind }, bytes: Uint8Array): boolean {
+    if (input.kind === 'binary' || !isDesktopTextLikeDocumentName(input.name) || bytes.byteLength > DESKTOP_DOCUMENT_INPUT_MAX_BYTES) return false
+    if (bytes.some(byte => (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13) || byte === 127)) return false
+    try { readDesktopPlainText(bytes); return true }
+    catch { return false }
+}
+
+export function inspectDesktopDocumentUpload(input: { name: string; mimeType: string; kind?: DesktopDocumentKind }, bytes: Uint8Array) {
     if (!input.name || new TextEncoder().encode(input.name).length > 255 || input.name.includes('/') || input.name.includes('\\') || input.name.includes('\0') || input.name.startsWith('.') || /\p{Cc}/u.test(input.name)) {
         throw new DesktopHttpError(400, 'That file name can’t be imported.')
     }
     if (!input.mimeType || input.mimeType.length > 128 || /[\r\n\0]/.test(input.mimeType)) throw new DesktopHttpError(400, 'That file type is invalid.')
     if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_DOCUMENT_MAX_BYTES) throw new DesktopHttpError(413, 'Documents can be up to 16 MB.')
-    const kind = desktopDocumentKindForName(input.name)
+    const named = desktopDocumentKindForName(input.name)
+    const kind: DesktopDocumentKind = named === 'binary' && textLikeDocument(input, bytes) ? 'text' : named
     let mimeType = input.mimeType
     if (kind === 'image') {
         if (bytes.byteLength > DESKTOP_DOCUMENT_IMAGE_MAX_BYTES) throw new DesktopHttpError(413, 'Images can be up to 8 MB.')
@@ -56,4 +67,9 @@ export function readDesktopPlainText(bytes: Uint8Array): string {
     catch { throw new DesktopHttpError(400, 'Choose a UTF-8 text file.') }
     if (!text.trim() || text.includes('\0')) throw new DesktopHttpError(400, 'Choose a non-empty UTF-8 text file.')
     return text
+}
+
+/** The audio a configured transcription service is sent: every inspected Files audio format, up to 8 MB. */
+export function desktopAudioTranscribable(attachment: { name: string; byteLength: number }): boolean {
+    return attachment.byteLength >= 1 && attachment.byteLength <= 8 * 1024 * 1024 && /\.(?:wav|mp3|m4a|ogg|flac)$/i.test(attachment.name)
 }

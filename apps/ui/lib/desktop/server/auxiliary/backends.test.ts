@@ -210,6 +210,10 @@ it('turns a recording into text with ElevenLabs when only its key is saved, and 
     await store.change({ purpose: 'transcription', expectedRevision: 'unconfigured', key: 'router-key' })
     await backends.transcribe(new Uint8Array([1, 2, 3]), 'wav', new AbortController().signal)
     expect(calls[1]!.url).toBe('https://openrouter.ai/api/v1/audio/transcriptions')
+    // FLAC is one of the inspected Files audio formats; an unlisted format still never reaches a provider.
+    await expect(backends.transcribe(new Uint8Array([1, 2, 3]), 'flac', new AbortController().signal)).resolves.toBe('hello there')
+    await expect(backends.transcribe(new Uint8Array([1, 2, 3]), 'aiff', new AbortController().signal)).rejects.toThrow('unavailable')
+    expect(calls).toHaveLength(3)
 })
 
 it('searches without a key only when keyless search is on and no key is saved', async () => {
