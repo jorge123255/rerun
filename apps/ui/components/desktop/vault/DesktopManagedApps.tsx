@@ -5,6 +5,7 @@ import { desktopManagedAppsResultSchema, desktopManagedAppsViewSchema, type Desk
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { invalidateDesktopConnectorApps } from '@/lib/desktop/use-connector-apps'
 import { DesktopAppLogo } from './DesktopAppLogo'
 
 const URL_PATH = '/api/desktop/managed-apps'
@@ -46,6 +47,7 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
             if (!response.ok) { setError(typeof body?.error === 'string' ? body.error : 'That did not go through. Try again.'); return null }
             const result = desktopManagedAppsResultSchema.parse(body)
             setView(result.view)
+            if (action.action === 'attach') invalidateDesktopConnectorApps(action.agentId)
             // A Composio Connect key became a Vault connector: the Vault list above is read again to show it.
             if (result.addedToVault) { setAdded(result.addedToVault); onVaultChanged?.() }
             // The sign-in page opens in the browser; the app only ever asks Composio whether it finished.

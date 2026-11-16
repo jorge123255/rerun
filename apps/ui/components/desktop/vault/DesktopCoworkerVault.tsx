@@ -5,6 +5,7 @@ import { KeyRound, Plug } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { PanelList, PanelSection } from '@/components/ui/panel-list'
 import { PanelRow } from '@/components/ui/panel-row'
+import { invalidateDesktopConnectorApps } from '@/lib/desktop/use-connector-apps'
 import { desktopCoworkerVaultListing, type DesktopCoworkerVaultListing, type DesktopCoworkerVaultMutation } from '@/lib/desktop/vault'
 
 import { vaultAccountHealthText } from './vault-account-health'
@@ -31,6 +32,8 @@ export function DesktopCoworkerVault({ agentId, query }: { agentId: string; quer
             if (!response.ok) throw new Error(typeof body?.error === 'string' ? body.error : 'Could not load this coworker’s Vault entries.')
             const result = desktopCoworkerVaultListing.parse(body)
             if (result.agentId !== agentId) throw new Error('The Vault response belongs to another coworker.')
+            // An open chat's tool rows follow the apps this coworker now holds.
+            if (input) invalidateDesktopConnectorApps(agentId)
             if (!controller.signal.aborted) {
                 setError('')
                 setListing(result)

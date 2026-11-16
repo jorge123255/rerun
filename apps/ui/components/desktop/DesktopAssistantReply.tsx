@@ -30,6 +30,8 @@ import type { DesktopQuickReplySend } from '@/lib/desktop/quick-replies'
 import { BrainIcon, CheckIcon, CopyIcon, FoldVerticalIcon, RefreshCcwIcon, ThumbsDownIcon, ThumbsUpIcon } from '@/lib/icons'
 import { isDesktopSummaryMetadata } from '@/lib/desktop/reasoning-summary'
 import { desktopCompactionSteps } from '@/lib/desktop/compaction'
+import { desktopReplyMayUseConnector } from '@/lib/desktop/connector-apps'
+import { useDesktopConnectorApps } from '@/lib/desktop/use-connector-apps'
 import { desktopFileCardOf, desktopImageGenerationOutput } from '@/lib/desktop/file-card'
 import { useCopy } from '@/lib/use-copy'
 import { copyDesktopPlainText } from '@/lib/desktop/clipboard'
@@ -122,6 +124,8 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
     skillProposals?: { rows: ReadonlyMap<string, EngineSkillProposal>; pinnedIds: ReadonlySet<string>; pendingId: string | null; onDecide?: (id: string, decision: 'accept' | 'dismiss') => void; onOpenSkill?: (slug: string) => void }
 }) {
     const compactions = desktopCompactionSteps(message.parts, streaming)
+    // One read per coworker, shared by every reply of the chat, live or reopened; none for a reply without app steps.
+    const connectors = useDesktopConnectorApps(agentId, desktopReplyMayUseConnector(message.parts))
     const lastStepIndex = streaming ? message.parts.findLastIndex(part => !part.type.startsWith('data-')) : -1
     const { t } = useDesktopLocale()
     const { copied, copy } = useCopy(() => toast.error(t('copyReplyFailed')), copyDesktopPlainText)
@@ -163,7 +167,7 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
                 (toolName === 'ask_user' || toolName === 'request_approval')) continue
             const receiptContext = { ownerId: agentId ?? null, live: streaming }
             if (childRuns && agentId && (toolName === 'call_agent' || toolName === 'delegate_tasks')) {
-                const fallback = <DesktopToolStep part={part} restored={restored} context={receiptContext} />
+                const fallback = <DesktopToolStep part={part} restored={restored} context={receiptContext} connectors={connectors} />
                 appendBlock(toolName === 'call_agent'
                     ? <DesktopCoworkerCalls key={part.toolCallId} agentId={agentId} sessionId={childRuns.sessionId} toolCallId={part.toolCallId} active={childRuns.active} currentRunActive={streaming} fallback={fallback} onOpenTarget={childRuns.onOpenTarget} />
                     : <DesktopDelegationMount key={part.toolCallId} agentId={agentId} sessionId={childRuns.sessionId} toolCallId={part.toolCallId} view={childRuns.active ? 'live' : 'history'} followLive={streaming} fallback={fallback} />)
@@ -209,7 +213,7 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
                 }
                 if (toolName === 'image_generation') {
                     const notice = desktopImageGenerationOutput(part.output)
-                    appendBlock(<DesktopToolStep key={part.toolCallId} part={{ ...part, state: 'output-error', errorText: notice, output: undefined }} restored={restored} context={receiptContext} />)
+                    appendBlock(<DesktopToolStep key={part.toolCallId} part={{ ...part, state: 'output-error', errorText: notice, output: undefined }} restored={restored} context={receiptContext} connectors={connectors} />)
                     continue
                 }
             }
@@ -227,7 +231,7 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
             }
             const status = projectDesktopToolStatus(part, receiptContext)
             if (toolName === 'notify_user' && (status === 'failed' || status === 'unknown')) continue
-            const step = <DesktopToolStep key={part.toolCallId} part={part} restored={restored} context={receiptContext} />
+            const step = <DesktopToolStep key={part.toolCallId} part={part} restored={restored} context={receiptContext} connectors={connectors} />
             const identity = resolveDesktopHistoricalIdentity(part, receiptContext)
             if (!identity.ok || (status !== 'running' && status !== 'succeeded' && status !== 'failed')) {
                 appendBlock(step)
@@ -236,10 +240,10 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
             if (groupIdentity && (groupIdentity.ownerId !== identity.identity.ownerId
                 || groupIdentity.workspaceId !== identity.identity.workspaceId || groupIdentity.runId !== identity.identity.runId)) flushSteps()
             groupIdentity = identity.identity
-            const display = desktopToolStepDisplay(toolName)
+            const display = desktopToolStepDisplay(toolName, part.input, connectors)
             group.push({
                 key: part.toolCallId,
-                iconProps: { icon: display.icon },
+                iconProps: display.iconProps,
                 node: step,
                 status: status === 'failed' ? 'error' : status === 'succeeded' ? 'done' : 'running',
                 runningLabel: t('chatActivity.runningTool', { tool: display.label }),
