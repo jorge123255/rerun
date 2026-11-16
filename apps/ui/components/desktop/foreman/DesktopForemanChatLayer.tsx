@@ -15,7 +15,7 @@ import type { DesktopForemanLiveReply as LiveReply } from '@/lib/desktop/foreman
 import { DesktopForemanAnswerActions } from './DesktopForemanAnswerActions'
 
 import { AnimatePresence, motion } from 'motion/react'
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Button } from '@/components/ui/button'
 import { DesktopConversationFind } from '../DesktopConversationFind'
 import { DesktopDocumentLightbox } from '../document-attachments/DesktopDocumentLightbox'
@@ -37,11 +37,16 @@ import { DesktopForemanBuildProgress } from './DesktopForemanBuildProgress'
 import { DesktopForemanNextSteps } from './DesktopForemanNextSteps'
 import type { DesktopCoworkerMention, DesktopDocumentReference, MessageFeedbackRating } from '@rerun/contracts'
 import { DesktopSelectedMentionText } from '../mentions/DesktopSelectedMentionText'
+import { threadsByMessage } from '@/lib/chat/thread-rows'
+import { DesktopThreadBranch } from '../DesktopThreadBranch'
+import type { DesktopForemanGeneralThread } from './DesktopForemanConversations'
 
 export type DesktopForemanMessage = {
     id: string
     role: 'user' | 'assistant' | 'system'
     text: string
+    /** When the message was saved. Absent on a message that is still local. */
+    createdAt?: string
     sourceRunId?: string
     docs?: UIMessage['parts']
     history?: readonly ForemanHistoryPart[]
@@ -106,6 +111,7 @@ export function DesktopForemanChatLayer({
     onOpenBox,
     answerFeedback,
     replyRetry,
+    threads, onOpenThread,
     renderChildWork,
     children,
     className,
@@ -144,6 +150,9 @@ export function DesktopForemanChatLayer({
     /** Local thumbs for a restored saved answer; absent on read-only or still-live transcripts. */
     answerFeedback?: { ratingOf: (messageId: string) => MessageFeedbackRating | null; onRate: (messageId: string, rating: MessageFeedbackRating) => void; disabled?: boolean } | null
     replyRetry?: { review: (messageId: string) => void; disabled: boolean }
+    /** General's saved tasks, each drawn under the message it started after. Only General has them. */
+    threads?: readonly DesktopForemanGeneralThread[]
+    onOpenThread?: (thread: DesktopForemanGeneralThread) => void
     renderChildWork?: (slots: ReadonlyMap<string, HTMLDivElement>) => ReactNode
     children?: ReactNode
     className?: string
@@ -165,7 +174,18 @@ export function DesktopForemanChatLayer({
     const plan = projectPlanCard(planSnapshot)
     const previewReply = active && restored && streaming ? liveReply : undefined
     const hasRunningStep = previewReply?.steps?.some(step => step.status === 'running')
-    const empty = messages.length === 0 && !previewReply && !error && !runNotice && !plan.view && !build && !question
+    // Upstream ForemanChatLayer: `threadsByMessage` hangs each thread under the last message that was
+    // there when it opened. A message with no saved time anchors nothing.
+    const threadRows = useMemo(() => threadsByMessage(messages.map(message => message.createdAt ?? ''), threads ?? []), [messages, threads])
+    const threadBranches = (rows: readonly DesktopForemanGeneralThread[] | undefined) => restored && rows?.map(thread => (
+        <div key={thread.chat.chatId} data-foreman-thread-branch={thread.chat.chatId} className="contents">
+            <DesktopThreadBranch
+                thread={{ id: thread.chat.chatId, agentId: 'foreman', kind: 'thread', title: thread.title ?? t('foreman.newConversation'), createdAt: thread.createdAt, updatedAt: thread.updatedAt }}
+                onOpen={() => { if (active) onOpenThread?.(thread) }} />
+        </div>
+    ))
+    // A General nobody spoke in yet, whose tasks all started from « New task », shows them.
+    const empty = messages.length === 0 && !previewReply && !error && !runNotice && !plan.view && !build && !question && threadRows.leading.length === 0
 
     return (
         <div className={cn('pointer-events-auto relative flex min-h-0 w-full flex-1 flex-col', className)}>
@@ -184,7 +204,8 @@ export function DesktopForemanChatLayer({
                             <div className="h-3.5 w-2/3 animate-pulse rounded bg-muted" />
                         </div>
                     )}
-                    <div ref={transcript} className="contents">{messages.map(message => (
+                    {threadBranches(threadRows.leading)}
+                    <div ref={transcript} className="contents">{messages.map((message, index) => (
                         <Fragment key={message.id}>
                         {restored && message.role === 'user' && message.savedDecision ? (
                             <div data-chat-find-message className="contents">
@@ -225,6 +246,7 @@ export function DesktopForemanChatLayer({
                         {restored && message.role === 'user' && message.compaction && <CompactionStep data={message.compaction} />}
                         {renderChildWork && restored && message.role === 'user' && message.sourceRunId &&
                             <RunCardsSlot runId={message.sourceRunId} register={register} />}
+                        {threadBranches(threadRows.after.get(index))}
                         </Fragment>
                     ))}</div>
                     {previewReply && <DesktopForemanLiveReply key={previewReply.runId} reply={previewReply} />}

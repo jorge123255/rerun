@@ -331,6 +331,8 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
             onOpenConnections={props.onOpenModelSettings} /> : null}
         streaming={!!state.view.live} liveReply={liveReply} orbState={state.view.live ? state.writing ? 'speaking' : 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
+        threads={conversations.enabled ? conversations.branches : undefined}
+        onOpenThread={thread => { void conversations.openThread(thread.chat) }}
         headerCrumb={conversations.enabled && conversations.thread
             ? <DesktopForemanThreadCrumb conversations={conversations} disabled={!!props.hidden}
                 state={state.view.live ? 'live' : state.question || state.approval ? 'needs' : 'quiet'} />

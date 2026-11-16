@@ -91,12 +91,14 @@ export async function createForemanConversation(db: Client, runtime: DesktopRunt
 export async function listForemanConversations(db: Client, workspaceId: string) {
     const { rows } = await db.execute({
         // The last message sent in it dates a conversation; one nobody wrote in yet has no date.
-        sql: `SELECT c.chat_id, c.title, c.home, (SELECT MAX(t.created_at) FROM desktop_foreman_turns t WHERE t.chat_id=c.chat_id) AS updated_at
+        // Its first message dates where it branched from General: a task is only saved by that message.
+        sql: `SELECT c.chat_id, c.title, c.home, (SELECT MAX(t.created_at) FROM desktop_foreman_turns t WHERE t.chat_id=c.chat_id) AS updated_at,
+                     (SELECT MIN(t.created_at) FROM desktop_foreman_turns t WHERE t.chat_id=c.chat_id) AS started_at
               FROM desktop_foreman_chats c WHERE c.workspace_id=? ORDER BY c.home DESC, c.rowid DESC`,
         args: [workspaceId],
     })
     return rows.map(row => ({ chat: { workspaceId, chatId: String(row.chat_id) }, title: row.title === null ? null : String(row.title), home: row.home === 1,
-        ...(typeof row.updated_at === 'string' && { updatedAt: row.updated_at }) }))
+        ...(typeof row.updated_at === 'string' && { updatedAt: row.updated_at }), ...(typeof row.started_at === 'string' && { startedAt: row.started_at }) }))
 }
 export async function ownedForemanChat(db: Pick<Client, 'execute'>, chat: DesktopForemanChatRef): Promise<OwnedForemanChat> {
     const row = (await db.execute({ sql: 'SELECT * FROM desktop_foreman_chats WHERE workspace_id=? AND chat_id=?', args: [chat.workspaceId, chat.chatId] })).rows[0]

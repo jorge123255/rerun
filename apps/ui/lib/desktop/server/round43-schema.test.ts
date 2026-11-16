@@ -47,10 +47,16 @@ test('upgrades the original chat and dependent rows, then reopens distinct conve
         expect((await db.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         expect(await listForemanConversations(db, '1')).toEqual([
             // Dated by its last saved turn; a conversation nobody has sent anything in has no date.
-            { chat: home, home: true, title: null, updatedAt: '2026-11-06' },
+            { chat: home, home: true, title: null, updatedAt: '2026-11-06', startedAt: '2026-11-06' },
             { chat: other, home: false, title: null },
             { chat, home: false, title: 'Test the separate conversation' },
         ])
+        // A task's first message dates where it branches from General; its last one dates the list.
+        for (const [id, at] of [['later', '2026-11-08T10:00:00.000Z'], ['first', '2026-11-07T09:00:00.000Z']]) {
+            await db.execute({ sql: "INSERT INTO desktop_foreman_turns(request_id,chat_id,fingerprint,body,status,created_at) VALUES(?,?,'f','{}','finished',?)", args: [id, chat.chatId, at] })
+        }
+        expect((await listForemanConversations(db, '1')).find(row => row.chat.chatId === chat.chatId))
+            .toEqual({ chat, home: false, title: 'Test the separate conversation', updatedAt: '2026-11-08T10:00:00.000Z', startedAt: '2026-11-07T09:00:00.000Z' })
         expect(await listForemanConversations(db, '2')).toEqual([])
         const { rows: [saved] } = await db.execute({ sql: 'SELECT ui FROM desktop_foreman_chats WHERE chat_id=?', args: [chat.chatId] })
         expect(JSON.parse(String(saved.ui)).pendingSend).toEqual({ requestId, text: prompt, modelChoice: null })
