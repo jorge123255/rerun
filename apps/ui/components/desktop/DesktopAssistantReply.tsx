@@ -44,6 +44,7 @@ import type { EngineSkillProposal } from '@/lib/engine/types'
 import { DesktopCoworkerCalls } from './coworker-calls/DesktopCoworkerCalls'
 import { DesktopDelegationMount } from './delegation/DesktopDelegationMount'
 import type { DesktopCoworkerCallOpenTarget } from '@/lib/desktop/coworker-calls-client'
+import { DesktopReadAloud } from './speech/DesktopReadAloud'
 
 
 function replyMarkdown(text: string, streaming = false) {
@@ -104,7 +105,7 @@ function FeedbackThumb({ rating, current, onRate }: { rating: MessageFeedbackRat
     )
 }
 
-export function DesktopAssistantReply({ message, streaming, latest = streaming, createdAt, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, answeredRequestCalls, quickReplies, agentId, agent, skillProposals, childRuns, toolInstall, onOpenWorkspaceFile }: {
+export function DesktopAssistantReply({ message, streaming, latest = streaming, createdAt, onRegenerate, feedbackRating = null, onRate, pendingRequestToolCallId, answeredRequestCalls, quickReplies, agentId, agent, skillProposals, childRuns, toolInstall, onOpenWorkspaceFile, readAloud }: {
     message: UIMessage
     streaming: boolean
     latest?: boolean
@@ -121,6 +122,8 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
     childRuns?: { sessionId: string; active: boolean; onOpenTarget?: (target: DesktopCoworkerCallOpenTarget) => Promise<void> }
     toolInstall?: { sessionId: string; active: boolean; disabled?: boolean }
     onOpenWorkspaceFile?: DesktopOpenWorkspaceFile
+    /** Set only when an ElevenLabs key is saved: the saved conversation this reply can be read aloud from. */
+    readAloud?: { sessionId: string }
     skillProposals?: { rows: ReadonlyMap<string, EngineSkillProposal>; pinnedIds: ReadonlySet<string>; pendingId: string | null; onDecide?: (id: string, decision: 'accept' | 'dismiss') => void; onOpenSkill?: (slug: string) => void }
 }) {
     const compactions = desktopCompactionSteps(message.parts, streaming)
@@ -290,6 +293,7 @@ export function DesktopAssistantReply({ message, streaming, latest = streaming, 
                 tooltip={`${t('replyActions.regenerate')} · ${t('regenerateReplyHint')}`} onClick={() => onRegenerate(message.id)}>
                 <RefreshCcwIcon aria-hidden className="size-3.5" />
             </MessageAction>}
+            {readAloud && agentId && message.id.startsWith('engine-') && <DesktopReadAloud agentId={agentId} sessionId={readAloud.sessionId} messageId={message.id} />}
             {onRate && message.id.startsWith('engine-') && <>
                 <FeedbackThumb rating="up" current={feedbackRating} onRate={onRate} />
                 <FeedbackThumb rating="down" current={feedbackRating} onRate={onRate} />

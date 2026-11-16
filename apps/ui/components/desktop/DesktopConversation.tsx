@@ -44,6 +44,7 @@ import { DesktopComputerPanel } from './computer-panel/DesktopComputerPanel'
 import { DesktopSelectedMentionText } from './mentions/DesktopSelectedMentionText'
 import { DesktopWorkspaceMessage } from './DesktopWorkspaceMessage'
 import { DesktopAssistantReply } from './DesktopAssistantReply'
+import { useDesktopSpokenReplies } from './speech/useDesktopSpokenReplies'
 import { DesktopSavedDecisionReceipt } from './DesktopSavedDecisionReceipt'
 import { desktopSavedChatReceiptOf } from '@/lib/desktop/saved-chat-decision'
 import { DesktopChatActivity } from './DesktopChatActivity'
@@ -826,6 +827,13 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     }, [transcript, agent.id, sessionId])
     const latestAssistant = transcript.findLast(message => message.role === 'assistant')
     const streamingMessage = !showSaved && (status === 'streaming' || serviceStreaming) ? transcript.at(-1) : undefined
+    const speechSession = sessions.find(session => session.id === sessionId)
+    const spokenReplies = useDesktopSpokenReplies({
+        agentId: agent.id, sessionId, liveSessionId, active,
+        streaming: busy && (!sessionId || !liveSessionId || liveSessionId === sessionId),
+        automated: !!speechSession && (!!speechSession.automationName || !!speechSession.source && speechSession.source !== 'dashboard' && speechSession.source !== 'builder'),
+        latestSavedId: showSaved ? transcript.findLast(message => message.role === 'assistant' && message.id.startsWith('engine-') && message.parts.some(part => part.type === 'text' && part.text.trim()))?.id ?? null : null,
+    })
     const chatActivity = active && !reconnecting && !pendingRequest && generating
         ? <DesktopChatActivity agentId={agent.id} message={streamingMessage} />
         : null
@@ -1708,6 +1716,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                                             pendingRequestToolCallId={pendingRequest?.toolCallId} answeredRequestCalls={answeredCalls.get(message.id)}
                                             quickReplies={{ show: messageIndex === transcript.length - 1 && quickRepliesVisible, disabled: !canSendQuickReply,
                                                 pending: quickReplyBusy || queue.pending, onSend: text => sendQuickReply(message.id, text) }}
+                                            readAloud={sessionId && spokenReplies.available ? { sessionId } : undefined}
                                             feedbackRating={feedback.votes.get(message.id)?.rating ?? null}
                                             onRate={message.id.startsWith('engine-') ? rating => feedback.rate(message.id, rating) : undefined}
                                             onRegenerate={canRegenerate && message.id.startsWith('engine-') ? regenerateReply : undefined} />

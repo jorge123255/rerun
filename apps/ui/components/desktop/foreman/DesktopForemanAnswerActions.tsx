@@ -8,6 +8,7 @@ import { useDesktopLocale } from '../DesktopLocale'
 import { copyDesktopPlainText } from '@/lib/desktop/clipboard'
 import { useCopy } from '@/lib/use-copy'
 import { toast } from 'sonner'
+import type { ReactNode } from 'react'
 
 function FeedbackThumb({ rating, current, disabled, onRate }: {
     rating: MessageFeedbackRating
@@ -31,19 +32,21 @@ function FeedbackThumb({ rating, current, disabled, onRate }: {
     )
 }
 
-export function DesktopForemanAnswerActions({ copyText, rating = null, disabled, onRate, onReviewRetry, retryDisabled }: {
+export function DesktopForemanAnswerActions({ copyText, rating = null, disabled, onRate, onReviewRetry, retryDisabled, readAloud }: {
     copyText?: string
     rating?: MessageFeedbackRating | null
     disabled?: boolean
     onRate?: (rating: MessageFeedbackRating) => void
     onReviewRetry?: () => void
     retryDisabled?: boolean
+    /** The "Read aloud" action, present only when an ElevenLabs key is saved. */
+    readAloud?: ReactNode
 }) {
     const { t } = useDesktopLocale()
     const { copied, copy } = useCopy(() => toast.error(t('copyReplyFailed')), copyDesktopPlainText)
     const copyLabel = t(copied ? 'foreman.copied' : 'foreman.copy')
-    if (!copyText && !onRate && !onReviewRetry) return null
-    return <MessageActions className="mt-1" data-chat-find-ignore>
+    if (!copyText && !onRate && !onReviewRetry && !readAloud) return null
+    return <MessageActions className="mt-1 flex-wrap" data-chat-find-ignore>
         {copyText && <MessageAction tooltip={copyLabel} aria-label={copyLabel} onClick={() => copy(copyText)}>
             {copied ? <CheckIcon aria-hidden className="size-3.5" /> : <CopyIcon aria-hidden className="size-3.5" />}
         </MessageAction>}
@@ -51,6 +54,7 @@ export function DesktopForemanAnswerActions({ copyText, rating = null, disabled,
             disabled={disabled || retryDisabled} onClick={onReviewRetry}>
             <RotateCwIcon className="size-3.5" />
         </MessageAction>}
+        {readAloud}
         {onRate && <>
             <FeedbackThumb rating="up" current={rating} disabled={disabled} onRate={onRate} />
             <FeedbackThumb rating="down" current={rating} disabled={disabled} onRate={onRate} />
