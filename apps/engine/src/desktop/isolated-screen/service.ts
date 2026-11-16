@@ -91,7 +91,7 @@ function prerequisiteText(prerequisite: ScreenPrerequisite): string {
         case 'docker-missing': return 'Docker is not installed.'
         case 'daemon-unreachable': return 'Docker is not running.'
         case 'docker-wrong-arch': return 'Docker is not a linux/arm64 engine.'
-        case 'image-missing': return 'The isolated screen image rerun-desktop-guest:round34 is not built.'
+        case 'image-missing': return 'The isolated screen image rerun-desktop-guest:round35 is not built.'
         case 'image-wrong-arch': return 'The isolated screen image is not arm64.'
         case 'name-conflict': return CONFLICT
         case 'ready': return 'The screen is ready.'

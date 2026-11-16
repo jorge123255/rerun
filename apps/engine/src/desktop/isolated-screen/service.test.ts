@@ -267,7 +267,7 @@ describe('isolated screen prerequisites', () => {
         docker.imageKind = { kind: 'missing' }
         const signal = new AbortController().signal
         await expect(service.status(owner, signal)).resolves.toEqual({ available: false, prerequisite: 'image-missing', state: 'absent' })
-        await expect(service.ensure(owner, signal)).rejects.toMatchObject({ kind: 'prerequisite', message: 'The isolated screen image rerun-desktop-guest:round34 is not built.' })
+        await expect(service.ensure(owner, signal)).rejects.toMatchObject({ kind: 'prerequisite', message: 'The isolated screen image rerun-desktop-guest:round35 is not built.' })
         expect(docker.runs).toEqual([])
         expect(docker.createdVolumes).toEqual([])
     })
