@@ -91,7 +91,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
         if (!response.ok) { await abortable(response.body?.cancel() ?? Promise.resolve(), signal).catch(() => {}); throw new Error('Coworker authority is unavailable') }
         return JSON.parse(await boundedText(response, signal))
     }
-    async function access(localId: string, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' | 'sharedFilesWrite' | 'requestSecret' | 'computer' | 'browser' = 'mcp') {
+    async function access(localId: string, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' | 'docs' | 'sharedFilesWrite' | 'requestSecret' | 'computer' | 'browser' = 'mcp') {
         const generation = entry.generations.get(localId) ?? 0
         const current = () => { if (entry.closed || entry.pendingOwners.get(localId) || (entry.generations.get(localId) ?? 0) !== generation) throw new Error('Coworker permission is changing') }
         current()
@@ -107,7 +107,7 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     const oauth = loopbackMcpOAuth(store, access, undefined, store, createMcpOAuthAttempts(db))
     const material: DesktopMcpMaterialSource = (...args) => references.material(...args)
     const remote = remoteMcpRuntime(store, access, fetch, oauth.credential, material)
-    const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' | 'sharedFilesWrite' | 'requestSecret' | 'computer' | 'browser' = 'mcp') => {
+    const authorizeRun = async (identity: McpRunIdentity, stop: AbortSignal, grant: 'mcp' | 'privateFileWrite' | 'localMcpStdio' | 'nativeWriteback' | 'services' | 'webSearch' | 'docs' | 'sharedFilesWrite' | 'requestSecret' | 'computer' | 'browser' = 'mcp') => {
         const signal = AbortSignal.any([stop, entry.shutdown.signal, AbortSignal.timeout(5_000)])
         const owner = await abortable(localOwner(undefined, identity.engineAgentId), signal)
         const generation = entry.generations.get(owner.id) ?? 0
