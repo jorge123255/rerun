@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chatErrorTitle, classifyChatError, describeSubscriptionLimit, friendlyError, isBudgetExhausted, stripErrorPrefix, installInFlightOf, teammateRunOf, unwrapChatError } from './chat-error'
+import { chatErrorTitle, classifyChatError, describeSubscriptionLimit, friendlyError, isBudgetExhausted, stripErrorPrefix, installInFlightOf, isAnthropicKeyNotScoped, teammateRunOf, unwrapChatError } from './chat-error'
 
 describe('unwrapChatError', () => {
     it('reads the error field of a JSON envelope', () => {
@@ -193,6 +193,30 @@ describe('describeSubscriptionLimit', () => {
     it('says whose plan is out rather than "this subscription"', () => {
         expect(friendlyError("AI_APICallError: You've hit your session limit · resets 3pm")).toContain('Your Claude plan')
         expect(friendlyError('Error: usage_limit_exceeded')).toContain('Your ChatGPT plan')
+    })
+})
+
+describe('an Anthropic API key (upstream #250, RER-124)', () => {
+    // What an Anthropic API key on an account with no credit stored as the run's error, before and
+    // after the engine read it as a spent quota.
+    it('names an Anthropic API account out of credits', () => {
+        const noCredit = 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'
+        for (const stored of [`Message failed: ProviderRefusedError: Provider returned error: ${noCredit}`, `Message failed: AI_APICallError: ${noCredit}`]) {
+            expect(classifyChatError(stored)).toBe('usage_limit')
+            expect(describeSubscriptionLimit(stored)).toEqual({ plan: 'anthropic', scope: 'credits' })
+            expect(chatErrorTitle('usage_limit', stored)).toBe('Anthropic API credits used up')
+            expect(friendlyError(stored)).toBe('Your Anthropic API account has no credits left. Add credits in the Anthropic Console under Billing, or switch this coworker to another model.')
+        }
+    })
+
+    // A key made for every workspace of its organization, which no run can use.
+    it('says an Anthropic key scoped to no workspace has to be replaced', () => {
+        const stored = 'Message failed: ProviderRefusedError: Provider returned error: This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use. Add the header, or use an API key that is scoped to a workspace.'
+        expect(classifyChatError(stored)).toBe('unauthorized')
+        expect(chatErrorTitle('unauthorized', stored)).toBe('Anthropic key not tied to a workspace')
+        expect(friendlyError(stored)).toBe('This key works across every workspace of its Anthropic organization. Create a key inside one workspace in the Anthropic Console, then reconnect.')
+        expect(isAnthropicKeyNotScoped('unauthorized', stored)).toBe(true)
+        expect(isAnthropicKeyNotScoped('unauthorized', 'AI_APICallError: invalid x-api-key')).toBe(false)
     })
 })
 

@@ -60,6 +60,28 @@ test('an unauthorized connection offers reconnect', async () => {
     expect(onReconnect).toHaveBeenCalledTimes(1)
 })
 
+// Upstream #250: an Anthropic API key that passed the connect check, then failed every run.
+test('an Anthropic API account with no credit says where to add credit and offers a model switch', async () => {
+    const onSwitchModel = vi.fn(), onRetry = vi.fn()
+    await mount('usage_limit', 'AI_APICallError: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.', { onSwitchModel, onRetry })
+    expect(text()).toContain('Anthropic API credits used up')
+    expect(text()).toContain('Add credits in the Anthropic Console under Billing')
+    expect(button('Retry')).toBeUndefined()
+    await click('Switch model')
+    expect(onSwitchModel).toHaveBeenCalledOnce()
+})
+
+test('an Anthropic key scoped to no workspace asks for a new key, not a new sign-in', async () => {
+    const onReconnect = vi.fn()
+    await mount('unauthorized', 'ProviderRefusedError: Provider returned error: This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header.', { onReconnect })
+    expect(text()).toContain('Anthropic key not tied to a workspace')
+    expect(text()).toContain('Create a key inside one workspace in the Anthropic Console')
+    expect(text()).toContain('Paste the new key on the connection this coworker runs on.')
+    expect(text()).not.toContain('Sign in again')
+    await click('Reconnect')
+    expect(onReconnect).toHaveBeenCalledOnce()
+})
+
 test('exhausted OpenAI API credits are named and offer a model switch', async () => {
     const onSwitchModel = vi.fn(), onRetry = vi.fn()
     await mount('usage_limit', 'OpenAI API credits used up', { onSwitchModel, onRetry })

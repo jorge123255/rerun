@@ -1,4 +1,4 @@
-import { OPENAI_API_CREDITS_USED_UP, PROVIDER_API_CREDITS_USED_UP, OPENCODE_CREDITS_USED_UP, OPENCODE_GO_LIMIT, classifyChatError, stripErrorPrefix, type ChatErrorKind } from './chat-error.js'
+import { ANTHROPIC_API_CREDITS, ANTHROPIC_KEY_NOT_SCOPED, OPENAI_API_CREDITS_USED_UP, PROVIDER_API_CREDITS_USED_UP, OPENCODE_CREDITS_USED_UP, OPENCODE_GO_LIMIT, classifyChatError, stripErrorPrefix, type ChatErrorKind } from './chat-error.js'
 import { modelLabel } from './models.js'
 
 const GENERIC_ERROR = 'Something went wrong. Try sending your message again.'
@@ -16,9 +16,10 @@ export function isBudgetExhausted(message: string): boolean {
 // claude-code's own raw reasons are `error_max_turns` and `error_during_execution`.
 //
 // `not_in_plan` is a model the plan does not include at all ("Fable 5.1 requires usage credits"),
-// `credits` the paid overage spent, `spend` an organization's monthly cap.
+// `credits` the paid overage spent (or, on `openai` and `anthropic`, the API account's prepaid
+// credits), `spend` an organization's monthly cap.
 export type SubscriptionLimit = {
-    plan: 'claude' | 'chatgpt' | 'opencode' | 'openai' | null
+    plan: 'claude' | 'chatgpt' | 'opencode' | 'openai' | 'anthropic' | null
     scope: 'session' | 'weekly' | 'monthly' | 'model' | 'not_in_plan' | 'credits' | 'spend'
     modelName?: string
     resetsAt?: string
@@ -60,6 +61,7 @@ export function describeSubscriptionLimit(raw: string): SubscriptionLimit {
     const opencode = opencodeLimit(message, m)
     if (opencode) return opencode
     if (m === OPENAI_API_CREDITS_USED_UP.toLowerCase()) return { plan: 'openai', scope: 'credits' }
+    if (ANTHROPIC_API_CREDITS.test(message)) return { plan: 'anthropic', scope: 'credits' }
     if (m === PROVIDER_API_CREDITS_USED_UP.toLowerCase() || /no credits remaining|insufficient_quota/i.test(raw)) return { plan: null, scope: 'credits' }
     const codex = m.includes('codex') || m.includes('chatgpt')
     if (m.includes('requires usage credits')) return { plan: 'claude', scope: 'not_in_plan', modelName: modelNotInPlan(message) }
@@ -75,6 +77,11 @@ export function describeSubscriptionLimit(raw: string): SubscriptionLimit {
     if (m.includes('claude')) return { plan: 'claude', scope: 'session' }
     return { plan: null, scope: 'session' }
 }
+
+const ANTHROPIC_CREDITS_TITLE = 'Anthropic API credits used up'
+const ANTHROPIC_CREDITS_MESSAGE = 'Your Anthropic API account has no credits left. Add credits in the Anthropic Console under Billing, or switch this coworker to another model.'
+const ANTHROPIC_KEY_NOT_SCOPED_TITLE = 'Anthropic key not tied to a workspace'
+const ANTHROPIC_KEY_NOT_SCOPED_MESSAGE = 'This key works across every workspace of its Anthropic organization. Create a key inside one workspace in the Anthropic Console, then reconnect.'
 
 const PLAN_LABELS: Record<'claude' | 'chatgpt' | 'opencode', string> = { claude: 'Claude', chatgpt: 'ChatGPT', opencode: 'OpenCode Go' }
 
@@ -99,6 +106,7 @@ function opencodeLimitTitle(limit: SubscriptionLimit): string {
 export function subscriptionLimitMessage(limit: SubscriptionLimit): string {
     if (limit.plan === 'opencode') return opencodeLimitMessage(limit)
     if (limit.plan === 'openai') return 'Your OpenAI API account has no credits left. Add credits on platform.openai.com, or switch this coworker to another model.'
+    if (limit.plan === 'anthropic') return ANTHROPIC_CREDITS_MESSAGE
     if (!limit.plan && limit.scope === 'credits') return 'This provider has no API credits left. Check its billing settings or switch to another model.'
     if (limit.scope === 'not_in_plan') {
         const model = limit.modelName ?? 'this model'
@@ -119,6 +127,7 @@ export function subscriptionLimitMessage(limit: SubscriptionLimit): string {
 export function subscriptionLimitTitle(limit: SubscriptionLimit): string {
     if (limit.plan === 'opencode') return opencodeLimitTitle(limit)
     if (limit.plan === 'openai') return OPENAI_API_CREDITS_USED_UP
+    if (limit.plan === 'anthropic') return ANTHROPIC_CREDITS_TITLE
     if (!limit.plan && limit.scope === 'credits') return PROVIDER_API_CREDITS_USED_UP
     if (limit.scope === 'not_in_plan') {
         if (!limit.plan) return `${limit.modelName ?? 'Model'} unavailable`
@@ -151,11 +160,17 @@ function isModelAtCapacity(kind: ChatErrorKind, message: string): boolean {
     return kind === 'overloaded' && /at capacity/i.test(message)
 }
 
+// Reconnecting the same key fails the same way: the notice says which key to make instead.
+export function isAnthropicKeyNotScoped(kind: ChatErrorKind, message: string): boolean {
+    return kind === 'unauthorized' && ANTHROPIC_KEY_NOT_SCOPED.test(message)
+}
+
 // A generic error has no headline worth more than its own text, so it gets none.
 export function chatErrorTitle(kind: ChatErrorKind, message: string): string | null {
     if (kind === 'generic') return null
     if (kind === 'usage_limit') return subscriptionLimitTitle(describeSubscriptionLimit(message))
     if (isModelAtCapacity(kind, message)) return 'Model at capacity'
+    if (isAnthropicKeyNotScoped(kind, message)) return ANTHROPIC_KEY_NOT_SCOPED_TITLE
     return KIND_TITLES[kind]
 }
 
@@ -173,6 +188,7 @@ const KIND_MESSAGES: Partial<Record<ChatErrorKind, string>> = {
 export function friendlyError(message: string, kind = classifyChatError(message)): string {
     if (kind === 'usage_limit') return subscriptionLimitMessage(describeSubscriptionLimit(message))
     if (isModelAtCapacity(kind, message)) return 'This model has no room right now. Try again in a moment or pick another model.'
+    if (isAnthropicKeyNotScoped(kind, message)) return ANTHROPIC_KEY_NOT_SCOPED_MESSAGE
     const known = KIND_MESSAGES[kind]
     if (known) return known
     return (message && stripErrorPrefix(message)) || GENERIC_ERROR

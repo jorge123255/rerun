@@ -10,6 +10,7 @@ import type { ConnectionsList, DesktopCoworkerCallTarget, DesktopForemanChatRef,
 import { Button } from '@/components/ui/button'
 import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
+import { desktopForemanRunFailureText } from '@/lib/desktop/foreman/run-failure'
 import { createDesktopForemanClient, desktopForemanMessages, readDesktopForemanState, type DesktopForemanClientState } from '@/lib/desktop/foreman-client/runtime-client'
 import { createClientDockFeed } from '@/lib/desktop/foreman-dock/feed'
 import { useMemo } from 'react'
@@ -314,7 +315,7 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
         question={state.question} onAnswerQuestion={client.answerQuestion}
         approval={state.approval} onDecideApproval={client.decideApproval}
         starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished} separateConversation={state.separateConversation}
-        runNotice={state.runFailure && !pendingSend ? <ProviderErrorNotice kind={state.runFailure.kind}
+        runNotice={state.runFailure && !pendingSend ? <ProviderErrorNotice kind={state.runFailure.kind} message={desktopForemanRunFailureText(state.runFailure.detail)}
             onSwitchModel={canSwitchModel ? () => modelPicker.current?.open() : undefined}
             onReconnect={failedConnection && props.onReconnectConnection ? () => props.onReconnectConnection?.(failedConnection) : props.onOpenModelSettings}
             onOpenConnections={props.onOpenModelSettings} /> : null}
