@@ -137,3 +137,31 @@ it('per-file document add keeps eligible siblings and returns typed outcomes wit
     expect(api.attachments.map(a => a.name)).toEqual(['ok.pdf', 'also.pdf'])
     expect(transport.uploadDesktopDocument).toHaveBeenCalledTimes(2)
 })
+
+it('a large file saved to Files is accepted, shows its upload progress, and a too-large one is refused with its limit', async () => {
+    const MB = 1024 * 1024, coworker = { agentId: 'owner', tabUid: 'tab' }
+    const sized = (name: string, size: number) => { const file = new File([], name); Object.defineProperty(file, 'size', { value: size }); return file }
+    let report!: (fraction: number) => void, finish!: (value: DesktopDocumentAttachment) => void
+    transport.uploadDesktopDocument.mockImplementation((_owner, _id, _file, _signal, _position, onProgress) => new Promise(done => { report = onProgress; finish = done }))
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<Probe value={coworker} />))
+    let added!: ReturnType<typeof api.add>
+    await act(async () => { added = api.add([sized('backup.zip', 90 * MB), sized('huge.zip', 101 * MB), sized('scan.pdf', 17 * MB)]) })
+    expect(added.outcomes.map(row => row.status)).toEqual(['attached', 'rejected', 'rejected'])
+    expect(api.error).toContain('huge.zip is 101 MB. Files saved to this coworker’s Files can be up to 100 MB.')
+    expect(api.error).toContain('scan.pdf is 17 MB. This kind of file can be up to 16 MB')
+    const id = added.attachedIds[0]!
+    expect(api.progress).toEqual({})
+    await act(async () => { report(0.314) })
+    expect(api.progress).toEqual({ [id]: 0.31 })
+    await act(async () => { report(0.999) })
+    expect(api.progress).toEqual({ [id]: 0.99 })
+    const row = { ...attachment(id, coworker), name: 'backup.zip', kind: 'binary' as const, byteLength: 90 * MB, conversion: { mode: 'staged-file' as const, state: 'ready' as const, stagedRef: 'chat-uploads/x-backup.zip' } }
+    await act(async () => { saved.push(row); finish(row) })
+    expect(api.progress).toEqual({})
+    expect(api.attachments).toMatchObject([{ attachmentId: id, uploaded: true, byteLength: 90 * MB }])
+    // The second large file must fit the 200 MB that large files share.
+    await act(async () => { added = api.add([sized('second.zip', 100 * MB), sized('third.zip', 20 * MB)]) })
+    expect(added.outcomes.map(row => row.status)).toEqual(['attached', 'rejected'])
+    expect(api.error).toContain('200 MB in total')
+})

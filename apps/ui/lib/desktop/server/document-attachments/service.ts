@@ -1,15 +1,19 @@
 import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
-import { documentScopeKey as scopeKey, desktopDocumentScopeSchema, desktopDocumentSelectionSchema, desktopDocumentRevisionActionSchema, desktopDocumentUploadSchema, DESKTOP_DOCUMENT_IMAGE_MAX_FILES, DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES, DESKTOP_DOCUMENT_TEXT_MAX_CHARS, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, desktopStagedDocumentPath, isDesktopStagedDocumentKind, type DesktopDocumentAdmission, type DesktopDocumentAttachment, type DesktopDocumentConversion, type DesktopDocumentReference, type DesktopDocumentScope, type DesktopDocumentSelection } from '@rerun/contracts'
+import { documentScopeKey as scopeKey, desktopDocumentScopeSchema, desktopDocumentSelectionSchema, desktopDocumentRevisionActionSchema, desktopDocumentUploadSchema, DESKTOP_DOCUMENT_IMAGE_MAX_FILES, DESKTOP_DOCUMENT_IMAGE_TOTAL_MAX_BYTES, DESKTOP_DOCUMENT_TEXT_MAX_CHARS, DESKTOP_DOCUMENT_INPUT_MAX_BYTES, desktopDocumentStagedUploadSchema, desktopStagedDocumentPath, isDesktopLargeStagedDocument, isDesktopStagedDocumentKind, type DesktopDocumentAdmission, type DesktopDocumentAttachment, type DesktopDocumentConversion, type DesktopDocumentReference, type DesktopDocumentScope, type DesktopDocumentSelection } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { inspectComposerImageSource } from '../composer-image-formats'
 import { questionDocumentId } from '../../question-documents'
-import { inspectDesktopDocumentUpload, readDesktopPlainText } from './bytes'
+import { inspectDesktopDocumentUpload, inspectDesktopLargeUploadName, inspectDesktopLargeVideo, readDesktopPlainText } from './bytes'
+import { spoolDesktopStagedUpload } from './staged-upload'
 import { documentConflict } from './store'
 import type { DesktopDocumentAttachmentRecord, DesktopDocumentAuthorities } from './types'
 
 const uploadSchema = desktopDocumentUploadSchema.omit({ audioBase64: true })
 type Upload = typeof uploadSchema._input
+type StagedUpload = typeof desktopDocumentStagedUploadSchema._input
+// A large staged file has no copy in the database: its bytes are the file in the coworker's Files.
+const filesOnly = () => new DesktopHttpError(409, 'This file is larger than 16 MB and is kept only in this coworker’s Files. Open it from Files.')
 type Revision = typeof desktopDocumentRevisionActionSchema._input
 const digest = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex')
 export function createDesktopDocumentAttachmentService(authorities: DesktopDocumentAuthorities) {
@@ -44,6 +48,7 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
     }
     async function verified(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, signal: AbortSignal) {
         signal.throwIfAborted()
+        if (isDesktopLargeStagedDocument(attachment)) throw filesOnly()
         const bytes = await blobs.read(scope, attachment, signal)
         signal.throwIfAborted()
         if (bytes.byteLength !== attachment.byteLength || digest(bytes) !== attachment.sha256) throw documentConflict()
@@ -51,6 +56,8 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
         return bytes
     }
     async function verifyPrepared(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, signal: AbortSignal) {
+        // Nothing of a large staged file is in the database; a send checks the file in Files itself.
+        if (isDesktopLargeStagedDocument(attachment)) { signal.throwIfAborted(); return }
         await verified(scope, attachment, signal)
         const image = attachment.conversion.renderedImage
         if (image) await blobs.readRenderedImage(scope, attachment, image, signal)
@@ -114,6 +121,52 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
                 } else await verifyPrepared(scope, record.attachment, signal)
                 await owner(scope, signal)
                 return record.attachment
+            })
+        },
+        /**
+         * A file above the document limit, for the kinds that are only saved into the coworker's
+         * Files. The body is received into a temporary file, never into memory or the database;
+         * the name, type, ownership, room and (for a video) structure checks of a small upload all
+         * run, and the file is published by the same create-only import.
+         */
+        uploadStaged(scope: DesktopDocumentScope, raw: StagedUpload, body: ReadableStream<Uint8Array>, signal: AbortSignal): Promise<DesktopDocumentAttachment> {
+            const refuse = (error: unknown): never => { void body.cancel().catch(() => {}); throw error }
+            const parsed = desktopDocumentStagedUploadSchema.safeParse(raw)
+            if (!parsed.success) { void body.cancel().catch(() => {}); return Promise.reject(parsed.error) }
+            const input = parsed.data
+            return exclusive(input.attachmentId, async () => {
+                let named: { kind: 'video' | 'binary' }
+                try {
+                    await owner(scope, signal)
+                    if (scopeKey(input) !== scopeKey(scope)) throw documentConflict()
+                    named = inspectDesktopLargeUploadName(input)
+                    if (!authorities.stagedFiles || !staged(scope, named.kind)) throw new DesktopHttpError(413, 'Attachments here can be up to 16 MB.')
+                    const previous = await store.read(scope, input.attachmentId)
+                    if (previous?.deletion) throw documentConflict()
+                    await store.assertRoom(scope, input.attachmentId, input.byteLength)
+                    await owner(scope, signal)
+                } catch (error) { return refuse(error) }
+                const spooled = await spoolDesktopStagedUpload(body, input.byteLength, signal, named.kind === 'video')
+                try {
+                    await owner(scope, signal)
+                    const mimeType = named.kind === 'video' ? inspectDesktopLargeVideo(input, spooled.bytes!) : input.mimeType
+                    spooled.bytes = undefined
+                    const fingerprint = digest(JSON.stringify([scopeKey(scope), input.attachmentId, input.name, mimeType, spooled.sha256, spooled.byteLength, input.position]))
+                    const now = new Date().toISOString()
+                    const initial: DesktopDocumentAttachmentRecord = { fingerprint, attachment: { kind: named.kind, mimeType, sha256: spooled.sha256, byteLength: spooled.byteLength, scope, attachmentId: input.attachmentId, name: input.name, position: input.position, uploaded: false, selected: true, admitted: false, conversion: { mode: 'staged-file', state: 'pending' }, revision: randomUUID(), createdAt: now, updatedAt: now } }
+                    let record = (await store.reserve(initial)).record
+                    if (record.fingerprint !== fingerprint || record.deletion) throw documentConflict()
+                    await owner(scope, signal)
+                    if (!record.attachment.uploaded) {
+                        const path = stagedPath(record.attachment)
+                        if (!path) throw documentConflict()
+                        await authorities.stagedFiles!.put(scope, path, spooled, record.attachment.sha256, signal)
+                        await owner(scope, signal)
+                        record = await save(record, { uploaded: true, conversion: { mode: 'staged-file', state: 'ready', stagedRef: path } })
+                    }
+                    await owner(scope, signal)
+                    return record.attachment
+                } finally { await spooled.dispose() }
             })
         },
         convert(scope: DesktopDocumentScope, raw: Revision, signal: AbortSignal): Promise<DesktopDocumentAttachment> {
@@ -271,6 +324,7 @@ export function createDesktopDocumentAttachmentService(authorities: DesktopDocum
             const record = await required(scope, attachmentId)
             const attachment = record.attachment
             if (!attachment.uploaded || attachment.sha256 !== sha256) throw documentConflict()
+            if (isDesktopLargeStagedDocument(attachment)) throw filesOnly()
             const renderedImage = view === 'preview' ? attachment.conversion.renderedImage : undefined
             const bytes = renderedImage
                 ? await blobs.readRenderedImage(scope, attachment, renderedImage, signal) : await verified(scope, attachment, signal)

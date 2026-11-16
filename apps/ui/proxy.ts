@@ -92,6 +92,10 @@ export const config = {
          *   matcher. These routes authenticate themselves through requireWorkspaceId().)
          * - api/desktop/agents/:agentId/files/import (desktop uploads also authenticate in the
          *   handler and need to receive the full body without the proxy’s 10 MB truncation)
+         * - api/desktop/coworkers/:agentId/document-attachments and api/desktop/foreman/document-attachments
+         *   (chat attachments, for the same truncation: a document travels as base64 in one JSON body
+         *   that passes 10 MB from about 7.5 MB of file, and a large file saved to Files is streamed
+         *   through the route under it. Both authenticate in the handler.)
          * - api/llm (the boxes' model proxy, for the same 10MB truncation: an image a box hands its
          *   model travels inline in base64, and a cut body reached the route as "Invalid JSON". The
          *   caller is an engine with its key, never a browser with a session to refresh.)
@@ -110,7 +114,7 @@ export const config = {
          *   fragment is the only key, there is no session to refresh nor one to provision)
          * Feel free to modify this pattern to include more paths.
          */
-        '/((?!_next/static|_next/image|favicon.ico|api/version|api/t/|api/files|api/desktop/agents/[^/]+/files/import(?:/|$)|api/llm/|api/v1/|api/host-metrics|api/public/|og/|render/|email/|r/|p/|desktop-view|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+        '/((?!_next/static|_next/image|favicon.ico|api/version|api/t/|api/files|api/desktop/agents/[^/]+/files/import(?:/|$)|api/desktop/(?:coworkers/[^/]+|foreman)/document-attachments(?:/|$)|api/llm/|api/v1/|api/host-metrics|api/public/|og/|render/|email/|r/|p/|desktop-view|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
         // The two trees under /render put back in, for the gate alone: proxy() returns before it
         // ever reaches updateSession(). The OG renders next to them, /render/brand and
         // /render/templates, stay out: the screenshot service captures those on every card.

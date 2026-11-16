@@ -3,7 +3,8 @@ import { aggregate, Bytes, checkOpen, dimensions, fail } from './common'
 
 type Box = { type: string; data: number; end: number }
 export type AvifPlan = { width: number; height: number; aggregatePixels: number }
-export function inspectAvif(bytes: Uint8Array, signal: AbortSignal): AvifPlan {
+/** `sequenceFrame` is set only for the still copy of an image sequence (see avif-sequence.ts). */
+export function inspectAvif(bytes: Uint8Array, signal: AbortSignal, sequenceFrame = false): AvifPlan {
     const r = new Bytes(bytes)
     let boxCount = 0
     function boxes(start: number, end: number): Box[] {
@@ -182,7 +183,7 @@ export function inspectAvif(bytes: Uint8Array, signal: AbortSignal): AvifPlan {
         const data = new Uint8Array(parts.reduce((length, part) => length + part.length, 0))
         let offset = 0
         for (const part of parts) { data.set(part, offset); offset += part.length }
-        inspectAv1Item(config, data, size, signal)
+        inspectAv1Item(config, data, size, signal, sequenceFrame)
     }
     return { ...primarySize, aggregatePixels }
 }

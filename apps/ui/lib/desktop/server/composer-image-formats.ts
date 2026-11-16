@@ -2,9 +2,9 @@ import 'server-only'
 import { randomBytes } from 'node:crypto'
 import sharp from 'sharp'
 import { DesktopHttpError } from './auth'
-import { DesktopPreviewImageError, inspectDesktopPreviewImageBytes } from './animated-image'
+import { DESKTOP_PREVIEW_MAX_AGGREGATE_PIXELS, DesktopPreviewImageError, inspectDesktopPreviewImageBytes } from './animated-image'
 import { DESKTOP_IMAGE_MAX_BYTES, DESKTOP_IMAGE_MAX_PIXELS, DesktopImageBytesError, inspectDesktopImageBytes } from './image-bytes'
-import { convertRasterPreviewImage, RasterPreviewError } from './preview-raster-formats'
+import { avifSequenceStill, convertRasterPreviewImage, inspectRasterPreviewImage, RasterPreviewError } from './preview-raster-formats'
 import { DesktopSvgError, rasterizeDesktopSvg } from './preview-svg'
 import {
     desktopImageKindForName, desktopImageKindIsConverted, desktopImageMediaType, desktopImageNameProblem,
@@ -95,12 +95,12 @@ async function validateStaticRaster(kind: DesktopImageKind, bytes: Uint8Array, s
 }
 
 /**
- * An animated GIF is attached as its first frame. The whole file is first walked by the
+ * An animated GIF or WebP is attached as its first frame. The whole file is first walked by the
  * bounded animation reader the Files preview already uses (frame count, canvas and aggregate
- * pixels), then only page 0 is decoded by the decoder a static GIF already uses. Later frames are
+ * pixels), then only page 0 is decoded by the decoder a static image already uses. Later frames are
  * never decoded and the source bytes are never stored. Returns undefined for a still image.
  */
-async function firstAnimationFrame(kind: 'gif', bytes: Uint8Array, signal?: AbortSignal): Promise<{ bytes: Uint8Array; width: number; height: number } | undefined> {
+async function firstAnimationFrame(kind: 'gif' | 'webp', bytes: Uint8Array, signal?: AbortSignal): Promise<{ bytes: Uint8Array; width: number; height: number } | undefined> {
     checkOpen(signal)
     try { inspectDesktopImageBytes(kind, bytes); return undefined }
     catch (error) { if (!(error instanceof DesktopImageBytesError) || error.reason !== 'animation') return undefined }
@@ -122,10 +122,10 @@ async function firstAnimationFrame(kind: 'gif', bytes: Uint8Array, signal?: Abor
         checkOpen(signal)
         throw new DesktopHttpError(415, 'This image is damaged and can’t be attached.')
     }
-    return { bytes: await encodeGifToPng(bytes, canvas.width, canvas.height, signal), width: canvas.width, height: canvas.height }
+    return { bytes: await encodeFirstPageToPng(bytes, canvas.width, canvas.height, signal), width: canvas.width, height: canvas.height }
 }
 
-async function encodeGifToPng(bytes: Uint8Array, width: number, height: number, signal?: AbortSignal): Promise<Uint8Array> {
+async function encodeFirstPageToPng(bytes: Uint8Array, width: number, height: number, signal?: AbortSignal): Promise<Uint8Array> {
     checkOpen(signal)
     const deadline = new AbortController(), timer = setTimeout(() => deadline.abort(), 5_000)
     const combined = AbortSignal.any([signal ?? never, deadline.signal])
@@ -165,6 +165,19 @@ async function encodeGifToPng(bytes: Uint8Array, width: number, height: number, 
     } finally { clearTimeout(timer) }
 }
 
+/**
+ * An animated AVIF is attached as its first frame. Only box headers are read to bound the
+ * sequence; the still copy then goes through the same inspection and bounded decode as any still
+ * AVIF, so a sequence whose first frame is not also a plain still item is refused.
+ */
+async function firstAvifSequenceFrame(bytes: Uint8Array, signal?: AbortSignal) {
+    const open = signal ?? never
+    const still = avifSequenceStill(bytes, open)
+    const canvas = inspectRasterPreviewImage(still.bytes, 'avif', open, true)
+    if (BigInt(canvas.width) * BigInt(canvas.height) * BigInt(still.frames) > BigInt(DESKTOP_PREVIEW_MAX_AGGREGATE_PIXELS)) throw new RasterPreviewError('frames')
+    return convertRasterPreviewImage(still.bytes, 'avif', open, true)
+}
+
 function assertConverted(bytes: Uint8Array, width: number, height: number): void {
     if (!bytes.byteLength || bytes.byteLength > DESKTOP_IMAGE_MAX_BYTES) throw new DesktopHttpError(413, 'This image is too large to attach.')
     const inspected = inspectBytes('png', bytes)
@@ -191,20 +204,22 @@ export async function inspectComposerImageSource(name: string, bytes: Uint8Array
         return { displayName: name, canonicalName: canonicalPngName(name), kind, mediaType: 'image/png', bytes: raster.bytes, width: raster.width, height: raster.height }
     }
     if (kind === 'avif' || kind === 'ico' || kind === 'bmp') {
-        const converted = await convertRasterPreviewImage(bytes, kind, signal ?? never).catch(error => rasterFailure(error, signal))
+        const converted = await convertRasterPreviewImage(bytes, kind, signal ?? never)
+            .catch(error => kind === 'avif' && error instanceof RasterPreviewError && error.reason === 'animation' ? firstAvifSequenceFrame(bytes, signal) : Promise.reject(error))
+            .catch(error => rasterFailure(error, signal))
         checkOpen(signal)
         assertConverted(converted.bytes, converted.width, converted.height)
         return { displayName: name, canonicalName: canonicalPngName(name), kind, mediaType: 'image/png', bytes: converted.bytes, width: converted.width, height: converted.height }
     }
-    // Animated WebP stays refused: a WebP attachment is stored as WebP, never as a converted PNG.
-    if (kind === 'gif') {
+    // An animation is never stored: a `.gif` or `.webp` name with a PNG snapshot is its first frame.
+    if (kind === 'gif' || kind === 'webp') {
         const frame = await firstAnimationFrame(kind, bytes, signal)
         checkOpen(signal)
         if (frame) return { displayName: name, canonicalName: canonicalPngName(name), kind, mediaType: 'image/png', bytes: frame.bytes, width: frame.width, height: frame.height }
     }
     const inspected = await validateStaticRaster(kind, bytes, signal)
     if (kind === 'gif') {
-        const png = await encodeGifToPng(bytes, inspected.width, inspected.height, signal)
+        const png = await encodeFirstPageToPng(bytes, inspected.width, inspected.height, signal)
         checkOpen(signal)
         return { displayName: name, canonicalName: canonicalPngName(name), kind, mediaType: 'image/png', bytes: png, width: inspected.width, height: inspected.height }
     }
