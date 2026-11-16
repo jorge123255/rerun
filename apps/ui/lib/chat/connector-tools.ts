@@ -70,7 +70,7 @@ export function humanizeToolSegment(segment: string): string {
 // keeps today's rendering untouched.
 // A connector tool that runs other tools by name (Composio's multi-execute) is named after what
 // it ran: "Gmail Send Email", and "+2" when it ran more than one.
-function ranLabel(tool: string, input: unknown): string | null {
+export function ranLabel(tool: string, input: unknown): string | null {
     const { tools } = desktopConnectorInnerCalls(tool, input)
     if (!tools.length) return null
     const first = humanizeToolSegment(tools[0]!.toLowerCase())
