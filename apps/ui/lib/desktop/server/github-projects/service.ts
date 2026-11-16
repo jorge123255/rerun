@@ -42,7 +42,7 @@ export type DesktopGithubProjectsAnswer = { record: DesktopGithubProjectsRecord 
 
 const NO_MODEL = 'The selected model does not support this read, so only what the files show is listed.'
 const MODEL_FAILED = 'The model could not describe these projects, so only what the files show is listed.'
-const FILES_ONLY = 'Read from the links in your message: only what the files show is listed. Press Read again to have your model describe them.'
+const FILES_ONLY = 'Read from the links in your message. Your model is describing these projects; until it has, only what the files show is listed.'
 
 function oneLine(value: string | null, max: number): string | null {
     const cleaned = value?.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ').replace(/\s+/g, ' ').trim()
@@ -114,8 +114,40 @@ export function carryGithubProjectEdits(fresh: DesktopGithubProjectsRecord, befo
     return { ...fresh, projects, links }
 }
 
+/**
+ * What the model says about projects that were first read from their files alone, laid over the
+ * saved record: it fills what the files left open and never undoes what the owner changed since.
+ * A kind the files decided or the owner chose stands; roles the owner ticked or unticked stand.
+ */
+export function describeGithubProjects(record: DesktopGithubProjectsRecord, outcome: Extract<DesktopGithubProjectsEngineOutcome, { status: 'succeeded' }>): DesktopGithubProjectsRecord {
+    const projects = record.projects.map(project => {
+        const said = outcome.projects.find(item => item.id === project.id)
+        if (!said || project.state !== 'read') return project
+        const kind = project.kindSource === 'default' && said.kind ? said.kind : project.kind
+        const stack = [...project.stack]
+        for (const item of said.stack) if (!stack.some(known => known.toLowerCase() === item.toLowerCase())) stack.push(item)
+        const untouched = project.roles.length === project.suggestedRoles.length && project.roles.every(role => project.suggestedRoles.includes(role))
+        const roles = said.roles.length >= 2 ? said.roles : kind !== project.kind ? defaultProjectRoles(kind) : project.suggestedRoles
+        return {
+            ...project, kind, kindSource: kind !== project.kind ? 'model' as const : project.kindSource,
+            purpose: project.purpose ?? said.purpose, stack: stack.slice(0, DESKTOP_GITHUB_PROJECT_LIMITS.stackItems), build: project.build ?? said.build ?? null,
+            suggestedRoles: roles, roles: untouched ? roles : project.roles,
+        }
+    })
+    const read = new Set(projects.filter(project => project.state === 'read' && !project.removed).map(project => project.id))
+    const links = [...record.links]
+    for (const link of outcome.links) {
+        if (!read.has(link.from) || !read.has(link.to) || links.length >= DESKTOP_GITHUB_PROJECT_LIMITS.maxLinks) continue
+        if (links.some(known => (known.from === link.from && known.to === link.to) || (known.from === link.to && known.to === link.from))) continue
+        links.push({ from: link.from, to: link.to, kind: link.kind, source: 'model', quote: link.quote })
+    }
+    return { ...record, inference: 'model', inferenceNote: null, projects, links }
+}
+
 const FLIGHTS = Symbol.for('rerun.desktop.github-projects.flights.v1')
 const QUEUES = Symbol.for('rerun.desktop.github-projects.edits.v1')
+const DESCRIBING = Symbol.for('rerun.desktop.github-projects.describing.v1')
+const describing = () => ((globalThis as unknown as Record<symbol, Map<string, Promise<void>>>)[DESCRIBING] ??= new Map())
 const queues = () => ((globalThis as unknown as Record<symbol, Map<string, Promise<unknown>>>)[QUEUES] ??= new Map())
 const flights = () => ((globalThis as unknown as Record<symbol, Map<string, Promise<DesktopGithubProjectsRecord>>>)[FLIGHTS] ??= new Map())
 
@@ -130,6 +162,25 @@ export function createDesktopGithubProjectsService(ports: DesktopGithubProjectsP
         return next
     }
 
+    const describeKey = (chat: DesktopForemanChatRef, key: string) => JSON.stringify([scope, chat.workspaceId, chat.chatId, key, 'describe'])
+    function describeLater(chat: DesktopForemanChatRef, key: string, data: DesktopGithubRepositoryData[]) {
+        const flightKey = describeKey(chat, key)
+        if (describing().has(flightKey)) return
+        const work = (async () => {
+            const model = await ports.model(chat).catch(() => null)
+            if (!model) return
+            const outcome = await ports.understand({ model, repositories: data }, AbortSignal.timeout(DESKTOP_GITHUB_PROJECT_LIMITS.modelDeadlineMs + 15_000)).catch(() => null)
+            if (outcome?.status !== 'succeeded') return
+            // Laid over the record as it is now, in line with the owner's edits, and only while this set is still the current one.
+            await inOrder(chat, async () => {
+                const current = await ports.store.current(chat)
+                if (!current || current.key !== key || current.inference === 'model') return
+                await ports.store.save(chat, { ...describeGithubProjects(current, outcome), revision: current.revision + 1, updatedAt: now() })
+            })
+        })().catch(() => {}).finally(() => { if (describing().get(flightKey) === work) describing().delete(flightKey) })
+        describing().set(flightKey, work)
+    }
+
     async function run(chat: DesktopForemanChatRef, key: string, repositories: DesktopGithubRepositoryRef[], signal: AbortSignal, quick?: { carry: DesktopGithubProjectsRecord | null }): Promise<DesktopGithubProjectsRecord> {
         const reads = await readGithubRepositories(repositories, ports.read, signal)
         signal.throwIfAborted()
@@ -141,6 +192,8 @@ export function createDesktopGithubProjectsService(ports: DesktopGithubProjectsP
             const fresh = buildGithubProjectsRecord({ key, repositories, reads, outcome: null, note: data.length ? FILES_ONLY : null, now: now() })
             const record = carryGithubProjectEdits(fresh, quick.carry)
             await ports.store.save(chat, record)
+            // The model's description follows on its own and is laid over whatever is saved by then.
+            if (data.length) describeLater(chat, key, data)
             return record
         }
         if (data.length) {
@@ -218,7 +271,11 @@ export function createDesktopGithubProjectsService(ports: DesktopGithubProjectsP
             const late = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), waitMs) })
             try {
                 const record = await Promise.race([flight.catch(() => null), late])
-                return { record, pending: record === null && flights().get(flightKey) === flight }
+                if (record === null) return { record, pending: flights().get(flightKey) === flight }
+                // Whatever is left of the wait goes to the model's description, so the first answer can use it.
+                const described = describing().get(describeKey(chat, key))
+                if (described) await Promise.race([described, late])
+                return { record: await ports.store.current(chat) ?? record, pending: false }
             } finally { clearTimeout(timer) }
         },
 

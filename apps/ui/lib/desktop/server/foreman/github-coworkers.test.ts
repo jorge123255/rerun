@@ -72,7 +72,10 @@ test('the first instructions carry the role starting point and the linked projec
     expect(soul).toContain('once the user has turned on Call coworkers')
     const install = firstInstall(openflixDev!, null)
     expect(install).toContain('GitHub repository Acme/OpenFlix')
-    expect(install).toContain('offer the GitHub app (catalog slug github) with suggest_service')
+    // It looks at its own tools first, and names both ways the owner can give it GitHub.
+    expect(install).toContain('look at your tools first')
+    expect(install).toContain('Give GitHub to the team')
+    expect(install).toContain('the entry named "composio"')
     expect(install).toContain('attach nothing yourself')
     expect(install).toContain('Change GitHub repositories')
     // The read-only token the intake used is never offered, named or pointed at.
@@ -116,6 +119,35 @@ test('the build gives each project coworker its accepted repository and allows c
     const made = new Set(specs.map(spec => spec.requestId))
     for (const pair of allowed[0]!) { expect(made.has(pair.callerRequestId)).toBe(true); expect(made.has(pair.targetRequestId)).toBe(true) }
     expect((await runtime.readView(chat)).build?.state).toBe('completed')
+})
+
+test('a confirmed team is switched on, all but the lead that setup switches on itself, and a failure does not fail the build', async () => {
+    const { runtime, fake, specs } = setup()
+    const switched: string[][] = []
+    fake.authorities.creation.switchOn = async input => { switched.push(input.requestIds) }
+    const { revision } = await runtime.recordShownPlan(binding, 'call-1', plan)
+    await runtime.runBuild((await runtime.decide(confirm(revision))).buildId!)
+    const build = (await runtime.readView(chat)).build!
+    const lead = build.items.find(item => item.itemKey === build.leadItemKey)!.title
+    expect(switched).toHaveLength(1)
+    expect(switched[0]).toEqual(specs.filter(spec => spec.name !== lead).map(spec => spec.requestId))
+    expect(switched[0]).toHaveLength(specs.length - 1)
+
+    const again = setup()
+    again.fake.authorities.creation.switchOn = async () => { throw new Error('engine away') }
+    const second = await again.runtime.recordShownPlan(binding, 'call-1', plan)
+    await again.runtime.runBuild((await again.runtime.decide(confirm(second.revision))).buildId!)
+    expect((await again.runtime.readView(chat)).build?.state).toBe('completed')
+})
+
+test('the stock words of an empty change request never reach a coworker\'s instructions', async () => {
+    const { runtime, specs } = setup()
+    const first = await runtime.recordShownPlan(binding, 'call-1', plan)
+    await runtime.decide({ decision: 'ask_changes', requestId: randomUUID(), chat, planId: first.revision.planId, revisionId: first.revision.revisionId, digest: first.revision.digest, feedback: 'Please change the plan.' })
+    const second = await runtime.recordShownPlan(binding, 'call-2', plan)
+    await runtime.runBuild((await runtime.decide(confirm(second.revision))).buildId!)
+    expect(specs.length).toBeGreaterThan(0)
+    for (const spec of specs) { expect(spec.soulMd).not.toContain('Please change the plan'); expect(spec.installMd).not.toContain('<brief>') }
 })
 
 test('a coworker that was not created is not named as a call target, and a failed allow does not fail the build', async () => {

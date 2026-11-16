@@ -166,6 +166,14 @@ export function DesktopForemanColumn({
     const github = useDesktopIntakeGithub({ chat, active: (!!intake || linkedMessages > 0) && foreman.ui.open && !hidden })
     const reloadGithub = github.reload
     useEffect(() => { if (linkedMessages > 0) reloadGithub() }, [linkedMessages, streaming, reloadGithub])
+    // The model's description of the projects follows the fast read by some seconds: look again until it is in.
+    const describing = !intake && linkedMessages > 0 && github.record?.inference === 'none' && !!github.record.inferenceNote
+    useEffect(() => {
+        if (!describing) return
+        let left = 12
+        const timer = setInterval(() => { if (left-- <= 0) clearInterval(timer); else reloadGithub() }, 5_000)
+        return () => clearInterval(timer)
+    }, [describing, reloadGithub])
     useEffect(() => {
         if (openOnMount && foreman.restored && !opened.current) { opened.current = true; foreman.setOpen(true) }
     }, [openOnMount, foreman.restored, foreman.setOpen])
@@ -458,7 +466,8 @@ export function DesktopForemanColumn({
                             loading={retryingSend} onClick={() => void retrySend()}>{t('foreman.pendingSend.retry')}</Button>
                         {retrySendError?.requestId === pendingSend.requestId && <p className="basis-full text-destructive" role="alert">{retrySendError.text}</p>}
                     </div>}
-                    {!intake && !pendingStarter && <DesktopForemanGithubProjects github={github} />}
+                    {!intake && !pendingStarter && <DesktopForemanGithubProjects github={github} chat={chat} onSend={send} sendDisabled={!!streaming || !!pendingSend || retryingSend || pendingRequest}
+                        refreshKey={`${messages.length}:${String(!!streaming)}`} />}
                     {/* Said while the links are still in the box, so it is clear they will be read. */}
                     {!intake && !pendingStarter && draftRepositories > 0 && <p data-foreman-github-hint role="status" className="mx-3 mt-2 text-[11px] text-muted-foreground">
                         {draftRepositories === 1 ? '1 GitHub repository' : `${draftRepositories} GitHub repositories`} will be read when you send. Nothing is cloned or run.

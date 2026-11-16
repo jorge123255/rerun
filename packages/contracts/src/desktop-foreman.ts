@@ -14,8 +14,9 @@ export const DESKTOP_FOREMAN_TURN_MAX_BYTES = 384 * 1024
 export const DESKTOP_FOREMAN_TURN_TEXT_LIMIT = 20_000
 
 export const DESKTOP_FOREMAN_LIMITS = {
-    maxBoxes: 5,
-    maxItems: 8,
+    // Twelve Boxes and sixteen coworkers: a team built from GitHub projects fits one card (one Box per project, twelve projects at most).
+    maxBoxes: 12,
+    maxItems: 16,
     maxGets: 3,
     maxTitle: 120,
     maxName: 60,

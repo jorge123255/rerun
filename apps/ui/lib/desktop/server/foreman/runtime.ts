@@ -36,6 +36,8 @@ export class ForemanError extends Error {
 const SETTLED_BUILD = new Set(['completed', 'partial', 'stopped', 'failed'])
 const MAX_ASKED = 4_000
 
+// What the card sends when the person presses Ask for changes without typing anything: it says nothing about the job.
+const STOCK_CHANGE_REQUEST = 'Please change the plan.'
 type BuildIntents = ForemanBuildIntents & { model: DesktopForemanRevision['model']; workspaceId: string; asked: string | null }
 type BuildRow = { build: DesktopForemanBuild; version: number; intents: BuildIntents; chatId: string }
 const WORK = Symbol.for('rerun.desktop.foreman.work.v1')
@@ -215,7 +217,7 @@ export function createForemanRuntime(input: {
 
     async function reserveBuild(db: ForemanTx, chat: DesktopForemanChatRef, revision: DesktopForemanRevision, decision: DesktopForemanDecision, revisions: DesktopForemanRevision[], decisions: DesktopForemanDecision[]) {
         const planRevisions = new Set(revisions.filter(entry => entry.planId === revision.planId).map(entry => entry.revisionId))
-        const asked = decisions.filter(entry => entry.decision === 'ask_changes' && planRevisions.has(entry.revisionId) && entry.feedback).map(entry => entry.feedback!.trim()).join('\n\n').slice(0, MAX_ASKED)
+        const asked = decisions.filter(entry => entry.decision === 'ask_changes' && planRevisions.has(entry.revisionId) && entry.feedback && entry.feedback.trim() !== STOCK_CHANGE_REQUEST).map(entry => entry.feedback!.trim()).join('\n\n').slice(0, MAX_ASKED)
         const plan = revision.plan
         const lead = plan.items[0]?.key ?? null
         const build: DesktopForemanBuild = {
@@ -392,6 +394,7 @@ export function createForemanRuntime(input: {
             if (result.kind === 'uncertain') break
         }
         await allowLinkedCalls(buildId, revision)
+        await switchOnTeam(buildId)
         await finalize(buildId)
     }
 
@@ -415,6 +418,20 @@ export function createForemanRuntime(input: {
             }
         }
         if (pairs.length) await attempt(() => allow({ pairs }))
+    }
+
+    // A confirmed team is switched on: every coworker this build created except its lead, which the
+    // setup step switches on itself and expects to find off. Confirming the card is the person's
+    // word for it; before this, eleven of thirteen coworkers sat switched off and could not be called.
+    async function switchOnTeam(buildId: string) {
+        const on = auth.creation.switchOn
+        if (!on) return
+        const row = await loadBuild(buildId)
+        if (row.build.state !== 'running') return
+        const requestIds = row.build.items
+            .filter(item => item.kind === 'agent' && item.state === 'created' && item.itemKey !== row.build.leadItemKey)
+            .flatMap(item => row.intents.items[item.itemKey] ?? [])
+        if (requestIds.length) await attempt(() => on({ requestIds }))
     }
 
     async function finalize(buildId: string) {
