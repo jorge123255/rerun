@@ -90,6 +90,16 @@ function innerTools(value: unknown, depth = 0, found: string[] = [], entries: un
     return found
 }
 
+/**
+ * The tools a call runs by name, for a connector tool whose job is to run others (Composio's
+ * COMPOSIO_MULTI_EXECUTE_TOOL). Empty for any other tool. `entries` are the inner calls themselves.
+ */
+export function desktopConnectorInnerCalls(toolName: string, args: unknown): { tools: string[]; entries: unknown[] } {
+    const entries: unknown[] = []
+    if (!RUNS_OTHER_TOOLS.test(toolName)) return { tools: [], entries }
+    return { tools: innerTools(args, 0, [], entries), entries }
+}
+
 const RUNS_CODE = /(?:^|_)REMOTE_(?:WORKBENCH|BASH_TOOL)$/i
 // A sandbox call's own notes ("current_step": "VERIFYING_SEND") are labels, not code: they are not read for tool names.
 const NOTE_KEY = /^(?:thought|current_step(?:_metric)?|session_id|step|reason|description)$/i
