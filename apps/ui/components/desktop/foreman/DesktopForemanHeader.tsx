@@ -18,6 +18,7 @@ export function DesktopForemanHeader({
     onDragPointerDown,
     onToggleSheetDetent,
     actions,
+    crumb,
 }: {
     anchor: ForemanAnchor
     orbState: OrbActivity
@@ -29,6 +30,8 @@ export function DesktopForemanHeader({
     onDragPointerDown?: (event: PointerEvent<HTMLElement>) => void
     onToggleSheetDetent?: () => void
     actions?: ReactNode
+    /** The thread on screen, on its own row under the tabs, as upstream ForemanHeader places ForemanThreadCrumb. */
+    crumb?: ReactNode
 }) {
     const { t } = useDesktopLocale()
     return (
@@ -44,7 +47,7 @@ export function DesktopForemanHeader({
             onGutter
             onDragPointerDown={onDragPointerDown}
             onToggleSheetDetent={onToggleSheetDetent}
-            tabs={<DesktopForemanTabs tab={tab} onTabChange={onTabChange} />}
+            tabs={<><DesktopForemanTabs tab={tab} onTabChange={onTabChange} />{tab === 'assistant' && crumb}</>}
             actions={actions}
         />
     )

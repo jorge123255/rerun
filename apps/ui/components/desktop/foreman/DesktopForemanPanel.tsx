@@ -16,7 +16,7 @@ import { useMemo } from 'react'
 import { useIsMobile as useMediaQuery } from '@rerun/ui/primitives/use-is-mobile'
 import type { ForemanPlacement } from '@/lib/foreman-layout'
 import { useForemanVoiceSlot } from '@/lib/desktop/foreman-voice/useForemanVoiceSlot'
-import { ForemanVoiceSlot } from '@/components/desktop/foreman-voice/ForemanVoiceSlot'
+import { ForemanVoiceSlot, foremanVoiceMicShown } from '@/components/desktop/foreman-voice/ForemanVoiceSlot'
 import { registerForemanVoiceQuit } from '@/lib/desktop/foreman-voice/quit'
 import { DesktopCompanyResearch } from './company-brief/DesktopCompanyResearch'
 import { DesktopCompanyProfile } from './company-profile/DesktopCompanyProfile'
@@ -29,7 +29,9 @@ import { buildDesktopModelView } from '@/lib/desktop/chat-model'
 import { saveDesktopModelEffort } from '../DesktopModelEffort'
 import { DesktopForemanModelPill, type DesktopForemanModelPillHandle } from './DesktopForemanModelPill'
 import { DesktopForemanContext } from './DesktopForemanContext'
-import { DesktopForemanConversations } from './DesktopForemanConversations'
+import { DesktopForemanHistory, DesktopForemanNewTask, DesktopForemanThreadCrumb, takeDesktopForemanNewTaskFocus, useDesktopForemanConversations } from './DesktopForemanConversations'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { EllipsisIcon, ShieldCheckIcon } from '@/lib/icons'
 
 export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; requestId?: string; signal: AbortSignal; settle: (error?: Error) => void }
 export type DesktopForemanPanelProps = {
@@ -108,7 +110,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const pendingStarter = !!state.starter && !state.starter.decision?.settled
     const projectFeed = useMemo(() => createClientDockFeed(initial.chat), [initial.chat.workspaceId, initial.chat.chatId])
     const [dockFeed, setDockFeed] = useState(() => projectFeed(initial))
-    const [voice, setVoice] = useState<{ slot: ReactNode; busy: boolean } | null>(null)
+    const [voice, setVoice] = useState<{ slot: ReactNode; busy: boolean; mic: boolean } | null>(null)
     const [modelSaving, setModelSaving] = useState(false)
     const modelPicker = useRef<DesktopForemanModelPillHandle>(null)
     // What this panel saved, shown at once; the workspace's next read brings the same map.
@@ -185,6 +187,24 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     }, [initial])
     const consumed = useRef(new Set<string>())
     const [focusRequest, setFocusRequest] = useState<string>()
+    // « New task » lands on its empty conversation with the caret in the composer, as on the cloud.
+    useEffect(() => { if (takeDesktopForemanNewTaskFocus(initial.chat.chatId)) setFocusRequest(`new-task:${initial.chat.chatId}`) }, [initial.chat.chatId])
+    const [permissionsOpen, setPermissionsOpen] = useState(false)
+    const conversations = useDesktopForemanConversations({
+        chat: initial.chat, thread: !!props.target, onSelect: props.onSelectConversation,
+        emptyThread: !!state.separateConversation && state.messages.length === 0 && !state.view.live && !state.ui.snapshot?.pendingSend,
+        onFocusComposer: () => setFocusRequest(`new-task:${crypto.randomUUID()}`),
+    })
+    // A new task is named after its first message: read the name once that message is in.
+    const reloadConversations = useRef(conversations.load)
+    reloadConversations.current = conversations.load
+    const named = useRef(initial.messages.length > 0)
+    const hasMessages = state.messages.length > 0
+    useEffect(() => {
+        if (!hasMessages || named.current) return
+        named.current = true
+        if (conversations.thread && conversations.enabled) void reloadConversations.current()
+    }, [hasMessages, conversations.thread, conversations.enabled])
     const seenComposerFocus = useRef(props.composerFocusRequest)
     useEffect(() => {
         if (seenComposerFocus.current === props.composerFocusRequest) return
@@ -255,7 +275,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
                     draftRevision={intake.revision} compact={compactBoard} controllerRef={companyProfile} />
             </div>
         ) : undefined}
-        dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
+        dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} voiceMic={!!voiceModel && !!voice?.mic} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
         question={state.question} onAnswerQuestion={client.answerQuestion}
         approval={state.approval} onDecideApproval={client.decideApproval}
         starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished} separateConversation={state.separateConversation}
@@ -265,10 +285,26 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
             onOpenConnections={props.onOpenModelSettings} /> : null}
         streaming={!!state.view.live} liveReply={liveReply} orbState={state.view.live ? state.writing ? 'speaking' : 'thinking' : 'idle'} agentNameOf={props.agentNameOf} onReviewTemplate={props.onReviewTemplate}
         className={props.className} onClose={close} refreshKey={JSON.stringify(state.view)}
+        headerCrumb={conversations.enabled && conversations.thread
+            ? <DesktopForemanThreadCrumb conversations={conversations} disabled={!!props.hidden}
+                state={state.view.live ? 'live' : state.question || state.approval ? 'needs' : 'quiet'} />
+            : undefined}
         headerActions={<>
-            {props.onSelectConversation && <DesktopForemanConversations chat={state.chat} thread={!!props.target} disabled={!!props.hidden} onSelect={props.onSelectConversation} />}
-            <DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />
             {error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}
+            {conversations.enabled && <DesktopForemanHistory conversations={conversations} disabled={!!props.hidden}
+                waiting={!state.view.live && !!(state.question || state.approval)} />}
+            {/* What the cloud's header does not carry sits behind « … »: the Mac's own permissions. */}
+            <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="ghost" size="icon-sm" disabled={!!props.hidden} aria-label={t('foreman.more')} title={t('foreman.more')}><EllipsisIcon className="size-3.5" /></Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-auto" onPointerDown={event => event.stopPropagation()}>
+                    <DropdownMenuItem data-foreman-permissions onSelect={() => setPermissionsOpen(true)}><ShieldCheckIcon />{t('foreman.permissions')}</DropdownMenuItem>
+                </DropdownMenuContent>
+            </DropdownMenu>
+            <DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} open={permissionsOpen} onOpenChange={setPermissionsOpen}
+                onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />
+            {conversations.enabled && !intakeOpen && <DesktopForemanNewTask conversations={conversations} disabled={!!props.hidden} />}
         </>}
         composerTrailing={props.composerTrailing ?? (modelPickerView && <div className="flex min-w-0 items-center">
             <DesktopForemanModelPill ref={modelPicker} view={modelPickerView} connections={providers?.connections} saving={modelSaving}
@@ -285,12 +321,13 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
 
 function ForemanVoiceOwner({ target, active, engage, accepted, onSlot, onSettings }: {
     target: import('@rerun/contracts').ForemanVoiceTarget; active: boolean; engage(): void; accepted(): void
-    onSlot(controls: { slot: ReactNode; busy: boolean } | null): void; onSettings?: () => void
+    onSlot(controls: { slot: ReactNode; busy: boolean; mic: boolean } | null): void; onSettings?: () => void
 }) {
     const voice = useForemanVoiceSlot({ target, active, onEngage: engage, onAccepted: accepted, releasePolicy: 'send' })
     useEffect(() => registerForemanVoiceQuit(() => voice.controller.prepareForQuit()), [voice.controller])
     useEffect(() => {
         onSlot({ slot: <ForemanVoiceSlot voice={voice} onOpenTranscriptionSettings={onSettings ?? (() => {})} />,
+            mic: foremanVoiceMicShown(voice.view),
             busy: voice.view.phase !== 'sent' && (!!voice.view.pending || ['restoring', 'starting', 'listening', 'saving', 'transcribing', 'sending'].includes(voice.view.phase)) })
         return () => onSlot(null)
     }, [voice.view, voice.stream, voice.active, voice.controller, onSettings, onSlot])

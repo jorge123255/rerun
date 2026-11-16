@@ -51,7 +51,16 @@ it.each(['en', 'fr', 'es', 'pt', 'de'] as const)('uses the upstream Chief of Sta
     const copy = desktopMessages(locale, upstream)
     expect(copy.foreman.name).toBe('Chief of Staff')
     expect(copy.foreman.ask).toBe(upstream.kit.foreman.orbLabel)
-    expect(copy.foreman.tabs.assistant).toBe(upstream.kit.foreman.tabsLabel)
+    // The first tab reads « Ask » as on the cloud; the name stays on the tab list and everywhere else.
+    expect(copy.foreman.tabs.assistant).toBe(upstream.kit.foreman.tabs.assistant)
+    expect(copy.foreman.tabs.assistant).not.toBe('Chief of Staff')
+    expect(copy.foreman.placeholder).toBe(upstream.chat.composer.placeholder)
+    expect(copy.foreman.newTask).toBe(upstream.foreman.header.newTask)
+    expect(copy.foreman.position).toEqual(upstream.foreman.header.position)
+    expect(copy.foreman.teamWelcome.greeting).toBe(upstream.foreman.teamEmptyState.greeting)
+    expect(copy.foreman.teamWelcome.greeting).toContain('Chief of Staff')
+    expect(copy.foreman.voice.record).toBe(upstream.chat.voice.record)
+    for (const key of ['more', 'permissions'] as const) expect(copy.foreman[key].length).toBeGreaterThan(2)
     expect(copy.controlCenter.askRerun).toBe(upstream.layout.controlCenter.askRerun)
     expect(copy.shortcutDialog.actions.holdToTalk).toBe(upstream.dialogs.shortcuts.actions.holdToTalk)
     expect([copy.foreman.ask, copy.foreman.message, copy.controlCenter.askRerun].join(' ')).not.toMatch(/\bForeman\b|Ask Rerun/)
@@ -64,7 +73,8 @@ it('translates the composer and tabs while keeping the draft and tab identity', 
     const draft = 'Prépare une synthèse.\nGarde les deux étapes.'
     const composer = { draft, onDraftChange: vi.fn(), onSend: send, onStop: stop }
     await show(<><DesktopForemanTabs tab="assistant" onTabChange={change} /><DesktopForemanComposer {...composer} /></>)
-    expect(button('Chief of Staff').getAttribute('aria-selected')).toBe('true')
+    expect(button('Demander').getAttribute('aria-selected')).toBe('true')
+    expect(document.querySelector('[data-desktop-foreman-composer]')?.getAttribute('placeholder')).toBe('Écrivez un message...')
     await act(async () => button('Routines').dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true })))
     expect(change).toHaveBeenCalledExactlyOnceWith('routines')
     expect(document.querySelector('[data-desktop-foreman-composer]')?.getAttribute('aria-label')).toBe('Écrire au Chief of Staff')

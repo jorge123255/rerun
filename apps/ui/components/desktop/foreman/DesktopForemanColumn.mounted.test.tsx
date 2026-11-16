@@ -220,7 +220,7 @@ it('prefills a team action with the selected coworker and protects the existing 
         team={team} firstName="Sam" nextRoutine={{ name: 'Daily digest', at: 3_600_001 }} routineNow={1} agentNameOf={id => id} controlledOpen separateConversation />))
     const action = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')]
         .find(button => button.textContent?.startsWith(label))!
-    expect(document.body.textContent).toContain("Hi Sam, I'm Rerun. Here is your team.")
+    expect(document.body.textContent).toContain("Hi Sam, I'm your Chief of Staff. Here is your team.")
     expect(document.body.textContent).toContain('1 coworker')
     expect(document.body.textContent).toContain('Daily digest in 1h')
     expect(action('Give Ada QA a task').disabled).toBe(false)

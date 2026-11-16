@@ -10,10 +10,19 @@ import { SETTINGS_CARD, SettingsSection, SwitchRow } from '@/components/notifica
 import { foremanFilePermissionSnapshotSchema, type ForemanFilePermissionSnapshot } from '@/lib/desktop/foreman-file-permissions'
 import { DesktopCoworkerCallTargets } from '../coworker-calls/DesktopCoworkerCallTargets'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
+import { useDesktopLocale } from '../DesktopLocale'
 
 const URL_PATH = '/api/desktop/foreman/file-permissions'
-export function DesktopForemanFilePermissions({ chat, disabled = false, onApprovalPermissionChanged }: { chat: DesktopForemanChatRef; disabled?: boolean; onApprovalPermissionChanged?: () => void }) {
-    const [open, setOpen] = useState(false)
+export function DesktopForemanFilePermissions({ chat, disabled = false, onApprovalPermissionChanged, open: controlledOpen, onOpenChange }: {
+    chat: DesktopForemanChatRef; disabled?: boolean; onApprovalPermissionChanged?: () => void
+    /** Opened from the header's overflow menu: the dialog then has no button of its own. */
+    open?: boolean; onOpenChange?: (open: boolean) => void
+}) {
+    const { t } = useDesktopLocale()
+    const [ownOpen, setOwnOpen] = useState(false)
+    const controlled = onOpenChange !== undefined
+    const open = controlled ? !!controlledOpen : ownOpen
+    const setOpen = controlled ? onOpenChange : setOwnOpen
     const [snapshot, setSnapshot] = useState<ForemanFilePermissionSnapshot | null>(null)
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -56,7 +65,7 @@ export function DesktopForemanFilePermissions({ chat, disabled = false, onApprov
         } finally { if (own === live.current && own.current) setBusy(false) }
     }
     return <Dialog open={open} onOpenChange={next => { if (!busy) setOpen(next) }}>
-        <DialogTrigger asChild><Button size="sm" variant="ghost" disabled={disabled}>Permissions</Button></DialogTrigger>
+        {!controlled && <DialogTrigger asChild><Button size="sm" variant="ghost" disabled={disabled}>{t('foreman.permissions')}</Button></DialogTrigger>}
         <DialogContent>
             <DialogHeaderBar icon={ShieldCheckIcon} title="Chief of Staff permissions" description="Choose whether your Chief of Staff can delegate tasks, call approved coworkers, or work with visible Files. Chats, memories, credentials and hidden stores stay excluded." />
             {error ? <div className="space-y-2"><p role="alert" className="text-sm text-destructive">{error}</p><Button size="sm" variant="outline" onClick={() => setRefresh(value => value + 1)} disabled={busy}>Refresh permissions</Button></div>

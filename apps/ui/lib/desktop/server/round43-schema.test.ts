@@ -46,7 +46,8 @@ test('upgrades the original chat and dependent rows, then reopens distinct conve
         await initializeDesktopRound43(db)
         expect((await db.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         expect(await listForemanConversations(db, '1')).toEqual([
-            { chat: home, home: true, title: null },
+            // Dated by its last saved turn; a conversation nobody has sent anything in has no date.
+            { chat: home, home: true, title: null, updatedAt: '2026-11-06' },
             { chat: other, home: false, title: null },
             { chat, home: false, title: 'Test the separate conversation' },
         ])

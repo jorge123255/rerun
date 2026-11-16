@@ -40,7 +40,7 @@ test('voice controls inside the actual composer preserve its typed draft and dis
     }
     const render = async (view: ForemanVoiceView) => { await act(async () => root!.render(<Composer view={view} />)) }
     const click = async (label: string) => {
-        const button = [...host.querySelectorAll<HTMLButtonElement>('[data-foreman-voice-controls] button')].find(item => item.textContent === label)!
+        const button = [...host.querySelectorAll<HTMLButtonElement>('[data-foreman-voice-controls] button')].find(item => item.textContent === label || item.getAttribute('aria-label') === label)!
         expect(button).toBeDefined()
         // An omitted type defaults to submit in a form, even when onClick handles voice work.
         expect(button.type).toBe('button')
@@ -60,7 +60,10 @@ test('voice controls inside the actual composer preserve its typed draft and dis
     await click('Restore recording')
     expect(controls.restore).toHaveBeenCalledOnce()
     await render({ phase: 'idle', pending: null, snapshot: null, error: null, restored: true })
-    await click('Hold to talk')
+    // The round microphone carries no words: it is named by its label.
+    await click('Hold to talk to your Chief of Staff')
+    expect(host.querySelector('[data-foreman-voice-mic] svg')).not.toBeNull()
+    expect(host.querySelector('[data-foreman-voice-controls]')?.textContent).not.toContain('Hold to talk')
     await render({ phase: 'error', pending: null, snapshot: null, error: 'Microphone unavailable', restored: true })
     await click('Try again')
     expect(controls.start).toHaveBeenCalledOnce()

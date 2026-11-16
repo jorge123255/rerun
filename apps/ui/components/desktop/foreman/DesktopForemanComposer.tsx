@@ -20,6 +20,7 @@ export function DesktopForemanComposer({
     maxLength = 20_000,
     trailing,
     controls,
+    micReplacesSend,
     attachments,
     hasAttachments,
     onFiles,
@@ -37,6 +38,8 @@ export function DesktopForemanComposer({
     maxLength?: number
     trailing?: ReactNode
     controls?: ReactNode
+    /** The controls hold a microphone: on an empty composer it takes the send button's place, as on the cloud. */
+    micReplacesSend?: boolean
     attachments?: ReactNode
     hasAttachments?: boolean
     onFiles?: (files: File[]) => void
@@ -110,7 +113,7 @@ export function DesktopForemanComposer({
                             <SquareIcon aria-hidden="true" className="size-4" />
                             <span className="sr-only">{t('foreman.stop')}</span>
                         </InputGroupButton>
-                    ) : (
+                    ) : micReplacesSend && !text && !hasAttachments ? null : (
                         <InputGroupButton type="submit" variant="default" size="icon-sm" title={t('foreman.send')} disabled={!canSend}>
                             <CornerDownLeftIcon aria-hidden="true" className="size-4 rotate-90" />
                             <span className="sr-only">{t('foreman.send')}</span>
