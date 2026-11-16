@@ -1,8 +1,10 @@
-import { normalizeNotificationPrefs } from '@rerun/contracts'
+import { DESKTOP_OLLAMA, normalizeNotificationPrefs } from '@rerun/contracts'
 
 /** Neutral reads for mounted desktop surfaces. Call after feature-specific handlers so
  * notification/skill tests keep their own state and every unexpected write still fails. */
 export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestInit): Response | undefined {
+    const ollama = desktopOllamaDraftRead(input, init)
+    if (ollama) return ollama
     if ((init?.method ?? 'GET') !== 'GET') return
     const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://local')
     if (url.pathname === '/api/desktop/subscription-login') return Response.json({
@@ -58,6 +60,17 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
     if (url.pathname === '/api/desktop/notifications') return Response.json(normalizeNotificationPrefs(undefined))
     if (url.pathname === '/api/desktop/notifications/events') return Response.json({ events: [], channels: { toast: false, sound: false }, unavailableAgentIds: [], checkedAt: '2026-11-05T00:00:00Z' })
     if (/^\/api\/desktop\/agents\/[^/]+\/skills$/.test(url.pathname)) return Response.json({ skills: [] })
+}
+
+/** Settings asks the Ollama app for its models as it opens. It is a POST that changes nothing; here, Ollama is not running. */
+function desktopOllamaDraftRead(input: RequestInfo | URL, init?: RequestInit): Response | undefined {
+    if (init?.method !== 'POST' || typeof init.body !== 'string') return
+    const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, 'http://local')
+    if (url.pathname !== '/api/desktop/custom-providers') return
+    let body: { action?: unknown; baseUrl?: unknown; requestId?: unknown; workspaceId?: unknown; apiKey?: unknown; manualModel?: unknown }
+    try { body = JSON.parse(init.body) } catch { return }
+    if (body.action !== 'probe_draft' || body.baseUrl !== DESKTOP_OLLAMA.ollama.baseUrl || body.apiKey !== undefined || body.manualModel !== undefined) return
+    return Response.json({ requestId: body.requestId, workspaceId: body.workspaceId, status: 'unavailable', models: [], problem: 'unreachable', manualModel: null, manualUsable: false, observedAt: 0 })
 }
 
 /** No proposals in tests that exercise a different chat surface; writes still reach their handler. */

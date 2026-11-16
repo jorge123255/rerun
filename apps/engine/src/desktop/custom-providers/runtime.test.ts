@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { addressAllowed, createPinnedProviderFetch, endpointBase } from './network.js'
 import { parseCustomModels } from './catalog.js'
-import type { CustomProviderConfig } from '@rerun/contracts'
+import { DESKTOP_OLLAMA, desktopOllamaConfig, type CustomProviderConfig } from '@rerun/contracts'
 const config: CustomProviderConfig = { name: 'Local', baseUrl: 'http://localhost:11434/v1', preset: 'ollama', models: [{ id: 'exact:model', source: 'manual', contextWindow: null, vision: false }], contextWindow: null, vision: false, policy: { reviewedOrigin: 'http://localhost:11434', allowHttp: true, allowPrivate: true } }
 it('retains exact model IDs and detects empty versus malformed catalogs', () => {
     expect(parseCustomModels({ data: [] })).toEqual([])
@@ -33,4 +33,22 @@ it('admits the xAI chat catalog only at the exact reviewed base and keeps it beh
     await expect(fetchXai('https://unreviewed.example/v1/language-models')).rejects.toThrow('Custom endpoint request refused')
     const fetchLocal = createPinnedProviderFetch(config, check, signal)
     await expect(fetchLocal(config.baseUrl + '/language-models')).rejects.toThrow('Custom endpoint request refused')
+})
+
+it('admits only the Ollama model list and chat route on the fixed loopback and ollama.com origins', async () => {
+    const signal = new AbortController().signal
+    const check = async () => { throw new Error('Fixture stops before DNS') }
+    const local = createPinnedProviderFetch(desktopOllamaConfig('ollama', config.models), check, signal)
+    expect(endpointBase(desktopOllamaConfig('ollama', config.models))).toBe('http://127.0.0.1:11434/v1')
+    await expect(local(DESKTOP_OLLAMA.ollama.tagsUrl)).rejects.toThrow('Fixture stops before DNS')
+    await expect(local('http://127.0.0.1:11434/v1/chat/completions')).rejects.toThrow('Fixture stops before DNS')
+    for (const refused of ['http://127.0.0.1:11434/api/pull', 'http://127.0.0.1:11434/api/delete', 'http://127.0.0.1:11434/v1/models', 'http://localhost:11434/api/tags', 'https://ollama.com/api/tags'])
+        await expect(local(refused)).rejects.toThrow('Custom endpoint request refused')
+    const cloud = createPinnedProviderFetch(desktopOllamaConfig('ollama-cloud', config.models), check, signal)
+    await expect(cloud(DESKTOP_OLLAMA['ollama-cloud'].tagsUrl)).rejects.toThrow('Fixture stops before DNS')
+    await expect(cloud('https://ollama.com/v1/chat/completions')).rejects.toThrow('Fixture stops before DNS')
+    await expect(cloud('https://ollama.com/api/chat')).rejects.toThrow('Custom endpoint request refused')
+    // Ollama Cloud is never reached without TLS or through a private address.
+    expect(() => endpointBase({ ...desktopOllamaConfig('ollama-cloud', config.models), baseUrl: 'http://ollama.com/v1' })).toThrow()
+    expect(desktopOllamaConfig('ollama-cloud', config.models).policy).toEqual({ reviewedOrigin: 'https://ollama.com', allowHttp: false, allowPrivate: false })
 })

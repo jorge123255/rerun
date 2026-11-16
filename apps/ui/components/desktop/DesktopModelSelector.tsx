@@ -144,6 +144,7 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
         source: 'conversation' as const,
         connectionId: pending.connectionId,
         provider: pendingGroup?.provider ?? null,
+        brand: pendingGroup?.brand,
         name: pendingGroup?.name,
         model: pending.model,
         label: pendingModel?.label ?? pending.model,
@@ -182,8 +183,8 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
         <PopoverTrigger asChild>
             <Button type="button" size="sm" variant="ghost" className={cn('min-w-0 gap-1 text-xs', blocked && 'text-destructive')} disabled={busy && !open}
                 aria-label={[label, sourceLabel, usage?.label].filter(Boolean).join(' · ')}>
-                {usage ? <UsageRing usage={usage}><ProviderIcon provider={effective?.provider} /></UsageRing>
-                    : <ProviderIcon provider={effective?.provider} className="size-3.5 shrink-0" />}
+                {usage ? <UsageRing usage={usage}><ProviderIcon provider={effective?.brand ?? effective?.provider} /></UsageRing>
+                    : <ProviderIcon provider={effective?.brand ?? effective?.provider} className="size-3.5 shrink-0" />}
                 <span className="truncate">{label}</span><ChevronDown aria-hidden className="size-3 shrink-0" />
             </Button>
         </PopoverTrigger>
@@ -227,7 +228,7 @@ function ChatModelMenu({ agentId, sessionId, disabled, active = true, connection
                     {modelGroups.query.trim() && modelGroups.groups.length === 0 && <p className="px-2.5 py-2 text-xs text-muted-foreground">No model matches.</p>}
                     {modelGroups.groups.map(({ group, models, open: groupOpen }) => (
                         <div key={group.connectionId} className="pt-1">
-                            <DesktopModelGroupHeader name={group.name} provider={group.provider} count={models.length} open={groupOpen} searching={!!modelGroups.query.trim()}
+                            <DesktopModelGroupHeader name={group.name} provider={group.provider} brand={group.brand} count={models.length} open={groupOpen} searching={!!modelGroups.query.trim()}
                                 onToggle={() => modelGroups.toggle(group.connectionId, groupOpen)} />
                             {groupOpen && models.map(model => {
                                 const picked = effective?.connectionId === group.connectionId && effective.model === model.id
