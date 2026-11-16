@@ -7,6 +7,7 @@ import {
 } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { useDesktopLocale } from '../DesktopLocale'
+import { DesktopArrive, markDesktopArrivalSeen } from '../panel-motion/DesktopArrive'
 
 const KIND = {
     delete: 'boardUI.askDelete', send: 'boardUI.askSend', share: 'boardUI.askShare', post: 'boardUI.askPost', pay: 'boardUI.askPay', credential: 'boardUI.askCredential', press: 'boardUI.askPressAny',
@@ -15,6 +16,9 @@ const ANSWERS = [
     ['once', 'boardUI.askOnce'], ['conversation', 'boardUI.askConversation'], ['always', 'boardUI.askAlways'], ['deny', 'boardUI.askDeny'],
 ] as const satisfies readonly (readonly [DesktopConnectorApprovalDecision, string])[]
 const EMPTY: DesktopConnectorApprovalView = { pending: [], rules: [] }
+// Worth a second look before answering: these get one brief shake as they arrive.
+const RISKY: ReadonlySet<DesktopApprovalKind> = new Set(['press', 'delete', 'pay', 'credential'])
+const arrivalId = (id: string) => `connector-approval:${id}`
 
 /** Sent on this window whenever an answer is given or taken back, so every open list re-reads. */
 export const CONNECTOR_APPROVALS_CHANGED = 'rerun:connector-approvals-changed'
@@ -119,18 +123,22 @@ export function DesktopConnectorApprovals({ sessionId, generating, disabled, onA
     const [busy, setBusy] = useState(false)
     const [failed, setFailed] = useState(false)
     const alive = useRef(true)
+    // What the first read brings back was already waiting when the conversation was opened: it does not slide in.
+    const opened = useRef(true)
     const url = `/api/desktop/sessions/${encodeURIComponent(sessionId)}/connector-approvals`
     const read = useCallback(async () => {
         try {
             const response = await fetch(url, { cache: 'no-store' })
             if (!response.ok) return
             const next = desktopConnectorApprovalViewSchema.parse(await response.json())
-            if (alive.current) setView(next)
+            if (!alive.current) return
+            if (opened.current) { opened.current = false; for (const item of next.pending) markDesktopArrivalSeen(arrivalId(item.id)) }
+            setView(next)
         } catch { /* The next read tries again. */ }
     }, [url])
     useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
     // A call can be held at any point of a reply, so the list is read while one is under way and once more when it ends.
-    useEffect(() => { setView(EMPTY) }, [url])
+    useEffect(() => { opened.current = true; setView(EMPTY) }, [url])
     // The coworker's settings can turn a standing answer off while this chat is open.
     useEffect(() => {
         const changed = () => { void read() }
@@ -167,7 +175,8 @@ export function DesktopConnectorApprovals({ sessionId, generating, disabled, onA
     return (
         <div className="flex w-full flex-col gap-2" data-testid="desktop-connector-approvals">
             {waiting && (
-                <section className="rounded-lg border border-border bg-card p-3 text-sm" aria-label={title} data-testid={press ? 'desktop-browser-press-approval' : undefined}>
+                <DesktopArrive as="section" key={waiting.id} id={arrivalId(waiting.id)} live attention={RISKY.has(waiting.kind)}
+                    className="rounded-lg border border-border bg-card p-3 text-sm" aria-label={title} data-testid={press ? 'desktop-browser-press-approval' : undefined}>
                     <p className="break-words font-medium text-foreground">{title}</p>
                     <p className="mt-0.5 text-muted-foreground">{t(KIND[waiting.kind])}</p>
                     {press ? <p className="mt-0.5 text-xs text-muted-foreground">{t('boardUI.askPressNote')}</p>
@@ -181,7 +190,7 @@ export function DesktopConnectorApprovals({ sessionId, generating, disabled, onA
                         ))}
                     </div>
                     {failed && <p role="alert" className="mt-2 text-xs text-destructive">{t('boardUI.askFailed')}</p>}
-                </section>
+                </DesktopArrive>
             )}
             {view.rules.length > 0 && (
                 <ul className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground" aria-label={t('boardUI.askAllowed')}>

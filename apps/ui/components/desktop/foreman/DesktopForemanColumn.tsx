@@ -13,7 +13,9 @@ import type { DesktopForemanLiveReply } from '@/lib/desktop/foreman/live-reply'
 import { DesktopForemanChatLayer, type DesktopForemanMessage } from './DesktopForemanChatLayer'
 import type { DesktopForemanGeneralThread } from './DesktopForemanConversations'
 import { useDesktopForemanFeedback } from '@/lib/desktop/use-foreman-feedback'
-import { desktopForemanSpeechScope, desktopSpeechKey, desktopSpeechPlayer, useDesktopSpeechSettings } from '@/lib/desktop/speech-player'
+import { desktopForemanSpeechScope, desktopSpeechKey, desktopSpeechPlayer, useDesktopSpeechPlayer, useDesktopSpeechSettings } from '@/lib/desktop/speech-player'
+import { DesktopForemanOrbStage, desktopOrbMood } from '../panel-motion/DesktopForemanOrb'
+import { DesktopArrive, useDesktopLiveGate } from '../panel-motion/DesktopArrive'
 import { DesktopForemanComposer } from './DesktopForemanComposer'
 import { DesktopForemanTeamWelcome } from './DesktopForemanTeamWelcome'
 import { DesktopForemanHeader } from './DesktopForemanHeader'
@@ -109,6 +111,8 @@ export type DesktopForemanColumnProps = {
     voiceSlot?: ReactNode
     /** The voice slot shows its microphone: it stands where the send button is while the composer is empty. */
     voiceMic?: boolean
+    /** The microphone is open and recording the person's voice: the orb shows it. */
+    voiceRecording?: boolean
     intake?: DesktopForemanIntakeController
     intakeFinished?: boolean
     separateConversation?: boolean
@@ -146,7 +150,7 @@ export function DesktopForemanColumn({
     headerCrumb, threads, onOpenThread,
     runNotice,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, firstSend, controlledOpen, hidden, fill, centerOpen, findEnabled, dockFeed, voiceSlot, voiceMic, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
+    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, firstSend, controlledOpen, hidden, fill, centerOpen, findEnabled, dockFeed, voiceSlot, voiceMic, voiceRecording, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const { t } = useDesktopLocale()
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
@@ -177,6 +181,12 @@ export function DesktopForemanColumn({
     const [retrySendError, setRetrySendError] = useState<{ requestId: string; text: string } | null>(null)
     const attachmentComposer = !!sessionId && !intake && !pendingStarter && !!intakeFinished && ui.open && !onRoutines
     const pendingRequest = !!(question || approval)
+    // The orb's one mood: recording the person, reading a reply aloud, thinking or writing, or waiting on them.
+    const spoken = useDesktopSpeechPlayer()
+    const readingAloud = !hidden && spoken.phase === 'playing' && !!spoken.key?.startsWith(desktopSpeechKey(desktopForemanSpeechScope(chat.workspaceId), chat.chatId, ''))
+    const orbMood = desktopOrbMood({ activity: orbState, recording: !!voiceRecording && !hidden, reading: readingAloud, waiting: pendingRequest && !streaming && !hidden })
+    // A request that was there when the conversation was restored is drawn settled; one that comes after slides in.
+    const arrivesLive = useDesktopLiveGate(`${chat.workspaceId}:${chat.chatId}`, foreman.restored && ui.open && !hidden)
     const retryDisabled = hidden || streaming || pendingRequest || pendingStarter || !!intake || sendDisabled
         || !foreman.restored || !!foreman.blocked || ui.decision.status === 'pending'
     const editAttachments = attachmentComposer && !hidden && !pendingRequest && !streaming && !sendingDocuments
@@ -312,7 +322,7 @@ export function DesktopForemanColumn({
     const welcomeActionsDisabled = !!(hidden || !ui.open || onRoutines || alternates.open || retryDisabled || pendingSend || ui.draft
         || documents.attachments.length || sendingDocuments || attachmentComposer && (!documents.loaded || documents.busy))
     return (
-        <>
+        <DesktopForemanOrbStage mood={orbMood}>
         <DesktopForemanDockLayout scope={dockBinding.scope} open={ui.open} hidden={hidden} fill={fill}
             placement={dockBinding.placement} dock={dockBinding.dock} onPlacement={dockBinding.onPlacement} onDock={dockBinding.onDock}
             onClose={() => changeOpen(false)} returnFocus={() => triggerRef.current} onLayout={onLayout}>
@@ -359,11 +369,15 @@ export function DesktopForemanColumn({
                         liveReply={liveReply}
                         restored={foreman.restored}
                         question={foreman.restored && !streaming && pendingRequest ? <>
-                            {question && onAnswerQuestion && <DesktopQuestionCard question={question} disabled={hidden || !!foreman.blocked}
-                                voiceTarget={ui.open && !onRoutines && !alternates.open ? { chat } : undefined}
-                                documentScope={sessionId ? foremanDocumentScope(chat, sessionId, question.id) : undefined}
-                                onAnswer={onAnswerQuestion} />}
-                            {approval && onDecideApproval && <DesktopApprovalCard approval={approval} disabled={hidden || !!foreman.blocked} onDecide={onDecideApproval} />}
+                            {question && onAnswerQuestion && <DesktopArrive key={question.id} id={`foreman-question:${chat.chatId}:${question.id}`} live={arrivesLive()}>
+                                <DesktopQuestionCard question={question} disabled={hidden || !!foreman.blocked}
+                                    voiceTarget={ui.open && !onRoutines && !alternates.open ? { chat } : undefined}
+                                    documentScope={sessionId ? foremanDocumentScope(chat, sessionId, question.id) : undefined}
+                                    onAnswer={onAnswerQuestion} />
+                            </DesktopArrive>}
+                            {approval && onDecideApproval && <DesktopArrive key={approval.id} id={`foreman-approval:${chat.chatId}:${approval.id}`} live={arrivesLive()}>
+                                <DesktopApprovalCard approval={approval} disabled={hidden || !!foreman.blocked} onDecide={onDecideApproval} />
+                            </DesktopArrive>}
                         </> : null}
                         underCrumb={!!headerCrumb}
                         emptyWelcome={!starterPack && !pendingStarter}
@@ -489,6 +503,6 @@ export function DesktopForemanColumn({
                     <DesktopPlanBoardPreview plan={plan.view} />
                 </div>
             )}
-        </>
+        </DesktopForemanOrbStage>
     )
 }

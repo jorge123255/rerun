@@ -1,6 +1,6 @@
 'use client'
 
-import { DesktopRoutineNotes, desktopRoutineOutcomeText } from '../../schedules/DesktopRoutineStatus'
+import { DesktopRoutineChecklistSteps, DesktopRoutineNotes, desktopRoutineOutcomeText } from '../../schedules/DesktopRoutineStatus'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
@@ -20,8 +20,10 @@ import { DesktopScheduleHistory } from '../../schedules/DesktopScheduleHistory'
 import { useDesktopLocale } from '../../DesktopLocale'
 import { DesktopTaskNotifyField } from '../../DesktopTaskNotifyField'
 
-export function DesktopWorkspaceRoutineEditor({ routine, active, externalChange, onBack, onSave, onDelete, onRun, onOpenChat, onRefresh, onKeep }: {
+export function DesktopWorkspaceRoutineEditor({ routine, latestResult, active, externalChange, onBack, onSave, onDelete, onRun, onOpenChat, onRefresh, onKeep }: {
     routine: DesktopWorkspaceRoutine
+    /** The newest result the list has read for this routine while the editor is open. */
+    latestResult?: DesktopWorkspaceRoutine['lastResult']
     active: boolean
     externalChange: boolean
     onBack: () => void
@@ -82,11 +84,12 @@ export function DesktopWorkspaceRoutineEditor({ routine, active, externalChange,
     const canSaveModel = !pinChanged || pick.model === null || newPin !== null
     const savedPinUnavailable = hasSavedPin && !pinChanged && (
         !savedPick.model || !savedPick.connectionId || !routine.provider || Boolean(modelView && selectedGroup?.provider !== routine.provider))
-    const status = routine.lastResult?.status
+    const lastResult = latestResult ?? routine.lastResult
+    const status = lastResult?.status
     const statusLabel = status === 'done' || status === 'error' || status === 'cancelled' || status === 'running'
         ? t(`routines.status.${status}`)
         : status
-    const outcomeLabel = desktopRoutineOutcomeText(routine.lastResult, t)
+    const outcomeLabel = desktopRoutineOutcomeText(lastResult, t)
     const resultLabel = statusLabel && outcomeLabel ? `${statusLabel} · ${outcomeLabel}` : statusLabel
 
     async function perform(action: () => Promise<void>) {
@@ -153,6 +156,8 @@ export function DesktopWorkspaceRoutineEditor({ routine, active, externalChange,
             {routine.slug && <DesktopTaskNotifyField agentId={routine.agentId} source="schedule" slug={routine.slug} disabled={busy} />}
             <MarkdownTextarea label={t('routines.editor.prompt')} dialogTitle={t('routines.editor.promptDialogTitle')} value={body} onChange={setBody} disabled={busy} />
             {resultLabel && <p className="text-xs">{t('routines.lastResult', { status: resultLabel })}</p>}
+            {/* The list behind this editor is read every few seconds: a run that finishes meanwhile ticks its steps in. */}
+            <DesktopRoutineChecklistSteps result={lastResult} />
         </PanelEditorBody>
         <PanelEditorFooter>
             <PanelDeleteButton label={t('routines.editor.delete')} disabled={busy || externalChange}

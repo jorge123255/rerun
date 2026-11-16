@@ -206,3 +206,19 @@ test('a failed read for the branches says nothing in the header', async () => {
     expect(last.error).toBeNull()
     expect(host.querySelector('[role="alert"]')).toBeNull()
 })
+
+test('the crumb and the popover come in quickly and keep the hooks the rebuild walkthrough uses; Reduce motion switches both off', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ conversations: rows })))
+    const host = await mount(<Header chat={pricing} thread onSelect={vi.fn(async () => {})} />)
+    const crumb = host.querySelector<HTMLElement>('[data-foreman-thread-crumb]')!
+    for (const name of ['animate-in', 'fade-in-0', 'slide-in-from-left-2', 'duration-200', 'motion-reduce:animate-none']) expect(crumb.classList.contains(name)).toBe(true)
+    // Its way back works at once and keeps its name.
+    expect(crumb.querySelector<HTMLButtonElement>('button[aria-label="Back to General"]')!.disabled).toBe(false)
+    expect(host.querySelector('button[aria-label="Conversations"]')).not.toBeNull()
+    const items = await openClock(host)
+    expect(items.length).toBeGreaterThan(1)
+    const popover = document.querySelector<HTMLElement>('[data-foreman-history]')!
+    for (const name of ['duration-150', 'motion-reduce:animate-none', 'data-[state=open]:animate-in', 'data-[state=open]:fade-in-0']) expect(popover.classList.contains(name)).toBe(true)
+    expect(popover.classList.contains('duration-100')).toBe(false)
+    expect(popover.querySelectorAll('[data-foreman-history-row]').length).toBe(items.length)
+})

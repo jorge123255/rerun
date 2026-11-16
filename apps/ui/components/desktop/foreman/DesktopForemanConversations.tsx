@@ -123,7 +123,8 @@ export function DesktopForemanThreadCrumb({ conversations, state, disabled }: {
     conversations: DesktopForemanConversationsController; state: DesktopForemanThreadState; disabled: boolean
 }) {
     const { t } = useDesktopLocale()
-    return <div data-foreman-thread-crumb className="flex h-10 min-w-0 items-center gap-1 px-2">
+    // It comes in from the side General is on, quickly; with "Reduce motion" on it is simply there.
+    return <div data-foreman-thread-crumb className="flex h-10 min-w-0 items-center gap-1 px-2 animate-in fade-in-0 slide-in-from-left-2 duration-200 ease-out motion-reduce:animate-none">
         <Button type="button" variant="ghost" size="sm" className="shrink-0 px-1.5 text-muted-foreground" disabled={disabled || conversations.busy}
             aria-label={t('foreman.backToGeneral')} onClick={() => { void conversations.openGeneral() }}>
             <ChevronLeft className="size-4" />{t('foreman.mainConversation')}
@@ -187,7 +188,7 @@ export function DesktopForemanHistory({ conversations, waiting = false, disabled
             </TooltipLabeled>
             {/* A child of the header, whose pointer down drags the column: a press in the list stops here. */}
             <PopoverContent align="end" data-foreman-history onPointerDown={event => event.stopPropagation()}
-                className="max-h-[min(32rem,var(--radix-popover-content-available-height))] w-[min(360px,calc(100vw-1.5rem))] gap-0 overflow-hidden p-0">
+                className="max-h-[min(32rem,var(--radix-popover-content-available-height))] w-[min(360px,calc(100vw-1.5rem))] gap-0 overflow-hidden p-0 duration-150 ease-out motion-reduce:animate-none">
                 <div className="flex min-h-0 flex-col">
                     <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 pt-3 pb-1">
                         <span className="flex items-center gap-2 pl-1 text-sm font-semibold">

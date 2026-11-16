@@ -1,5 +1,6 @@
 'use client'
 
+import { DesktopSettle } from './panel-motion/DesktopArrive'
 import { QuestionForm, type QuestionAttachments } from '@rerun/ui/chat'
 import { useEffect, useRef, useState } from 'react'
 import type { DesktopDocumentScope } from '@rerun/contracts'
@@ -129,7 +130,7 @@ function QuestionCard({ question, disabled, voiceTarget, onAnswer, files }: Desk
         await send(identify({ action: 'cancel' }))
     }
     return <div className="space-y-2" aria-busy={status === 'sending'}>
-        {attempt ? <div className="relative space-y-3 overflow-hidden rounded-lg border border-border bg-muted/30 p-3">
+        <DesktopSettle stateKey={attempt ? 'outcome' : 'actions'}>{attempt ? <div className="relative space-y-3 overflow-hidden rounded-lg border border-border bg-muted/30 p-3">
             {attempt.action === 'answer' ? question.questions.map((item, index) => (
                 <div key={index} className="space-y-1.5">
                     <p className="text-sm font-medium leading-snug">{item.question}</p>
@@ -151,7 +152,7 @@ function QuestionCard({ question, disabled, voiceTarget, onAnswer, files }: Desk
             </Button>
         </div> : <QuestionForm inline labels={language.messages.questionForm} questions={question.questions} disabled={formLocked} voice={voice} attachments={attachments}
             onSubmit={answers => submit(answers.map(item => item.answers))}
-            onCancel={dismiss} />}
+            onCancel={dismiss} />}</DesktopSettle>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         {voiceError && <p role="alert" className="text-sm text-destructive">{voiceError}</p>}
         {!attempt && restoringFiles && !files.error && <p role="status" className="text-xs text-muted-foreground">{t('question.loadingAttachments')}</p>}
