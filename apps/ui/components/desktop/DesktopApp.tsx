@@ -179,6 +179,13 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         window.addEventListener('rerun-desktop-open-brain', open)
         return () => window.removeEventListener('rerun-desktop-open-brain', open)
     }, [])
+    // A panel can point the person at Settings, Tool services (memory search is set up there).
+    const openToolServicesRef = useRef<() => void>(() => {})
+    useEffect(() => {
+        const open = () => openToolServicesRef.current()
+        window.addEventListener('rerun-desktop-open-settings', open)
+        return () => window.removeEventListener('rerun-desktop-open-settings', open)
+    }, [])
     const [placingCopy, setPlacingCopy] = useState(false)
     const [quitting, setQuitting] = useState(false)
     const cameraFlush = useRef<(() => Promise<boolean>) | null>(null)
@@ -772,6 +779,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     }
     const openSettings = () => openSettingsAt('AI providers')
     const openTranscriptionSettings = () => openSettingsAt('Tool services')
+    openToolServicesRef.current = openTranscriptionSettings
     function rememberWorkspaceDialogFocus(agentId?: string) {
         workspaceDialogReturnFocus.current = agentId
             ? Array.from(boardFrame.current?.querySelectorAll<HTMLElement>('[data-tile-id]') ?? []).find(tile => tile.dataset.tileId === agentId) ?? null
