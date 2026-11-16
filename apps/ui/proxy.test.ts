@@ -158,6 +158,12 @@ describe('proxy matcher', () => {
 
     it('keeps authenticated coworker uploads out of the body-buffering proxy', () => {
         expect(matches('/api/desktop/agents/agent-1/files/import')).toBe(false)
+        // Chat attachments read their own body: a base64 document or a streamed 100 MB file.
+        expect(matches('/api/desktop/coworkers/agent-1/document-attachments')).toBe(false)
+        expect(matches('/api/desktop/coworkers/agent-1/document-attachments/staged')).toBe(false)
+        expect(matches('/api/desktop/foreman/document-attachments')).toBe(false)
+        expect(matches('/api/desktop/coworkers/agent-1/document-attachments-other')).toBe(true)
+        expect(matches('/api/desktop/coworkers/agent-1/voice')).toBe(true)
         expect(matches('/api/desktop/agents/agent-1/files/content')).toBe(true)
         expect(matches('/api/desktop/agents/agent-1/files/download')).toBe(true)
     })

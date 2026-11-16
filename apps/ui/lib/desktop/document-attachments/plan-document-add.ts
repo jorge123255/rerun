@@ -1,14 +1,29 @@
 import {
     DESKTOP_DOCUMENT_MAX_BYTES,
     DESKTOP_DOCUMENT_MAX_FILES,
+    DESKTOP_DOCUMENT_STAGED_TOTAL_MAX_BYTES,
     DESKTOP_DOCUMENT_TOTAL_MAX_BYTES,
+    FOREMAN_AGENT_ID,
+    desktopDocumentMaxBytesForName,
+    type DesktopDocumentScope,
 } from '@rerun/contracts'
+
+/** Whether this conversation's files can be saved into a coworker's Files, which is what lets a
+ * file be larger than a document. Chief of Staff and a question's upload have no such place. */
+export function desktopDocumentScopeHasFiles(scope: DesktopDocumentScope): boolean {
+    return scope.agentId !== FOREMAN_AGENT_ID && !scope.questionId && !/^question:[a-f0-9]{64}$/.test(scope.tabUid)
+}
+/** A large file is streamed and gets longer to arrive than a document sent in one request. */
+export const desktopDocumentTimeoutMs = (file: { size: number }) => file.size > DESKTOP_DOCUMENT_MAX_BYTES ? 120_000 : 25_000
+
+const megabytes = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`
 
 export type DesktopDocumentAddRejectReason =
     | 'empty'
     | 'too-large'
     | 'capacity-files'
     | 'capacity-bytes'
+    | 'capacity-large-bytes'
     | 'retain-full'
     | 'unavailable'
 
@@ -41,6 +56,10 @@ export type PlanDesktopDocumentAddInput = {
     files: readonly File[]
     attachedCount: number
     attachedBytes: number
+    /** The share of `attachedBytes` that is files above the document limit, which have their own total. */
+    attachedLargeBytes?: number
+    /** Whether files can be saved into a coworker's Files here: only then may some kinds exceed the document limit. */
+    stagedFiles?: boolean
     /** Whether one more file can enter the retain buffer given files already accepted in this plan. */
     canRetainOne: (file: File, accepting: readonly File[]) => boolean
     maxFiles?: number
@@ -49,16 +68,23 @@ export type PlanDesktopDocumentAddInput = {
     available?: boolean
 }
 
-function rejectMessage(file: File, reason: DesktopDocumentAddRejectReason): string {
+function rejectMessage(file: File, reason: DesktopDocumentAddRejectReason, limit = DESKTOP_DOCUMENT_MAX_BYTES, stagedFiles = false): string {
     switch (reason) {
         case 'empty':
             return `${file.name} is empty.`
         case 'too-large':
-            return `${file.name} is larger than 16 MB.`
+            // Name the limit that applies to this file, and the other one where both exist.
+            return limit > DESKTOP_DOCUMENT_MAX_BYTES
+                ? `${file.name} is ${megabytes(file.size)}. Files saved to this coworker’s Files can be up to ${megabytes(limit)}.`
+                : stagedFiles
+                    ? `${file.name} is ${megabytes(file.size)}. This kind of file can be up to ${megabytes(limit)}; only files saved to this coworker’s Files (Office files, archives, video) can be larger.`
+                    : `${file.name} is larger than ${megabytes(limit)}.`
         case 'capacity-files':
             return `Attachments can be up to ${DESKTOP_DOCUMENT_MAX_FILES} documents.`
         case 'capacity-bytes':
             return 'Attachments can be up to 48 MB across ten files.'
+        case 'capacity-large-bytes':
+            return `Files larger than 16 MB can be up to ${megabytes(DESKTOP_DOCUMENT_STAGED_TOTAL_MAX_BYTES)} in total in one message.`
         case 'retain-full':
             return 'Save or remove pending attachments before adding more.'
         case 'unavailable':
@@ -75,7 +101,8 @@ export function planDesktopDocumentAdd(input: PlanDesktopDocumentAddInput): {
     rejects: { file: File; reason: DesktopDocumentAddRejectReason; message: string }[]
 } {
     const maxFiles = input.maxFiles ?? DESKTOP_DOCUMENT_MAX_FILES
-    const maxBytesPerFile = input.maxBytesPerFile ?? DESKTOP_DOCUMENT_MAX_BYTES
+    const stagedFiles = input.stagedFiles === true
+    const limitFor = (file: File) => input.maxBytesPerFile ?? desktopDocumentMaxBytesForName(file.name, stagedFiles)
     const maxTotalBytes = input.maxTotalBytes ?? DESKTOP_DOCUMENT_TOTAL_MAX_BYTES
     const accepts: File[] = []
     const rejects: { file: File; reason: DesktopDocumentAddRejectReason; message: string }[] = []
@@ -86,22 +113,28 @@ export function planDesktopDocumentAdd(input: PlanDesktopDocumentAddInput): {
         return { accepts, rejects }
     }
     let count = input.attachedCount
-    let bytes = input.attachedBytes
+    let largeBytes = input.attachedLargeBytes ?? 0
+    let bytes = input.attachedBytes - largeBytes
     for (const file of input.files) {
         if (!file.size) {
             rejects.push({ file, reason: 'empty', message: rejectMessage(file, 'empty') })
             continue
         }
-        if (file.size > maxBytesPerFile) {
-            rejects.push({ file, reason: 'too-large', message: rejectMessage(file, 'too-large') })
+        if (file.size > limitFor(file)) {
+            rejects.push({ file, reason: 'too-large', message: rejectMessage(file, 'too-large', limitFor(file), stagedFiles) })
             continue
         }
+        const large = file.size > DESKTOP_DOCUMENT_MAX_BYTES
         if (count + 1 > maxFiles) {
             rejects.push({ file, reason: 'capacity-files', message: rejectMessage(file, 'capacity-files') })
             continue
         }
-        if (bytes + file.size > maxTotalBytes) {
+        if (!large && bytes + file.size > maxTotalBytes) {
             rejects.push({ file, reason: 'capacity-bytes', message: rejectMessage(file, 'capacity-bytes') })
+            continue
+        }
+        if (large && largeBytes + file.size > DESKTOP_DOCUMENT_STAGED_TOTAL_MAX_BYTES) {
+            rejects.push({ file, reason: 'capacity-large-bytes', message: rejectMessage(file, 'capacity-large-bytes') })
             continue
         }
         if (!input.canRetainOne(file, accepts)) {
@@ -110,7 +143,8 @@ export function planDesktopDocumentAdd(input: PlanDesktopDocumentAddInput): {
         }
         accepts.push(file)
         count += 1
-        bytes += file.size
+        if (large) largeBytes += file.size
+        else bytes += file.size
     }
     return { accepts, rejects }
 }

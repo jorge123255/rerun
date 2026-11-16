@@ -45,3 +45,22 @@ test('opening a dialog and losing document visibility cancel a simulated held mi
     expect(fake.cancel.mock.calls.length).toBeGreaterThanOrEqual(2)
     expect(fake.stop).not.toHaveBeenCalled()
 })
+test('Escape cancels a recording started with a click, and a Space hold never ends one it did not begin', async () => {
+    vi.useFakeTimers()
+    const host = document.body.appendChild(document.createElement('div')), root = createRoot(host)
+    let voice!: ForemanVoiceSlotController
+    function Harness() { voice = useForemanVoiceSlot({ target, active: true }); return null }
+    dispose = async () => { await act(async () => root.unmount()) }
+    await act(async () => root.render(<Harness />))
+    await act(async () => voice.controller.start())
+    expect(voice.view.phase).toBe('listening')
+    const space = (type: string) => window.dispatchEvent(new KeyboardEvent(type, { code: 'Space', bubbles: true, cancelable: true }))
+    await act(async () => { space('keydown'); vi.advanceTimersByTime(250); space('keyup'); await Promise.resolve() })
+    // The clicked recording is still open: nothing was stopped, saved or sent by the key.
+    expect(voice.view.phase).toBe('listening')
+    expect(fake.stop).not.toHaveBeenCalled(); expect(fake.request).not.toHaveBeenCalled()
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await Promise.resolve() })
+    expect(fake.cancel).toHaveBeenCalled()
+    expect(voice.view.phase).toBe('idle')
+    expect(fake.stop).not.toHaveBeenCalled(); expect(fake.request).not.toHaveBeenCalled()
+})

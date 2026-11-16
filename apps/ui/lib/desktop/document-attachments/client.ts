@@ -1,6 +1,8 @@
 'use client'
 import { z } from 'zod'
-import { DESKTOP_DOCUMENT_MAX_BYTES, FOREMAN_AGENT_ID, desktopDocumentAdmissionSchema, desktopDocumentAttachmentSchema, type DesktopDocumentScope, type DesktopDocumentAttachment, type DesktopDocumentSelection, type DesktopDocumentReference } from '@rerun/contracts'
+import { DESKTOP_DOCUMENT_MAX_BYTES, DESKTOP_DOCUMENT_STAGED_UPLOAD_HEADER, FOREMAN_AGENT_ID, desktopDocumentAdmissionSchema, desktopDocumentMaxBytesForName, desktopDocumentAttachmentSchema, type DesktopDocumentScope, type DesktopDocumentAttachment, type DesktopDocumentSelection, type DesktopDocumentReference } from '@rerun/contracts'
+
+import { desktopDocumentScopeHasFiles, desktopDocumentTimeoutMs } from './plan-document-add'
 
 const endpoint = (agentId: string) => agentId === FOREMAN_AGENT_ID ? '/api/desktop/foreman/document-attachments' : `/api/desktop/coworkers/${encodeURIComponent(agentId)}/document-attachments`
 export async function readDocumentResponse(response: Response, cap: number, signal?: AbortSignal): Promise<Uint8Array> {
@@ -39,9 +41,44 @@ function owned(scope: DesktopDocumentScope, value: unknown, id?: string, alias =
     return a
 }
 const post = (scope: DesktopDocumentScope, body: object, signal?: AbortSignal) => request(scope.agentId, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...scope, ...body }), signal })
-export async function uploadDesktopDocument(scope: DesktopDocumentScope, id: string, file: File, signal?: AbortSignal, position = 0) {
+/**
+ * A file above the document limit goes to the streamed route as the request body itself: the
+ * browser reads it from disk as it sends, so it is never copied into memory or encoded here.
+ * XMLHttpRequest is used because it reports how much of the body has been sent.
+ */
+function uploadStagedDocument(scope: DesktopDocumentScope, id: string, file: File, signal: AbortSignal | undefined, position: number, onProgress?: (fraction: number) => void): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest()
+        const abort = () => request.abort()
+        const done = (settle: () => void) => { signal?.removeEventListener('abort', abort); settle() }
+        request.open('POST', `${endpoint(scope.agentId)}/staged`)
+        request.responseType = 'text'
+        request.timeout = desktopDocumentTimeoutMs(file)
+        request.setRequestHeader('content-type', 'application/octet-stream')
+        request.setRequestHeader(DESKTOP_DOCUMENT_STAGED_UPLOAD_HEADER, encodeURIComponent(JSON.stringify({ ...scope, attachmentId: id, name: file.name, mimeType: file.type || 'application/octet-stream', position, byteLength: file.size })))
+        request.upload.onprogress = event => { if (event.lengthComputable && event.total > 0) onProgress?.(Math.min(1, event.loaded / event.total)) }
+        request.onload = () => done(() => {
+            let body: unknown
+            try { body = JSON.parse(request.responseText.slice(0, 6 * 1024 * 1024)) } catch { reject(new Error('Attachment reply was not understood.')); return }
+            if (request.status < 200 || request.status >= 300) reject(new Error(typeof (body as { error?: unknown })?.error === 'string' ? (body as { error: string }).error : 'The upload did not finish. Retry the same file.'))
+            else resolve(body)
+        })
+        request.onerror = () => done(() => reject(new Error('The upload did not finish. Retry the same file.')))
+        request.ontimeout = () => done(() => reject(new Error('The upload took too long. Retry the same file.')))
+        request.onabort = () => done(() => reject(signal?.reason instanceof Error ? signal.reason : new Error('The upload was cancelled.')))
+        signal?.addEventListener('abort', abort, { once: true })
+        if (signal?.aborted) { abort(); return }
+        request.send(file)
+    })
+}
+export async function uploadDesktopDocument(scope: DesktopDocumentScope, id: string, file: File, signal?: AbortSignal, position = 0, onProgress?: (fraction: number) => void) {
     signal?.throwIfAborted()
-    if (!file.size || file.size > DESKTOP_DOCUMENT_MAX_BYTES) throw new Error('Choose a non-empty attachment up to 16 MB.')
+    const limit = desktopDocumentMaxBytesForName(file.name, desktopDocumentScopeHasFiles(scope))
+    if (!file.size || file.size > limit) throw new Error(`Choose a non-empty attachment up to ${limit / 1024 / 1024} MB.`)
+    if (file.size > DESKTOP_DOCUMENT_MAX_BYTES) {
+        const result = z.object({ attachment: desktopDocumentAttachmentSchema }).parse(await uploadStagedDocument(scope, id, file, signal, position, onProgress))
+        return owned(scope, result.attachment, id)
+    }
     const bytes = new Uint8Array(await file.arrayBuffer()); signal?.throwIfAborted()
     let binary = ''
     for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
@@ -67,6 +104,11 @@ export function desktopDocumentReadUrl(attachment: DesktopDocumentReference | De
 }
 export async function fetchDesktopDocument(attachment: DesktopDocumentReference | DesktopDocumentAttachment, signal: AbortSignal, view: 'read' | 'preview' | 'download' = 'preview', page?: number, scale?: number) {
     const response = await fetch(desktopDocumentReadUrl(attachment, view, page, scale), { cache: 'no-store', redirect: 'error', credentials: 'same-origin', signal })
-    if (!response.ok || response.headers.get('x-rerun-document-sha256') !== attachment.sha256) { await response.body?.cancel().catch(() => {}); throw new Error('This attachment is unavailable or changed.') }
+    if (!response.ok || response.headers.get('x-rerun-document-sha256') !== attachment.sha256) {
+        // A refusal carries one short sentence, such as a large file being kept only in Files.
+        const refusal = response.ok ? null : await readDocumentResponse(response, 16_384, signal).then(bytes => JSON.parse(new TextDecoder().decode(bytes)) as { error?: unknown }, () => null)
+        await response.body?.cancel().catch(() => {})
+        throw new Error(response.status === 409 && typeof refusal?.error === 'string' && refusal.error.includes('Files') ? refusal.error : 'This attachment is unavailable or changed.')
+    }
     return response
 }

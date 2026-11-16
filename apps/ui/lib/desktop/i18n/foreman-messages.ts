@@ -152,6 +152,25 @@ const pendingSendCopy = {
     de: { unconfirmed: 'Das Senden der vorherigen Nachricht ist unbestätigt. Versuche es erneut, um fortzufahren.', retry: 'Vorherige Nachricht erneut senden', failed: 'Das Senden der vorherigen Nachricht konnte nicht bestätigt werden.' },
 } satisfies Record<Locale, { unconfirmed: string; retry: string; failed: string }>
 
+// The Mac's recording and review controls, which the cloud's composer has no words for.
+const voiceCopy = {
+    en: { recording: 'Recording', stop: 'Stop', stopLabel: 'Stop recording', cancel: 'Cancel', restoring: 'Restoring recording…', saving: 'Saving recording…',
+        sending: 'Sending…', transcribing: 'Transcribing…', restore: 'Restore recording', tryAgain: 'Try again', refresh: 'Refresh',
+        save: 'Save recording', transcribe: 'Transcribe', sendVoice: 'Send voice message', sent: 'Sent', done: 'Done' },
+    fr: { recording: 'Enregistrement', stop: 'Arrêter', stopLabel: 'Arrêter l’enregistrement', cancel: 'Annuler', restoring: 'Restauration de l’enregistrement…', saving: 'Sauvegarde de l’enregistrement…',
+        sending: 'Envoi…', transcribing: 'Transcription…', restore: 'Restaurer l’enregistrement', tryAgain: 'Réessayer', refresh: 'Actualiser',
+        save: 'Sauvegarder l’enregistrement', transcribe: 'Transcrire', sendVoice: 'Envoyer le message vocal', sent: 'Envoyé', done: 'Terminé' },
+    es: { recording: 'Grabando', stop: 'Detener', stopLabel: 'Detener la grabación', cancel: 'Cancelar', restoring: 'Restaurando la grabación…', saving: 'Guardando la grabación…',
+        sending: 'Enviando…', transcribing: 'Transcribiendo…', restore: 'Restaurar la grabación', tryAgain: 'Reintentar', refresh: 'Actualizar',
+        save: 'Guardar la grabación', transcribe: 'Transcribir', sendVoice: 'Enviar mensaje de voz', sent: 'Enviado', done: 'Listo' },
+    pt: { recording: 'Gravando', stop: 'Parar', stopLabel: 'Parar a gravação', cancel: 'Cancelar', restoring: 'Restaurando a gravação…', saving: 'Salvando a gravação…',
+        sending: 'Enviando…', transcribing: 'Transcrevendo…', restore: 'Restaurar a gravação', tryAgain: 'Tentar novamente', refresh: 'Atualizar',
+        save: 'Salvar a gravação', transcribe: 'Transcrever', sendVoice: 'Enviar mensagem de voz', sent: 'Enviado', done: 'Concluir' },
+    de: { recording: 'Aufnahme läuft', stop: 'Stopp', stopLabel: 'Aufnahme beenden', cancel: 'Abbrechen', restoring: 'Aufnahme wird wiederhergestellt…', saving: 'Aufnahme wird gespeichert…',
+        sending: 'Wird gesendet…', transcribing: 'Wird transkribiert…', restore: 'Aufnahme wiederherstellen', tryAgain: 'Erneut versuchen', refresh: 'Aktualisieren',
+        save: 'Aufnahme speichern', transcribe: 'Transkribieren', sendVoice: 'Sprachnachricht senden', sent: 'Gesendet', done: 'Fertig' },
+} satisfies Record<Locale, Record<'recording' | 'stop' | 'stopLabel' | 'cancel' | 'restoring' | 'saving' | 'sending' | 'transcribing' | 'restore' | 'tryAgain' | 'refresh' | 'save' | 'transcribe' | 'sendVoice' | 'sent' | 'done', string>>
+
 export function desktopForemanMessages(locale: Locale, source: Source) {
     const { welcome, plan, dock } = source.foreman
     return {
@@ -166,7 +185,7 @@ export function desktopForemanMessages(locale: Locale, source: Source) {
         moveChat: source.foreman.header.moveChat,
         position: source.foreman.header.position,
         teamWelcome: source.foreman.teamEmptyState,
-        voice: { record: source.chat.voice.record, discard: source.chat.voice.discard, play: source.chat.voice.play, pause: source.chat.voice.pause, send: source.chat.voice.send },
+        voice: { ...voiceCopy[locale], record: source.chat.voice.record, discard: source.chat.voice.discard, play: source.chat.voice.play, pause: source.chat.voice.pause, send: source.chat.voice.send, waiting: source.chat.voice.waitingForMicrophone },
         ownEntryPlaceholder: source.foreman.ownEntryPlaceholder,
         modelPicker: source.agent.modelSelector,
         context: source.chat.context,

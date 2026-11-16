@@ -1,14 +1,14 @@
 'use client'
-import { useEffect, useRef } from 'react'
-import { ForemanPillVoice } from '@/components/foreman/dock/ForemanPillVoice'
+import { useEffect, useState } from 'react'
 import { TextShimmer } from '@rerun/ui'
 import { Button } from '@/components/ui/button'
+import { LiveWaveform } from '@/components/ui/live-waveform'
 import { DesktopVoiceWaveform } from '@/components/desktop/voice/DesktopVoiceWaveform'
 import { useDesktopVoicePlayback } from '@/lib/desktop/voice/useDesktopVoicePlayback'
 import { foremanVoiceAudioUrl } from '@/lib/desktop/foreman-voice/client'
 import type { ForemanVoiceSlotController } from '@/lib/desktop/foreman-voice/useForemanVoiceSlot'
-import { FOREMAN_VOICE_HOLD_MS } from '@rerun/contracts'
-import { MicIcon } from '@/lib/icons'
+import { formatVoiceDuration } from '@/lib/voice/duration'
+import { MicIcon, SquareIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { useDesktopLocale } from '../DesktopLocale'
 
@@ -19,57 +19,68 @@ export function foremanVoiceMicShown(view: Pick<ForemanVoiceSlotController['view
 export type ForemanVoiceSlotProps = { voice: ForemanVoiceSlotController; onOpenTranscriptionSettings(): void }
 export function ForemanVoiceSlot({ voice, onOpenTranscriptionSettings }: ForemanVoiceSlotProps) {
     const { t } = useDesktopLocale()
-    const timer = useRef<ReturnType<typeof setTimeout> | null>(null), held = useRef(false)
-    const clearHold = () => { if (timer.current) clearTimeout(timer.current); timer.current = null }
     const { controller, view, stream } = voice
-    useEffect(() => {
-        if (!voice.active) { if (timer.current) clearTimeout(timer.current); timer.current = null; held.current = false }
-        return () => { if (timer.current) clearTimeout(timer.current); timer.current = null; held.current = false }
-    }, [controller, voice.active])
-    const busy = ['restoring', 'starting', 'saving', 'transcribing', 'sending'].includes(view.phase)
-    const holdToTalk = t('shortcutDialog.actions.holdToTalk')
+    const recording = view.phase === 'starting' || view.phase === 'listening'
+    const busy = ['restoring', 'saving', 'transcribing', 'sending'].includes(view.phase)
     // At rest the slot is the microphone alone, where the composer's send button stands.
     const micOnly = view.phase === 'idle' && view.restored && !view.pending && !view.error && view.snapshot?.setup !== 'transcription'
     return <div data-foreman-voice-controls className={cn('flex min-w-0 flex-col gap-2', micOnly ? 'shrink-0' : 'flex-1')}>
-        {view.phase === 'listening' && voice.releasePolicy === 'send' ? <ForemanPillVoice phase="listening" stream={stream} />
-            : view.phase === 'listening' ? <span role="status" className="min-w-0 truncate text-sm text-muted-foreground">Listening · release Space to review</span>
-                : view.phase === 'transcribing' ? <ForemanPillVoice phase="transcribing" stream={null} />
-                    : busy ? <TextShimmer className="truncate text-sm">{view.phase === 'restoring' ? 'Restoring recording…' : view.phase === 'starting' ? 'Opening microphone…' : view.phase === 'saving' ? 'Saving recording…' : 'Sending…'}</TextShimmer> : null}
+        {recording ? <Recording voice={voice} listening={view.phase === 'listening'} stream={stream} />
+            : busy ? <TextShimmer className="truncate text-sm">{t(`foreman.voice.${view.phase === 'restoring' ? 'restoring' : view.phase === 'saving' ? 'saving' : view.phase === 'transcribing' ? 'transcribing' : 'sending'}`)}</TextShimmer> : null}
         {view.pending && <Review voice={voice} />}
         {view.error && <p role="alert" className="break-words text-xs text-destructive">{view.error}</p>}
         {view.snapshot?.setup === 'transcription' && <Button type="button" size="sm" variant="outline" onClick={onOpenTranscriptionSettings}>{t('setUpTranscription')}</Button>}
-        <div className="flex flex-wrap items-center justify-end gap-2">
-            {/* A round microphone in the send button's own variant and size, as upstream
-                apps/ui/components/chat/VoiceComposerControls.tsx; held down rather than clicked, as the Mac records. */}
-            {foremanVoiceMicShown(view) && <Button type="button" size="icon-sm" variant="default" data-foreman-voice-mic
-                className="order-last shrink-0 rounded-full" title={holdToTalk} disabled={!view.restored || !voice.active}
-                onPointerDown={event => {
-                    if (event.button !== 0 || held.current) return
-                    held.current = true
-                    event.currentTarget.setPointerCapture(event.pointerId)
-                    timer.current = setTimeout(() => { timer.current = null; void controller.start() }, FOREMAN_VOICE_HOLD_MS)
-                }}
-                onPointerUp={() => {
-                    if (!held.current) return
-                    held.current = false
-                    if (timer.current) clearHold(); else void controller.release()
-                }}
-                onPointerCancel={() => { held.current = false; clearHold(); void controller.cancel() }}
-                onLostPointerCapture={() => { if (held.current) { held.current = false; clearHold(); void controller.cancel() } }}
-                aria-label={holdToTalk}><MicIcon aria-hidden="true" className="size-4" /></Button>}
-            {view.phase === 'idle' && !view.restored && <Button type="button" size="sm" variant="outline" onClick={() => void controller.restore()}>Restore recording</Button>}
-            {view.phase === 'error' && !view.pending && <Button type="button" size="sm" variant="outline" onClick={() => { void controller.cancel().then(() => controller.restore()).then(() => controller.start()) }}>Try again</Button>}
-            {view.phase === 'listening' && <Button type="button" size="sm" variant="outline" onClick={() => void controller.release(true)}>Review</Button>}
+        {!recording && <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* A round microphone in the send button's own variant and size, clicked once to record, as upstream
+                apps/ui/components/chat/VoiceComposerControls.tsx. Nothing is recorded before that click. */}
+            {view.phase === 'idle' && <Button type="button" size="icon-sm" variant="default" data-foreman-voice-mic
+                className="order-last shrink-0 rounded-full" title={t('foreman.voice.record')} aria-label={t('foreman.voice.record')}
+                disabled={!view.restored || !voice.active || !!view.pending} onClick={() => void controller.start()}><MicIcon aria-hidden="true" className="size-4" /></Button>}
+            {view.phase === 'idle' && !view.restored && <Button type="button" size="sm" variant="outline" onClick={() => void controller.restore()}>{t('foreman.voice.restore')}</Button>}
+            {view.phase === 'error' && !view.pending && <Button type="button" size="sm" variant="outline" onClick={() => { void controller.cancel().then(() => controller.restore()).then(() => controller.start()) }}>{t('foreman.voice.tryAgain')}</Button>}
             {view.pending && !busy && view.phase !== 'sent' && <>
-                <Button type="button" size="sm" variant="outline" onClick={() => void controller.refresh()}>Refresh</Button>
-                {(!view.snapshot?.attempt || ['uploading', 'failed'].includes(view.snapshot.attempt.phase)) && <Button type="button" size="sm" onClick={() => void controller.retrySave()}>Save recording</Button>}
-                <Button type="button" size="sm" variant="outline" onClick={() => void controller.transcribe()}>Transcribe</Button>
-                <Button type="button" size="sm" disabled={!view.snapshot?.attempt?.transcript} onClick={() => void controller.send()}>Send voice message</Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => void controller.refresh()}>{t('foreman.voice.refresh')}</Button>
+                {(!view.snapshot?.attempt || ['uploading', 'failed'].includes(view.snapshot.attempt.phase)) && <Button type="button" size="sm" onClick={() => void controller.retrySave()}>{t('foreman.voice.save')}</Button>}
+                <Button type="button" size="sm" variant="outline" onClick={() => void controller.transcribe()}>{t('foreman.voice.transcribe')}</Button>
+                <Button type="button" size="sm" disabled={!view.snapshot?.attempt?.transcript} onClick={() => void controller.send()}>{t('foreman.voice.sendVoice')}</Button>
                 <Button type="button" size="sm" variant="ghost" onClick={() => void controller.discard()}>{t('foreman.voice.discard')}</Button>
             </>}
-            {view.phase !== 'idle' && view.phase !== 'sent' && <Button type="button" size="sm" variant="ghost" onClick={() => void controller.cancel()}>Cancel</Button>}
-            {view.phase === 'sent' && <><span role="status" className="text-xs text-muted-foreground">Sent</span><Button type="button" size="sm" variant="ghost" onClick={() => void controller.done()}>Done</Button></>}
-        </div>
+            {view.phase !== 'idle' && view.phase !== 'sent' && <Button type="button" size="sm" variant="ghost" onClick={() => void controller.cancel()}>{t('foreman.voice.cancel')}</Button>}
+            {view.phase === 'sent' && <><span role="status" className="text-xs text-muted-foreground">{t('foreman.voice.sent')}</span><Button type="button" size="sm" variant="ghost" onClick={() => void controller.done()}>{t('foreman.voice.done')}</Button></>}
+        </div>}
+    </div>
+}
+/**
+ * While the microphone is open: the live waveform, how long it has run, Cancel (nothing is kept) and
+ * Stop (the take goes to review; sending it stays a separate action). Escape cancels as well.
+ */
+function Recording({ voice, listening, stream }: { voice: ForemanVoiceSlotController; listening: boolean; stream: MediaStream | null }) {
+    const { t } = useDesktopLocale()
+    const [elapsed, setElapsed] = useState(0)
+    useEffect(() => {
+        setElapsed(0)
+        if (!listening) return
+        const started = Date.now()
+        const id = setInterval(() => setElapsed(Date.now() - started), 250)
+        return () => clearInterval(id)
+    }, [listening])
+    return <div data-foreman-voice-recording={listening ? 'recording' : 'starting'} className="flex min-w-0 items-center justify-end gap-2">
+        <LiveWaveform active={listening && stream !== null} processing={!listening || stream === null} stream={stream ?? undefined} mode="static"
+            height={24} barWidth={3} barGap={1} barRadius={1.5} className="hidden w-20 min-w-0 shrink text-foreground sm:block" />
+        <span role="status" className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            {listening ? <>
+                <span aria-hidden className="size-1.5 shrink-0 animate-pulse rounded-full bg-destructive" />
+                <span className="sr-only">{t('foreman.voice.recording')}</span>
+                <span data-foreman-voice-timer className="font-mono tabular-nums">{formatVoiceDuration(elapsed)}</span>
+            </> : <TextShimmer className="truncate text-xs">{t('foreman.voice.waiting')}</TextShimmer>}
+        </span>
+        <Button type="button" size="sm" variant="ghost" className="shrink-0" data-foreman-voice-cancel onClick={() => void voice.controller.cancel()}>
+            <XIcon aria-hidden="true" className="size-3.5" />{t('foreman.voice.cancel')}
+        </Button>
+        <Button type="button" size="sm" variant="default" className="shrink-0" data-foreman-voice-stop disabled={!listening}
+            title={t('foreman.voice.stopLabel')} aria-label={t('foreman.voice.stopLabel')} onClick={() => void voice.controller.release(true)}>
+            <SquareIcon aria-hidden="true" className="size-3.5" />{t('foreman.voice.stop')}
+        </Button>
     </div>
 }
 function Review({ voice }: { voice: ForemanVoiceSlotController }) {
@@ -83,6 +94,6 @@ function Review({ voice }: { voice: ForemanVoiceSlotController }) {
         </div>
         <audio ref={playback.audioRef} preload="none" className="hidden" {...playback.audioProps} />
         {a?.transcript && <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs">{a.transcript}</p>}
-        {playback.error && <p role="alert" className="text-xs text-destructive">{playback.error}</p>}
+        {playback.error && <p role="alert" className="break-words text-xs text-destructive">{playback.error}</p>}
     </div>
 }
