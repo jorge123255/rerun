@@ -215,15 +215,20 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
         if (!client) return
         const first = takeDesktopForemanFirstSend(initial.chat.chatId)
         if (!first) return
+        const handed = { id: initial.chat.chatId, text: first.text, coworkerMentions: first.coworkerMentions }
+        // The text goes into the composer first, where it is saved as this task's draft. Saving the
+        // model can take a moment; leaving for General meanwhile must not lose what was typed.
+        setFirstSend({ ...handed, send: !first.model })
+        if (!first.model) return
+        const model = first.model
         void (async () => {
-            let send = true
-            if (first.model) {
-                setModelSaving(true)
-                try { await client.setModel(initial.model, first.model) }
-                catch (error) { send = false; if (active.current) setError(error instanceof Error ? error.message : 'Could not save the model for this task.') }
-                finally { setModelSaving(false) }
-            }
-            if (active.current) setFirstSend({ id: initial.chat.chatId, text: first.text, coworkerMentions: first.coworkerMentions, send })
+            setModelSaving(true)
+            try {
+                await client.setModel(initial.model, model)
+                if (active.current) setFirstSend({ ...handed, send: true })
+            } catch (error) {
+                if (active.current) setError(error instanceof Error ? error.message : 'Could not save the model for this task.')
+            } finally { setModelSaving(false) }
         })()
     }, [client, initial])
     const [permissionsOpen, setPermissionsOpen] = useState(false)

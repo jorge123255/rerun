@@ -225,11 +225,18 @@ export function DesktopForemanColumn({
     const sendRef = useRef(send)
     sendRef.current = send
     const firstSent = useRef<string | undefined>(undefined)
+    const firstDrafted = useRef<string | undefined>(undefined)
     useEffect(() => {
-        if (!firstSend || !foreman.restored || firstSent.current === firstSend.id) return
+        if (!firstSend || !foreman.restored) return
+        // The text is put in the composer as soon as it arrives, so it is saved as the draft even if
+        // the send has to wait (for the task's model to be saved) and the person leaves meanwhile.
+        if (firstDrafted.current !== firstSend.id) {
+            firstDrafted.current = firstSend.id
+            foreman.setDraft(firstSend.text, firstSend.coworkerMentions ?? [])
+        }
+        if (!firstSend.send || firstSent.current === firstSend.id) return
         firstSent.current = firstSend.id
-        foreman.setDraft(firstSend.text, firstSend.coworkerMentions ?? [])
-        if (firstSend.send) sendRef.current(firstSend.text)
+        sendRef.current(firstSend.text)
     }, [firstSend, foreman.restored, foreman.setDraft])
     async function retrySend() {
         if (!pendingSend || !onRetryPendingSend || retryDisabled || retryInFlight.current) return

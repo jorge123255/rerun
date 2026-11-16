@@ -91,7 +91,7 @@ export function useDesktopForemanConversations({ chat, thread = false, emptyThre
 
     // A task nobody ever wrote in (left behind before « New task » became a draft) stays out of the
     // list unless it is the one on screen. Nothing is deleted.
-    const threads = conversations.filter(row => !row.home && (!!row.updatedAt || row.title !== null || row.chat.chatId === chat.chatId))
+    const threads = conversations.filter(row => !row.home && (!!row.updatedAt || row.title !== null || !!row.hasDraft || row.chat.chatId === chat.chatId))
     // What General shows under the message each task started after: saved tasks only. A task nobody
     // wrote in has no first message to date it, and the unsaved draft has no row at all.
     const branches: DesktopForemanGeneralThread[] = thread ? [] : threads.flatMap(row => row.startedAt && row.chat.chatId !== chat.chatId

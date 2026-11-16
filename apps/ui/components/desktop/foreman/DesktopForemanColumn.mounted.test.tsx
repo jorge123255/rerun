@@ -263,6 +263,27 @@ it('keeps a first message that could not be sent in the composer, with the reaso
     expect(document.querySelector('[role="alert"]')?.textContent).toBe('The saved model is unavailable.')
 })
 
+it('holds a first message in the composer while its model is being saved, then sends it once', async () => {
+    const send = vi.fn(async () => true)
+    ports.conversation.sendMessage = send
+    vi.mocked(ports.persistence.load).mockResolvedValue(null)
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    const render = (held: boolean) => act(async () => root!.render(<DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]} agentNameOf={id => id} separateConversation
+        firstSend={{ id: chat.chatId, text: 'Plan the launch', send: !held }} />))
+    // While the model is saving the words are already in the composer, where they are kept as the draft.
+    await render(true)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!.value).toBe('Plan the launch')
+    expect(send).not.toHaveBeenCalled()
+    // The model is saved: the same message is sent, once, and not typed in a second time.
+    await render(false)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    expect(send).toHaveBeenCalledExactlyOnceWith('Plan the launch')
+    await render(false)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    expect(send).toHaveBeenCalledOnce()
+})
+
 it('only fills the composer when the first message is held back', async () => {
     const send = vi.fn(async () => true)
     ports.conversation.sendMessage = send
