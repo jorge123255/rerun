@@ -1,5 +1,6 @@
 import { recordRunCompletion } from '../db/completed-runs.js'
 import { desktopApp } from '../desktop/policy.js'
+import { announceDesktopRoutineAutoOff } from '../desktop/routine-auto-off-notice.js'
 import { settleDesktopRoutineRun, type DesktopRoutineSettlement } from '../desktop/routine-runs.js'
 import { logger } from '../lib/logger.js'
 import { sendNotification, type NotificationEvent, type NotificationKind } from './notify.js'
@@ -70,7 +71,7 @@ export async function emitRunTerminal(terminal: RunTerminal): Promise<void> {
             agentId: terminal.agentId, runId: terminal.runId, slug: trigger.slug, name: trigger.name,
             kind: terminal.kind, cancelled: terminal.cancelled, text: terminal.text, routine: trigger.routine,
         }).catch(error => { logger.error({ err: String(error), agent: terminal.agentId, schedule: trigger.slug }, 'routine run outcome could not be recorded'); return null })
-        if (routine) terminal = { ...terminal, text: routine.text, ...(routine.autoDisabled && { error: `${routine.autoDisabled} Last error: ${terminal.error ?? 'unknown error'}` }) }
+        if (routine) terminal = { ...terminal, text: routine.text }
     }
     const { event, message } = describe(terminal)
     const metadata: Record<string, unknown> = {
@@ -102,6 +103,12 @@ export async function emitRunTerminal(terminal: RunTerminal): Promise<void> {
     // so an interactive run stays null.
     const source = trigger.source === 'chat' ? null : trigger.source
     await sendNotification({ event, kind: terminal.kind, agentId: terminal.agentId, sessionId: terminal.sessionId, runId: terminal.runId, message, source, metadata }).catch(() => {})
+    // The switch-off is told by a notice of its own, once, after the failed run's: a muted coworker
+    // hides that run's notification, and this one still reaches the person.
+    if (routine?.autoDisabledAt && trigger.source === 'schedule') {
+        await announceDesktopRoutineAutoOff({ agentId: terminal.agentId, slug: trigger.slug, name: trigger.name, disabledAt: routine.autoDisabledAt, sessionId: terminal.sessionId, runId: terminal.runId })
+            .catch(error => logger.error({ err: String(error), agent: terminal.agentId, schedule: trigger.slug }, 'routine switch-off notice could not be sent'))
+    }
     // Desktop-only completion store: a genuine non-cancelled `done` terminal is what a « finished
     // run » card means. A turn that ends on a pending question or approval never reaches a terminal
     // here (the loop sends a HITL event instead), and cancelled/error terminals never record a

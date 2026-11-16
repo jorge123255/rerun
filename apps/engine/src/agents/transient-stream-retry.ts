@@ -28,8 +28,10 @@ export type StreamRetryOptions = StreamRetryHooks & {
 export const STREAM_RETRY_DELAYS_MS = [2_000, 6_000, 15_000] as const
 export const STREAM_RETRY_TOTAL_CAP_MS = 60_000
 // Long on purpose: a model that reasons without streaming its thoughts is silent for minutes and is
-// not stalled. Past this, the person would otherwise be looking at a run that never ends.
-export const STREAM_STALL_MS = 5 * 60_000
+// not stalled. Ten minutes rather than five (decided November 16, 2026): a model that reasons a long
+// time without streaming would otherwise be sent, and billed, twice. Past this, the person would
+// otherwise be looking at a run that never ends.
+export const STREAM_STALL_MS = 10 * 60_000
 
 // Once one of these has reached the run the step cannot be taken back: the person has read the
 // text, or a tool call is on its way to being executed. Reasoning does not count, the chat folds it away.
