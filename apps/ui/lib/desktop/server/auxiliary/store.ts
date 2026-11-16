@@ -4,7 +4,7 @@ import type { Client, Row } from '@libsql/client'
 import { desktopAuxiliaryChangeSchema, desktopAuxiliaryPurposes, type DesktopAuxiliaryPurpose, type DesktopAuxiliaryStatus } from '../../auxiliary'
 
 export const desktopAuxiliarySchema = `CREATE TABLE IF NOT EXISTS desktop_auxiliary_credentials (
- purpose TEXT PRIMARY KEY CHECK(purpose IN ('search','keirolabs-search','keenable-search','embedding','local-embedding','transcription','elevenlabs-transcription')),
+ purpose TEXT PRIMARY KEY CHECK(purpose IN ('search','keirolabs-search','browser-use-search','keenable-search','embedding','local-embedding','transcription','elevenlabs-transcription')),
  revision TEXT NOT NULL, ciphertext TEXT);
 CREATE TABLE IF NOT EXISTS desktop_search_outcomes (
  identity TEXT PRIMARY KEY, owner TEXT NOT NULL REFERENCES desktop_agents(id) ON DELETE CASCADE,
@@ -41,23 +41,22 @@ export function desktopAuxiliaryStore(db: Client, key = desktopAuxiliaryMasterKe
         },
         async readSearch() {
             const { rows } = await db.execute(`SELECT purpose,revision,ciphertext FROM desktop_auxiliary_credentials
-                WHERE purpose IN ('search','keirolabs-search','keenable-search')`)
-            const brave = rows.find(row => row.purpose === 'search')
-            const keiro = rows.find(row => row.purpose === 'keirolabs-search')
-            const keen = rows.find(row => row.purpose === 'keenable-search')
-            const braveRevision = String(brave?.revision ?? 'unconfigured')
+                WHERE purpose IN ('search','keirolabs-search','browser-use-search','keenable-search')`)
+            const row = (purpose: string) => rows.find(item => item.purpose === purpose)
+            const brave = row('search'), keiro = row('keirolabs-search'), browserUse = row('browser-use-search'), keen = row('keenable-search')
+            const revision = (item: Row | undefined) => String(item?.revision ?? 'unconfigured')
             // Preserve legacy Brave receipts. Retain every revision after key removal
             // so a previous authorization cannot revive when the preferred provider switches back.
-            const generation = keen ? JSON.stringify([braveRevision, String(keiro?.revision ?? 'unconfigured'), String(keen.revision)])
-                : keiro ? JSON.stringify([braveRevision, String(keiro.revision)]) : braveRevision
-            // A saved key answers first. Keyless search answers only when the owner turned it on and no key is saved.
-            const purpose = brave?.ciphertext ? 'search' : keiro?.ciphertext ? 'keirolabs-search' : 'keenable-search'
-            const saved = purpose === 'search' ? brave : purpose === 'keirolabs-search' ? keiro : keen
-            if (!saved?.ciphertext) return { generation, credential: null }
-            const credential = read(purpose, saved)
+            const generation = browserUse ? JSON.stringify([revision(brave), revision(keiro), revision(keen), revision(browserUse)])
+                : keen ? JSON.stringify([revision(brave), revision(keiro), revision(keen)])
+                : keiro ? JSON.stringify([revision(brave), revision(keiro)]) : revision(brave)
+            // A saved key answers first, in this order. Keyless search answers only when the owner turned it on and no key is saved.
+            const order = [['search', 'brave', brave], ['keirolabs-search', 'keirolabs', keiro], ['browser-use-search', 'browser-use', browserUse], ['keenable-search', 'keenable', keen]] as const
+            const chosen = order.find(([, , saved]) => saved?.ciphertext)
+            if (!chosen) return { generation, credential: null }
+            const credential = read(chosen[0], chosen[2])
             if (!credential.key) throw new Error('Credential is unavailable')
-            const provider = purpose === 'search' ? 'brave' as const : purpose === 'keirolabs-search' ? 'keirolabs' as const : 'keenable' as const
-            return { generation, credential: { provider, key: credential.key } }
+            return { generation, credential: { provider: chosen[1], key: credential.key } }
         },
         /** The embedding service in use: OpenRouter when it has a key, else the model named for this Mac's Ollama. */
         async readEmbedding() {

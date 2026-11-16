@@ -1,17 +1,18 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
 
-// One more tool service: memory search by a model running on this Mac (Ollama), which needs no key.
+// Two more tool services: memory search by a model running on this Mac (Ollama), which needs no
+// key, and web search through Browser Use's cloud agent.
 export async function initializeDesktopRound67(db: Client) {
     const tx = await db.transaction('write')
     try {
-        const version = 67, id = 'local-embedding'
+        const version = 67, id = 'local-embedding-and-browser-use'
         const prior = (await tx.execute({ sql: 'SELECT id FROM desktop_schema_migrations WHERE version=?', args: [version] })).rows[0]
         if (prior && prior.id !== id) throw new Error('Desktop migration identity mismatch')
         if (!prior) {
             await tx.executeMultiple(`
                 CREATE TABLE desktop_auxiliary_credentials_next (
-                    purpose TEXT PRIMARY KEY CHECK(purpose IN ('search','keirolabs-search','keenable-search','embedding','local-embedding','transcription','elevenlabs-transcription')),
+                    purpose TEXT PRIMARY KEY CHECK(purpose IN ('search','keirolabs-search','browser-use-search','keenable-search','embedding','local-embedding','transcription','elevenlabs-transcription')),
                     revision TEXT NOT NULL, ciphertext TEXT);
                 INSERT INTO desktop_auxiliary_credentials_next(purpose,revision,ciphertext)
                     SELECT purpose,revision,ciphertext FROM desktop_auxiliary_credentials;
