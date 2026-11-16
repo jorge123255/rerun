@@ -99,6 +99,40 @@ export async function exportDesktopActivity(engine: EngineConnection, db: Pick<C
     })))
 }
 
-export async function clearDesktopActivity(engine: EngineConnection): Promise<void> {
-    await request(engine, '/desktop/activity', { method: 'DELETE' }, () => undefined)
+/** The view named a coworker the app does not know. Nothing is cleared. */
+export class DesktopActivityCoworkerUnknown extends Error {}
+
+// Rows the view shows under "Deleted coworkers": a coworker that is gone, not the Chief of Staff
+// and not a helper a coworker started.
+async function deletedCoworkerIds(engine: EngineConnection, agents: readonly DesktopAgent[]): Promise<string[]> {
+    const query = engineActivityQuery(new URLSearchParams('coworker=deleted'), agents)
+    query.set('limit', '500')
+    const ids = new Set<string>()
+    for (let next: number | null = null, read = 0; read < DESKTOP_ACTIVITY_MAX_RECORDS;) {
+        if (next) query.set('before', String(next))
+        const result = await page(engine, query)
+        for (const record of result.records) if (record.source !== 'delegated' && record.agentId !== FOREMAN_AGENT_ID) ids.add(record.agentId)
+        read += result.records.length
+        if (!result.next) break
+        next = result.next
+    }
+    return [...ids]
+}
+
+/**
+ * Clears the trail. With no coworker, all of it. With a coworker's id, or `deleted` for the
+ * coworkers that no longer exist, only those rows: every other coworker's rows and the count of
+ * actions that could not be recorded stay. A coworker the app does not know clears nothing.
+ */
+export async function clearDesktopActivity(engine: EngineConnection, db?: Pick<Client, 'execute'>, coworker?: string | null): Promise<void> {
+    if (coworker === undefined || coworker === null) {
+        await request(engine, '/desktop/activity', { method: 'DELETE' }, () => undefined)
+        return
+    }
+    if (!db || !coworker) throw new DesktopActivityCoworkerUnknown()
+    const agents = await listDesktopAgents(db)
+    const known = agents.find(agent => agent.id === coworker)?.engineAgentId
+    if (coworker !== 'deleted' && !known) throw new DesktopActivityCoworkerUnknown()
+    const engineIds = known ? [known] : await deletedCoworkerIds(engine, agents)
+    for (const id of engineIds) await request(engine, `/desktop/activity?coworker=${encodeURIComponent(id)}`, { method: 'DELETE' }, () => undefined)
 }

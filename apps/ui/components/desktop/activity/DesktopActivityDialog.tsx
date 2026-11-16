@@ -56,7 +56,8 @@ export function DesktopActivityPanel({ onOpenConversation }: { onOpenConversatio
     const [loading, setLoading] = useState(true)
     const [more, setMore] = useState(false)
     const [busy, setBusy] = useState<'export' | 'clear' | null>(null)
-    const [confirming, setConfirming] = useState(false)
+    // What the open confirmation would clear: everything (`''`), one coworker, or the deleted ones.
+    const [confirming, setConfirming] = useState<{ coworker: string; name: string } | null>(null)
     const generation = useRef(0)
 
     const load = useCallback(async (next: DesktopActivityViewFilters, signal?: AbortSignal) => {
@@ -103,12 +104,12 @@ export function DesktopActivityPanel({ onOpenConversation }: { onOpenConversatio
         finally { setBusy(null) }
     }
 
-    async function clear() {
+    async function clear(coworker: string) {
         setBusy('clear')
         try {
-            const response = await fetch('/api/desktop/activity', { method: 'DELETE', cache: 'no-store' })
-            if (!response.ok) throw new Error('Could not clear the activity. Try again.')
-            setConfirming(false)
+            const response = await fetch(coworker ? `/api/desktop/activity?coworker=${encodeURIComponent(coworker)}` : '/api/desktop/activity', { method: 'DELETE', cache: 'no-store' })
+            if (!response.ok) throw new Error((await response.json().then(body => typeof body?.error === 'string' && body.error, () => '')) || 'Could not clear the activity. Try again.')
+            setConfirming(null)
             await load(filters)
         } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not clear the activity. Try again.') }
         finally { setBusy(null) }
@@ -117,6 +118,13 @@ export function DesktopActivityPanel({ onOpenConversation }: { onOpenConversatio
     const set = (change: Partial<DesktopActivityViewFilters>) => setFilters(current => ({ ...current, ...change }))
     const filtered = JSON.stringify(filters) !== JSON.stringify(EMPTY_ACTIVITY_FILTERS)
     const rows = view?.rows ?? []
+    // Filtered to one coworker, Clear removes that coworker's rows only. The other filters never narrow it.
+    const clearName = filters.coworker === 'deleted' ? 'deleted coworkers' : view?.coworkers.find(coworker => coworker.id === filters.coworker)?.name ?? ''
+    const clearTarget = filters.coworker && clearName ? { coworker: filters.coworker, name: clearName } : filters.coworker ? null : { coworker: '', name: '' }
+    const possessive = (name: string) => name === 'deleted coworkers' ? 'deleted coworkers’' : `${name}’s`
+    const clearLabel = clearTarget?.coworker ? `Clear ${possessive(clearTarget.name)} activity` : 'Clear all activity'
+    const otherFilters = JSON.stringify({ ...filters, coworker: '' }) !== JSON.stringify(EMPTY_ACTIVITY_FILTERS)
+    const nothingToClear = !view || !clearTarget || (view.total === 0 && !otherFilters && (clearTarget.coworker ? true : !view.dropped))
 
     return <div className="flex min-h-0 flex-1 flex-col" data-testid="desktop-activity">
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b p-3">
@@ -159,11 +167,15 @@ export function DesktopActivityPanel({ onOpenConversation }: { onOpenConversatio
         <div className="flex shrink-0 items-center gap-2 border-t p-3">
             <p className="mr-auto text-sm text-muted-foreground" aria-live="polite">{view ? `${view.total} ${view.total === 1 ? 'action' : 'actions'}${filtered ? ' match' : ''}` : ''}</p>
             <Button type="button" size="sm" variant="outline" disabled={busy !== null || !view?.total} onClick={() => { void exportCsv() }}>{busy === 'export' ? 'Exporting…' : 'Export CSV'}</Button>
-            <Button type="button" size="sm" variant="outline" disabled={busy !== null || !view || (view.total === 0 && !filtered && !view.dropped)} onClick={() => setConfirming(true)}>Clear activity</Button>
+            <Button type="button" size="sm" variant="outline" disabled={busy !== null || nothingToClear} onClick={() => setConfirming(clearTarget)}>{clearLabel}</Button>
         </div>
-        <ConfirmDialog open={confirming} onOpenChange={setConfirming} title="Clear all activity?" confirmLabel="Clear activity" pending={busy === 'clear'}
-            description="This removes every recorded action for every coworker in this workspace, not only the rows shown. It cannot be undone. Conversations and run history are not changed."
-            onConfirm={event => { event.preventDefault(); void clear() }} />
+        <ConfirmDialog open={confirming !== null} onOpenChange={open => { if (!open) setConfirming(null) }} pending={busy === 'clear'}
+            title={confirming?.coworker ? `Clear ${possessive(confirming.name)} activity?` : 'Clear all activity?'}
+            confirmLabel={confirming?.coworker ? `Clear ${possessive(confirming.name)} activity` : 'Clear activity'}
+            description={confirming?.coworker
+                ? `This removes every recorded action of ${confirming.name === 'deleted coworkers' ? 'coworkers that no longer exist' : confirming.name}, not only the rows shown. Other coworkers’ activity is kept. It cannot be undone. Conversations and run history are not changed.`
+                : 'This removes every recorded action for every coworker in this workspace, not only the rows shown. It cannot be undone. Conversations and run history are not changed.'}
+            onConfirm={event => { event.preventDefault(); if (confirming) void clear(confirming.coworker) }} />
     </div>
 }
 

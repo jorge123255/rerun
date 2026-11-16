@@ -26,6 +26,9 @@ export function desktopActivityFiltersOf(query: Record<string, string | undefine
     }
 }
 
+/** An agent id as the engine writes them. Anything else in `coworker` is refused, never read as "everyone". */
+const AGENT_ID = /^[A-Za-z0-9_-]{1,128}$/
+
 /** Read and clear the workspace's activity trail. The Mac app is the only caller. */
 export function createDesktopActivityRouter(open: () => Promise<ActivityStore> = openActivityStore) {
     const router = new Hono()
@@ -38,9 +41,15 @@ export function createDesktopActivityRouter(open: () => Promise<ActivityStore> =
         const body: DesktopActivityPage = { ...page, dropped: await store.dropped() + desktopActivityDroppedUnsaved() }
         return c.json(body, 200, { 'cache-control': 'no-store' })
     })
+    // Everything, or with `?coworker=<agent id>` only that coworker's rows (decided November 16, 2026).
+    // The parameter being present at all means "one coworker": a bad value clears nothing.
     router.delete('/', async c => {
+        const coworker = c.req.query('coworker')
+        if (coworker !== undefined && !AGENT_ID.test(coworker)) return c.json({ error: 'Choose a coworker to clear the activity of.' }, 400)
         await settleDesktopActivity()
-        await (await open()).clear()
+        const store = await open()
+        if (coworker !== undefined) return c.json({ cleared: true, removed: await store.clearAgent(coworker) })
+        await store.clear()
         resetDesktopActivityDropped()
         return c.json({ cleared: true })
     })
