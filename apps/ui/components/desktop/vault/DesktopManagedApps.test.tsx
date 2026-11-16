@@ -149,3 +149,39 @@ test('an expired account says so and is signed in again from its row, keeping it
     expect(opened).toHaveBeenCalledWith('https://connect.composio.example/link/ca_2', '_blank', 'noopener,noreferrer')
     expect(host.textContent).toContain('Waiting for you to finish signing in')
 })
+
+test('removing the key says how many accounts are signed out, and offers to remove it anyway when Composio could not be asked', async () => {
+    const accounts = [{ id: ACCOUNT, slug: 'gmail', name: 'Gmail', status: 'active', agentIds: [] }, { id: '22222222-2222-4222-8222-222222222222', slug: 'gmail', name: 'Gmail', label: 'Work', status: 'active', agentIds: [] }]
+    const kept = { configured: true, apps, accounts, keyRemovalSignsOut: 2 }
+    const answers: Record<string, { status?: number; body: unknown }> = { 'remove-key': { body: { view: kept, notSignedOut: ['Gmail', 'Gmail · Work'] } } }
+    const { host, posts } = await mount(kept, answers)
+    await press(host, 'Remove the Composio key')
+    expect(document.body.textContent).toContain('2 accounts this Mac signed in are signed out at Composio first.')
+    expect(document.body.textContent).toContain('Nothing else in your Composio account is touched.')
+
+    await press(document.body, 'Remove key')
+    expect(posts.at(-1)).toEqual({ action: 'remove-key' })
+    // The key was kept: the dialog stays, names the accounts, and the second choice is spelled out.
+    expect(document.body.textContent).toContain('The key was kept')
+    expect(document.body.textContent).toContain('these accounts are still signed in there: Gmail, Gmail · Work.')
+    expect(document.body.textContent).toContain('leave those sign-ins at Composio')
+    expect(host.textContent).toContain('Remove the Composio key')
+
+    answers['remove-key'] = { body: { view: { configured: false, apps, accounts: [] } } }
+    await press(document.body, 'Remove key anyway')
+    expect(posts.at(-1)).toEqual({ action: 'remove-key', leaveSignedIn: true })
+    expect(document.body.textContent).not.toContain('The key was kept')
+    expect(host.querySelector('input[aria-label="Composio key"]')).not.toBeNull()
+})
+
+test('removing the key with one account says one', async () => {
+    const one = await mount({ configured: true, apps, accounts: [{ id: ACCOUNT, slug: 'gmail', name: 'Gmail', status: 'active', agentIds: [] }], keyRemovalSignsOut: 1 })
+    await press(one.host, 'Remove the Composio key')
+    expect(document.body.textContent).toContain('1 account this Mac signed in is signed out at Composio first.')
+})
+
+test('removing the key with no account signed in says there is nothing to sign out', async () => {
+    const none = await mount({ configured: true, apps, accounts: [], keyRemovalSignsOut: 0 })
+    await press(none.host, 'Remove the Composio key')
+    expect(document.body.textContent).toContain('No account here has a sign-in at Composio to sign out.')
+})
