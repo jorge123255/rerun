@@ -1,6 +1,7 @@
 'use client'
 
-import { Orb, WELCOME_ORB_SIZE } from '@rerun/ui/foreman'
+import { WELCOME_ORB_SIZE } from '@rerun/ui/foreman'
+import { DesktopForemanOrb } from '../../panel-motion/DesktopForemanOrb'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 
 import { INTAKE_COPY, type DesktopForemanIntakeController } from '@/lib/desktop/foreman-intake'
@@ -29,7 +30,7 @@ export function DesktopForemanIntakeHeader({
     return (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col items-center justify-end gap-5 px-8 pb-6 text-center max-sm:gap-3 max-sm:px-4 max-sm:pb-4">
             <motion.div {...enter(0)}>
-                <Orb size={WELCOME_ORB_SIZE} state={intake.submitting || intake.deciding ? 'thinking' : 'listening'} />
+                <DesktopForemanOrb role="welcome" size={WELCOME_ORB_SIZE} activity={intake.submitting || intake.deciding ? 'thinking' : 'listening'} mood={intake.submitting || intake.deciding ? 'thinking' : 'idle'} />
             </motion.div>
 
             {arrivalTitle && (

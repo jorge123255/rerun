@@ -2,7 +2,9 @@
 
 import { checkedDesktopCoworkerMentions, teamEmptyStateOf, type DesktopCoworkerMention, type TeamAgent } from '@rerun/contracts'
 import { ForemanTeamEmptyState } from '@/components/foreman/empty-state/ForemanTeamEmptyState'
+import { WELCOME_ORB_SIZE } from '@rerun/ui/foreman'
 import { useDesktopLocale } from '../DesktopLocale'
+import { DesktopForemanOrb } from '../panel-motion/DesktopForemanOrb'
 
 export function DesktopForemanTeamWelcome({ agents, firstName, nextRoutine, now, disabled, onAction }: {
     agents: TeamAgent[]
@@ -37,7 +39,9 @@ export function DesktopForemanTeamWelcome({ agents, firstName, nextRoutine, now,
         }),
         build: team.build,
     } })
-    return <ForemanTeamEmptyState model={model} now={now} disabled={disabled}
+    return <ForemanTeamEmptyState model={model} now={now} disabled={disabled} orb={<DesktopForemanOrb role="welcome" size={WELCOME_ORB_SIZE} />}
+        // An empty conversation (a new task, or General before its first message) fades its welcome in.
+        className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300 ease-out motion-reduce:animate-none"
         pulseLabels={(count, working) => ({ coworkers: t('chatStart.pulseCoworkers', { count }), working: t('chatStart.pulseWorking', { count: working }) })}
         onAction={row => {
             if (disabled) return

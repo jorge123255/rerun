@@ -33,6 +33,8 @@ export type ForemanHeaderBarProps = {
     onGutter?: boolean
     actions?: ReactNode
     tabs?: ReactNode
+    /** Takes the place of the default orb: a host that draws its own states around it. */
+    orb?: ReactNode
     /** Sans elle, la barre n'est pas une poignée : ni grab, ni grabber de sheet. */
     onDragPointerDown?: (event: PointerEvent<HTMLElement>) => void
     onToggleSheetDetent?: () => void
@@ -42,7 +44,7 @@ export type ForemanHeaderBarProps = {
  * Posé par-dessus la pile, sur un voile flouté qui s'évanouit vers le bas plutôt qu'une barre
  * opaque : les vieux messages continuent de se dissoudre dessous, mais les contrôles se détachent.
  */
-export function ForemanHeaderBar({ anchor, orbState, orbPaused = false, onClose, closeLabel = 'Close the chat', closeTooltip = 'Close', resizeLabel = 'Resize chat', closeDisabledReason, orbHiddenOnSheet = false, onGutter = false, actions, tabs, onDragPointerDown, onToggleSheetDetent }: ForemanHeaderBarProps) {
+export function ForemanHeaderBar({ anchor, orbState, orbPaused = false, onClose, closeLabel = 'Close the chat', closeTooltip = 'Close', resizeLabel = 'Resize chat', closeDisabledReason, orbHiddenOnSheet = false, onGutter = false, actions, tabs, orb, onDragPointerDown, onToggleSheetDetent }: ForemanHeaderBarProps) {
     const DesktopCloseIcon = CLOSE_ICONS[anchor]
     const draggable = Boolean(onDragPointerDown)
     const closeButton = (
@@ -96,7 +98,7 @@ export function ForemanHeaderBar({ anchor, orbState, orbPaused = false, onClose,
                         côté et Escape sont les deux seules sorties, hors tunnel — donc elle reste décorative et hors
                         de l'ordre de tabulation. */}
                     <div className={cn(orbHiddenOnSheet && 'max-md:hidden')}>
-                        <Orb size={HEADER_ORB_SIZE} state={orbState} paused={orbPaused} facing="right" />
+                        {orb ?? <Orb size={HEADER_ORB_SIZE} state={orbState} paused={orbPaused} facing="right" />}
                     </div>
                 </div>
                 {actions && <div className="flex items-center gap-1.5">{actions}</div>}

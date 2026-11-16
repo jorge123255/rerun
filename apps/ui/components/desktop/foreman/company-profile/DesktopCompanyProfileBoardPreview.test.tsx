@@ -6,6 +6,7 @@ import type { DesktopCompanyProfileClient } from '@/lib/desktop/company-profile/
 import { profileAttempt, profileChat, profileView } from '@/lib/desktop/company-profile/test-fixtures'
 import { DesktopCompanyProfileBoardPreview } from './DesktopCompanyProfileBoardPreview'
 import { DesktopCompanyProfile } from './DesktopCompanyProfile'
+import { resetDesktopArrivalsForTest } from '../../panel-motion/DesktopArrive'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
@@ -67,4 +68,26 @@ test('the mounted profile keeps pending/cancelled controls truthful while its co
     expect(document.body.textContent).not.toContain('Reading the public website…')
     expect(document.body.textContent).not.toContain('What you sell')
     expect(api.enrich).not.toHaveBeenCalled()
+})
+
+test('a saved profile reopened shows its findings settled; one found afterwards slides in, once', async () => {
+    resetDesktopArrivalsForTest()
+    const blank = { value: null, origin: 'unavailable' as const, confidence: null, evidence: [] }
+    const partial = { ...profileView, profile: { ...profileView.profile, audience: { ...profileView.profile.audience, ...blank }, industry: { ...profileView.profile.industry, ...blank } } }
+    await render(partial)
+    const cards = () => [...document.querySelectorAll<HTMLElement>('section[data-desktop-arrive]')].map(card => [card.textContent!.match(/Found you|What you sell|Who you sell to|Industry/)![0], card.dataset.desktopArrive])
+    expect(cards()).toEqual([['Found you', 'settled'], ['What you sell', 'settled']])
+    await act(async () => root!.render(<DesktopCompanyProfileBoardPreview scope={scope} view={profileView} />))
+    expect(cards()).toEqual([['Found you', 'settled'], ['What you sell', 'settled'], ['Who you sell to', 'live'], ['Industry', 'live']])
+    expect(document.querySelector('section[data-desktop-arrive="live"]')!.classList.contains('motion-reduce:animate-none')).toBe(true)
+    // Drawn again from scratch (another layout, the panel reopened): nothing replays.
+    await act(async () => root!.unmount())
+    await render()
+    expect(cards().map(card => card[1])).toEqual(['settled', 'settled', 'settled', 'settled'])
+})
+
+test('findings that land while the research is still running slide in from the first one', async () => {
+    resetDesktopArrivalsForTest()
+    await render({ ...profileView, enrichment: profileAttempt('enrich', 'pending') })
+    expect([...document.querySelectorAll<HTMLElement>('section[data-desktop-arrive]')].every(card => card.dataset.desktopArrive === 'live')).toBe(true)
 })

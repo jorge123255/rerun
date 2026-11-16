@@ -130,7 +130,7 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
     const pendingStarter = !!state.starter && !state.starter.decision?.settled
     const projectFeed = useMemo(() => createClientDockFeed(initial.chat), [initial.chat.workspaceId, initial.chat.chatId])
     const [dockFeed, setDockFeed] = useState(() => projectFeed(initial))
-    const [voice, setVoice] = useState<{ slot: ReactNode; busy: boolean; mic: boolean } | null>(null)
+    const [voice, setVoice] = useState<{ slot: ReactNode; busy: boolean; mic: boolean; recording: boolean } | null>(null)
     const [modelSaving, setModelSaving] = useState(false)
     const modelPicker = useRef<DesktopForemanModelPillHandle>(null)
     // What this panel saved, shown at once; the workspace's next read brings the same map.
@@ -325,7 +325,7 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
                     draftRevision={intake.revision} compact={compactBoard} controllerRef={companyProfile} />
             </div>
         ) : undefined}
-        dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} voiceMic={!!voiceModel && !!voice?.mic} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} firstSend={firstSend} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
+        dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} voiceMic={!!voiceModel && !!voice?.mic} voiceRecording={!!voiceModel && !!voice?.recording} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} firstSend={firstSend} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
         question={state.question} onAnswerQuestion={client.answerQuestion}
         approval={state.approval} onDecideApproval={client.decideApproval}
         starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished} separateConversation={state.separateConversation}
@@ -374,13 +374,14 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
 
 function ForemanVoiceOwner({ target, active, engage, accepted, onSlot, onSettings }: {
     target: import('@rerun/contracts').ForemanVoiceTarget; active: boolean; engage(): void; accepted(): void
-    onSlot(controls: { slot: ReactNode; busy: boolean; mic: boolean } | null): void; onSettings?: () => void
+    onSlot(controls: { slot: ReactNode; busy: boolean; mic: boolean; recording: boolean } | null): void; onSettings?: () => void
 }) {
     const voice = useForemanVoiceSlot({ target, active, onEngage: engage, onAccepted: accepted, releasePolicy: 'send' })
     useEffect(() => registerForemanVoiceQuit(() => voice.controller.prepareForQuit()), [voice.controller])
     useEffect(() => {
         onSlot({ slot: <ForemanVoiceSlot voice={voice} onOpenTranscriptionSettings={onSettings ?? (() => {})} />,
             mic: foremanVoiceMicShown(voice.view),
+            recording: voice.view.phase === 'listening',
             busy: voice.view.phase !== 'sent' && (!!voice.view.pending || ['restoring', 'starting', 'listening', 'saving', 'transcribing', 'sending'].includes(voice.view.phase)) })
         return () => onSlot(null)
     }, [voice.view, voice.stream, voice.active, voice.controller, onSettings, onSlot])

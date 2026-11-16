@@ -24,10 +24,10 @@ export function DesktopCompanyProfileBoardPreview({ scope, view, compact = false
         {preview && <DesktopPlanBoardPreview key={preview.scopeKey} plan={preview.plan} className="absolute inset-0" />}
         {view && hasAnalysis && <div className="absolute inset-x-0 top-4 flex flex-col items-center gap-2 px-4">
             <DesktopDiscoveryStatusPill name={name} found={found} digging={digging} />
-            {compact && <div className="w-full max-w-72"><DesktopCompanyProfileFindings profile={view.profile} limit={1} /></div>}
+            {compact && <div className="w-full max-w-72"><DesktopCompanyProfileFindings profile={view.profile} limit={1} scope={`${scope.workspaceId}:${scope.chatId}`} digging={digging} /></div>}
         </div>}
         {view && hasAnalysis && !compact && <div className="absolute -bottom-2 -right-2 flex max-h-[70%] w-72 flex-col gap-2 overflow-y-auto p-6">
-            <DesktopCompanyProfileFindings profile={view.profile} />
+            <DesktopCompanyProfileFindings profile={view.profile} scope={`${scope.workspaceId}:${scope.chatId}`} digging={digging} />
         </div>}
     </div>
 }

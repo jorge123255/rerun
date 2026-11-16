@@ -401,3 +401,19 @@ test('shows the plain refusal when a save would break a routine limit and keeps 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(message)
     expect(container.querySelector<HTMLInputElement>('input[aria-label="Name"]')?.value).toBe('Saved daily')
 })
+
+test('the editor lists what the last run did, already settled when it is opened', async () => {
+    const chat = { agentId: 'alice', sessionId: 'result', engineSessionId: 'engine-result', tabUid: 'schedule:result', title: 'Daily', runId: 'run' }
+    const outcome = { quiet: false, test: false, checklist: { reported: true, parts: [
+        { number: 1, text: 'Collect the numbers', status: 'done', reason: null },
+        { number: 2, text: 'Send the report', status: 'blocked', reason: 'no access to the sheet' },
+    ] } }
+    respond = async url => url.endsWith('/model') ? Response.json(modelView) : Response.json([task('daily', { lastResult: { status: 'done', runId: 'run', chat, outcome } })])
+    await render()
+    expect(container.querySelector('[data-routine-checklist]')).toBeNull()
+    await act(async () => { row('Saved daily').click() })
+    const list = container.querySelector<HTMLElement>('[data-routine-checklist]')!
+    expect(list.dataset.routineChecklist).toBe('settled')
+    expect([...list.querySelectorAll('[data-routine-step]')].map(step => step.textContent)).toEqual(['DoneCollect the numbers', 'BlockedSend the report · no access to the sheet'])
+    expect(container.textContent).toContain('Last result: Done · 1 done, 1 blocked: no access to the sheet')
+})

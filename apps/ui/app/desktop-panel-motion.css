@@ -1,0 +1,95 @@
+/* Motion for the Mac app's panels: the Chief of Staff orb's aura and the attention shake of a risky
+   request. Transform and opacity only. Loops stop while their element is off screen or the window is
+   hidden ([data-orb-still]) and under "Reduce motion". */
+
+@keyframes desktop-orb-breathe {
+  0%, 100% { transform: scale(0.92); opacity: 0.22; }
+  50% { transform: scale(1.04); opacity: 0.4; }
+}
+
+@keyframes desktop-orb-ripple {
+  0% { transform: scale(0.72); opacity: 0.55; }
+  100% { transform: scale(1.28); opacity: 0; }
+}
+
+@keyframes desktop-orb-pulse {
+  0%, 100% { transform: scale(0.9); opacity: 0.3; }
+  50% { transform: scale(1.14); opacity: 0.62; }
+}
+
+/* Sparse on purpose: the orb leans twice, then rests for most of the cycle. */
+@keyframes desktop-orb-nudge {
+  0%, 12%, 100% { transform: translateX(0) rotate(0deg); }
+  3% { transform: translateX(-1.5px) rotate(-5deg); }
+  6% { transform: translateX(1.5px) rotate(5deg); }
+  9% { transform: translateX(-1px) rotate(-3deg); }
+}
+
+@keyframes desktop-orb-nudge-glow {
+  0%, 14%, 100% { transform: scale(0.9); opacity: 0.16; }
+  6% { transform: scale(1.12); opacity: 0.55; }
+}
+
+.desktop-orb-aura,
+.desktop-orb-ring {
+  position: absolute;
+  inset: -22%;
+  border-radius: 9999px;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.desktop-orb-aura {
+  background: radial-gradient(closest-side, color-mix(in oklab, var(--desktop-orb-tint, var(--brand, #4d34f7)) 55%, transparent) 35%, transparent 72%);
+}
+
+.desktop-orb-ring {
+  inset: -12%;
+  border: 1.5px solid color-mix(in oklab, var(--desktop-orb-tint, var(--brand, #4d34f7)) 70%, transparent);
+}
+
+[data-orb-mood='recording'] { --desktop-orb-tint: #ef4444; }
+[data-orb-mood='waiting'] { --desktop-orb-tint: #f59e0b; }
+
+[data-orb-mood='idle'] > .desktop-orb-aura { animation: desktop-orb-breathe 5.2s ease-in-out infinite; }
+[data-orb-mood='thinking'] > .desktop-orb-aura { animation: desktop-orb-breathe 2.4s ease-in-out infinite; }
+[data-orb-mood='thinking'] > .desktop-orb-ring { animation: desktop-orb-ripple 1.8s cubic-bezier(0, 0, 0.2, 1) infinite; }
+[data-orb-mood='answering'] > .desktop-orb-aura { animation: desktop-orb-pulse 1.5s ease-in-out infinite; }
+[data-orb-mood='recording'] > .desktop-orb-aura { animation: desktop-orb-pulse 1s ease-in-out infinite; }
+[data-orb-mood='recording'] > .desktop-orb-ring { animation: desktop-orb-ripple 1s cubic-bezier(0, 0, 0.2, 1) infinite; }
+[data-orb-mood='reading'] > .desktop-orb-aura { animation: desktop-orb-pulse 0.72s ease-in-out infinite; }
+[data-orb-mood='waiting'] > .desktop-orb-aura { animation: desktop-orb-nudge-glow 6s ease-in-out infinite; }
+[data-orb-mood='waiting'] > .desktop-orb-body { animation: desktop-orb-nudge 6s ease-in-out infinite; }
+
+/* Not the orb that leads, off screen, or the window hidden: nothing runs. */
+[data-orb-still] > .desktop-orb-aura,
+[data-orb-still] > .desktop-orb-ring,
+[data-orb-still] > .desktop-orb-body {
+  animation: none;
+}
+
+@keyframes desktop-attention-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+
+.desktop-attention-shake {
+  animation: desktop-attention-shake 0.36s ease-in-out 0.32s 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-orb-aura,
+  .desktop-orb-ring,
+  .desktop-orb-body,
+  .desktop-attention-shake {
+    animation: none !important;
+  }
+
+  /* No movement: the state still reads, as a still tint. */
+  [data-orb-mood]:not([data-orb-mood='idle']):not([data-orb-still]) > .desktop-orb-aura {
+    opacity: 0.4;
+  }
+}

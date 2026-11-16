@@ -4,6 +4,7 @@ import { ActionApprovalBlock, type ApprovalDecision } from '@rerun/ui/chat'
 import { Button, Icon, ScrollFade } from '@rerun/ui/primitives'
 import { useEffect, useRef, useState } from 'react'
 import { ShieldAlertIcon } from '@/lib/icons'
+import { DesktopSettle } from './panel-motion/DesktopArrive'
 import { desktopApprovalAnswerSchema, type DesktopApprovalAnswer, type DesktopPendingApproval } from '@/lib/desktop/approvals'
 
 export type DesktopApprovalCardProps = {
@@ -87,7 +88,7 @@ function ApprovalCard({ approval, disabled, onDecide }: DesktopApprovalCardProps
         : localAttempt
     const locked = disabled || status !== 'idle'
     return <div className="space-y-2" aria-busy={status === 'sending'}>
-        {attempt ? <div className="relative space-y-2.5 overflow-hidden rounded-lg border border-border px-4 pt-3 pb-4">
+        <DesktopSettle stateKey={attempt ? 'outcome' : 'actions'}>{attempt ? <div className="relative space-y-2.5 overflow-hidden rounded-lg border border-border px-4 pt-3 pb-4">
             <div className="flex items-center gap-2.5 text-sm">
                 <Icon size="sm" tone="orange" icon={ShieldAlertIcon} className="bg-orange-500/10 text-foreground" />
                 <span className="font-medium text-foreground">Approval required</span>
@@ -106,7 +107,7 @@ function ApprovalCard({ approval, disabled, onDecide }: DesktopApprovalCardProps
             <p role="status" className="text-xs text-muted-foreground">{status === 'sent'
                 ? 'Decisions sent.' : status === 'sending' ? 'Sending decisions…' : 'Retry the same decisions to finish sending them.'}</p>
             <Button type="button" size="sm" variant="outline" disabled={locked} onClick={() => { void send(attempt) }}>Retry decisions</Button>
-        </div> : <ActionApprovalBlock key={formVersion} inline approvals={approval.approvals} disabled={locked} onSubmit={submit} />}
+        </div> : <ActionApprovalBlock key={formVersion} inline approvals={approval.approvals} disabled={locked} onSubmit={submit} />}</DesktopSettle>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     </div>
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
     DESKTOP_GITHUB_LINK_KINDS,
     DESKTOP_GITHUB_PROJECT_KINDS,
@@ -18,12 +18,13 @@ import { Icon } from '@/components/ui/icon'
 import type { DesktopIntakeGithubController } from '@/lib/desktop/foreman-intake/use-desktop-intake-github'
 import { BoxIcon, XIcon } from '@/lib/icons'
 import { DISCOVERY_CARD_CLASS } from '../discoveries/DesktopDiscoveryCard'
+import { DesktopArrive } from '../../panel-motion/DesktopArrive'
 
 const SELECT = 'rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50'
 
-function ProjectCard({ project, disabled, github }: { project: DesktopGithubProject; disabled: boolean; github: DesktopIntakeGithubController }) {
+function ProjectCard({ project, disabled, github, live, order }: { project: DesktopGithubProject; disabled: boolean; github: DesktopIntakeGithubController; live: boolean; order: number }) {
     return (
-        <li data-intake-github-project={project.id} className={`${DISCOVERY_CARD_CLASS} text-left`}>
+        <DesktopArrive as="li" id={`github-project:${project.id}`} live={live} delayMs={Math.min(order, 8) * 60} data-intake-github-project={project.id} className={`${DISCOVERY_CARD_CLASS} text-left`}>
             <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                     <p className="truncate font-heading text-sm font-medium">{project.name}</p>
@@ -59,7 +60,7 @@ function ProjectCard({ project, disabled, github }: { project: DesktopGithubProj
                     </div>
                 </fieldset>
             </>}
-        </li>
+        </DesktopArrive>
     )
 }
 
@@ -75,6 +76,9 @@ export function DesktopIntakeGithubProjects({ github, intake }: {
 }) {
     const [draft, setDraft] = useState<{ from: string; to: string; kind: DesktopGithubLinkKind }>({ from: '', to: '', kind: 'depends-on' })
     const record = github.record
+    // Cards slide in only for a read the person watched here; a saved intake reopened shows them settled.
+    const readHere = useRef(false)
+    if (github.reading) readHere.current = true
     if (intake.finished || !intake.restored) return null
     if (!record) {
         if (!github.reading) return null
@@ -100,7 +104,7 @@ export function DesktopIntakeGithubProjects({ github, intake }: {
             {github.dirty && <p className="px-1 text-[10px] text-muted-foreground">The list in the field changed. Read it to update these cards.</p>}
             {record.inferenceNote && <p data-intake-github-note className="px-1 text-[10px] leading-relaxed text-muted-foreground">{record.inferenceNote}</p>}
             <ul className="space-y-2">
-                {shown.map(project => <ProjectCard key={project.id} project={project} disabled={disabled} github={github} />)}
+                {shown.map((project, index) => <ProjectCard key={project.id} project={project} disabled={disabled} github={github} live={readHere.current} order={index} />)}
             </ul>
             {linkable.length > 1 && <div className={`${DISCOVERY_CARD_CLASS} text-left`}>
                 <p className="text-[10px] font-medium text-muted-foreground">How the projects relate</p>
