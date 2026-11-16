@@ -192,3 +192,43 @@ it('discards a Keirolabs result when the key is removed during the request', asy
     expect(fetcher).toHaveBeenCalledOnce()
     expect((await store.readSearch()).credential).toBeNull()
 })
+
+it('turns a recording into text with ElevenLabs when only its key is saved, and prefers OpenRouter when both are', async () => {
+    const db = createClient({ url: ':memory:' })
+    await db.executeMultiple(desktopAuxiliarySchema)
+    const store = desktopAuxiliaryStore(db, () => Buffer.alloc(32, 7))
+    await store.change({ purpose: 'elevenlabs-transcription', expectedRevision: 'unconfigured', key: 'eleven-key' })
+    const calls: Array<{ url: string; headers: Record<string, string> }> = []
+    const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(url), headers: init?.headers as Record<string, string> })
+        return Response.json({ text: ' hello there ' })
+    }) as unknown as typeof fetch
+    const backends = desktopAuxiliaryBackends(store, fetcher)
+    await expect(backends.transcribe(new Uint8Array([1, 2, 3]), 'wav', new AbortController().signal)).resolves.toBe('hello there')
+    expect(calls[0]!.url).toBe('https://api.elevenlabs.io/v1/speech-to-text')
+    expect(calls[0]!.headers['xi-api-key']).toBe('eleven-key')
+    await store.change({ purpose: 'transcription', expectedRevision: 'unconfigured', key: 'router-key' })
+    await backends.transcribe(new Uint8Array([1, 2, 3]), 'wav', new AbortController().signal)
+    expect(calls[1]!.url).toBe('https://openrouter.ai/api/v1/audio/transcriptions')
+})
+
+it('searches without a key only when keyless search is on and no key is saved', async () => {
+    const db = createClient({ url: ':memory:' })
+    await db.executeMultiple(desktopAuxiliarySchema)
+    const store = desktopAuxiliaryStore(db, () => Buffer.alloc(32, 7))
+    expect((await store.readSearch()).credential).toBeNull()
+    await store.change({ purpose: 'keenable-search', expectedRevision: 'unconfigured', key: 'on' })
+    const urls: string[] = []
+    const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        urls.push(String(url))
+        expect((init?.headers as Record<string, string>)['X-API-Key']).toBeUndefined()
+        return Response.json({ results: [{ title: 'One', url: 'https://one.test', snippet: 'first\n  line' }, { title: null, url: null }] })
+    }) as unknown as typeof fetch
+    const { generation, credential } = await store.readSearch()
+    expect(credential?.provider).toBe('keenable')
+    const found = await desktopAuxiliaryBackends(store, fetcher).search({ query: 'rerun', maxResults: 5 }, generation, new AbortController().signal)
+    expect(urls).toEqual(['https://api.keenable.ai/v1/search/public'])
+    expect(found).toMatchObject({ provenance: { provider: 'keenable' }, results: [{ title: 'One', url: 'https://one.test', snippet: 'first line' }] })
+    await store.change({ purpose: 'search', expectedRevision: 'unconfigured', key: 'brave-key' })
+    expect((await store.readSearch()).credential?.provider).toBe('brave')
+})

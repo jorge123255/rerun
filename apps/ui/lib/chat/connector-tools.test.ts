@@ -138,3 +138,19 @@ describe('custom servers in the connector map', () => {
         expect(resolveConnectorTool('memory_recall_all', map, name => name === 'memory_write')?.label).toBe('Memory · Recall All')
     })
 })
+
+describe('a tool that runs other tools by name', () => {
+    const map = buildConnectorMap([], [{ name: 'composio', displayName: 'Composio', icon: null } as never])
+    it('is named after the tool it ran', () => {
+        const input = { tools: [{ tool_slug: 'GMAIL_SEND_EMAIL', arguments: { to: 'a@example.com' } }] }
+        expect(resolveConnectorTool('mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL', map, undefined, input)?.label).toBe('Composio · Gmail Send Email')
+    })
+    it('counts the others when it ran several', () => {
+        const input = { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: {} }, { tool_slug: 'SLACK_SEND_MESSAGE', arguments: {} }, { tool_slug: 'NOTION_SEARCH', arguments: {} }] }
+        expect(resolveConnectorTool('mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL', map, undefined, input)?.label).toBe('Composio · Gmail Fetch Emails +2')
+    })
+    it('keeps its own name with no input, and leaves ordinary tools alone', () => {
+        expect(resolveConnectorTool('mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL', map)?.label).toBe('Composio · COMPOSIO MULTI EXECUTE TOOL')
+        expect(resolveConnectorTool('mcp__composio__COMPOSIO_SEARCH_TOOLS', map, undefined, { name: 'GMAIL_SEND_EMAIL' })?.label).toBe('Composio · COMPOSIO SEARCH TOOLS')
+    })
+})

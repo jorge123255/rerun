@@ -64,6 +64,7 @@ import { desktopSelfMcpTools } from '../desktop/self-mcp/index.js'
 import { desktopSecretRequestTools } from '../desktop/secret-requests/request-secret.js'
 import { desktopWebSearchTools } from '../desktop/web-search-tool.js'
 import { desktopWebSearch } from '../desktop/web-search/client.js'
+import { desktopDocsTools } from '../desktop/docs-tool.js'
 import { desktopSetupRunAllowed, desktopSetupTools } from '../desktop/setup/service.js'
 import { desktopBrowserExportPublisher } from '../desktop/isolated-screen/export-client.js'
 import { isolatedScreenTools } from '../desktop/isolated-screen/tools.js'
@@ -116,6 +117,7 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
         if (!ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'toolInstall')) Object.assign(tools, readDesktopToolInstall()?.tools(ctx) ?? {})
         Object.assign(tools, desktopSelfMcpTools(ctx))
         Object.assign(tools, desktopWebSearchTools(ctx, { search: desktopWebSearch }))
+        Object.assign(tools, desktopDocsTools(ctx))
         const triggers = readDesktopTriggerTools()
         if (triggers && hasDesktopToolGrant(ctx.agent.config, 'trigger') && !ctx.agent.config.ephemeral) Object.assign(tools, triggers.tools(ctx.agent.id, ctx))
         const calls = readDesktopCoworkerCallRuntime()

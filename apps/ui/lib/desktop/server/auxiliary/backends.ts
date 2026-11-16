@@ -32,6 +32,24 @@ export function desktopAuxiliaryBackends(store: ReturnType<typeof desktopAuxilia
         const parsed = braveReply.parse(await json(response, signal, 2_000_000))
         return (parsed.web?.results ?? []).map(({ title, url, description }) => ({ title, url, snippet: description }))
     }
+    // No key: the owner turned this on in Settings. The query leaves the Mac for Keenable.
+    async function searchKeenable(input: DesktopWebSearchInput, parent: AbortSignal) {
+        const signal = AbortSignal.any([parent, AbortSignal.timeout(10_000)])
+        const response = await fetcher('https://api.keenable.ai/v1/search/public', {
+            method: 'POST',
+            headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Keenable-Title': 'Rerun' },
+            body: JSON.stringify({ query: input.query, max_results: input.maxResults, snippet_max_length: 400 }), signal, redirect: 'error',
+        })
+        const parsed = keirolabsReply.parse(await json(response, signal, 2_000_000))
+        return (parsed.results ?? []).flatMap(({ title, url, snippet }) => url ? [{ title, url, snippet: snippet?.replace(/\s+/g, ' ').trim() }] : [])
+    }
+    async function transcribeElevenLabs(audio: Uint8Array, format: string, key: string, signal: AbortSignal) {
+        const form = new FormData()
+        form.set('model_id', 'scribe_v1')
+        form.set('file', new Blob([audio as Uint8Array<ArrayBuffer>]), `recording.${format}`)
+        const response = await fetcher('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: form, signal, redirect: 'error' })
+        return z.object({ text: z.string().max(32_768) }).parse(await json(response, signal, 2_000_000)).text
+    }
     async function searchKeirolabs(input: DesktopWebSearchInput, key: string, parent: AbortSignal) {
         const signal = AbortSignal.any([parent, AbortSignal.timeout(10_000)])
         const response = await fetcher('https://api.keirolabs.cloud/api/v2/search/lite', {
@@ -56,12 +74,20 @@ export function desktopAuxiliaryBackends(store: ReturnType<typeof desktopAuxilia
         },
         async transcribe(audio: Uint8Array, format: string, signal: AbortSignal) {
             if (!audio.length || audio.length > 8 * 1024 * 1024 || !['webm', 'ogg', 'wav', 'mp3', 'mp4', 'm4a'].includes(format)) throw new Error('This recording is unavailable.')
-            const current = await configured('transcription')
+            const current = await store.readTranscription()
+            if (!current.key) throw new Error('This tool service is not configured or has changed.')
             signal.throwIfAborted()
-            const response = await fetcher('https://openrouter.ai/api/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${current.key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'openai/whisper-large-v3-turbo', input_audio: { data: Buffer.from(audio).toString('base64'), format }, provider: { order: ['groq'], allow_fallbacks: true } }), signal, redirect: 'error' })
-            const parsed = z.object({ text: z.string().max(32_768) }).parse(await json(response, signal, 150_000))
-            await assertCurrent('transcription', current.revision, signal)
-            return parsed.text.trim()
+            let text: string
+            if (current.purpose === 'elevenlabs-transcription') text = await transcribeElevenLabs(audio, format, current.key, signal)
+            else {
+                const response = await fetcher('https://openrouter.ai/api/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${current.key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'openai/whisper-large-v3-turbo', input_audio: { data: Buffer.from(audio).toString('base64'), format }, provider: { order: ['groq'], allow_fallbacks: true } }), signal, redirect: 'error' })
+                text = z.object({ text: z.string().max(32_768) }).parse(await json(response, signal, 150_000)).text
+            }
+            // The key that paid for this must still be the one saved.
+            const after = await store.readTranscription()
+            signal.throwIfAborted()
+            if (after.purpose !== current.purpose || after.revision !== current.revision) throw new Error('This tool service is not configured or has changed.')
+            return text.trim()
         },
         async search(input: DesktopWebSearchInput, generation: string, signal: AbortSignal): Promise<DesktopWebSearchResponse> {
             // Pre-effect revision bind: stale key/config never reaches the provider and is not a provider failure.
@@ -70,7 +96,7 @@ export function desktopAuxiliaryBackends(store: ReturnType<typeof desktopAuxilia
             if (!credential) throw new Error('This tool service is not configured or has changed.')
             signal.throwIfAborted()
             const { provider, key } = credential
-            const results = await (provider === 'brave' ? searchBrave(input, key, signal) : searchKeirolabs(input, key, signal))
+            const results = await (provider === 'brave' ? searchBrave(input, key, signal) : provider === 'keirolabs' ? searchKeirolabs(input, key, signal) : searchKeenable(input, signal))
             if ((await store.readSearch()).generation !== generation) {
                 // The provider may have accepted the request before the settings changed.
                 throw new Error('Search capability changed after the provider request.')

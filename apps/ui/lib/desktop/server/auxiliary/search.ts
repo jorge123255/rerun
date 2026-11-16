@@ -49,8 +49,8 @@ export async function handleDesktopWebSearch(request: Request) {
             },
             adapter: credential ? { generation, search: input => backend.search(input, generation, input.signal) } : null,
             readiness: async () => credential
-                ? { status: 'ready', retryable: false, message: credential.provider === 'brave' ? 'Brave Search key saved.' : 'Keirolabs key saved.' }
-                : { status: 'unconfigured', retryable: false, message: 'Add a Brave Search or Keirolabs key in Settings → Tool services.' },
+                ? { status: 'ready', retryable: false, message: credential.provider === 'brave' ? 'Brave Search key saved.' : credential.provider === 'keirolabs' ? 'Keirolabs key saved.' : 'Keyless search through Keenable is on.' }
+                : { status: 'unconfigured', retryable: false, message: 'Add a Brave Search or Keirolabs key, or turn on keyless search, in Settings → Tool services.' },
             outcomes: desktopSearchOutcomes(db, localOwner),
         })
         return Response.json(await service.search(body.identity, body.input, signal), { headers })

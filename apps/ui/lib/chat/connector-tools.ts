@@ -1,3 +1,4 @@
+import { desktopConnectorInnerCalls } from '@rerun/contracts'
 import { stripBridgePrefix } from '@/lib/chat/bridge-name'
 import type { CustomMcpServer, InstalledService } from '@/lib/services/types'
 
@@ -67,11 +68,20 @@ export function humanizeToolSegment(segment: string): string {
 
 // Null means "not a connector tool": the caller falls back to getToolMeta, so anything unmapped
 // keeps today's rendering untouched.
-export function resolveConnectorTool(raw: string, map: ConnectorMap, isBuiltin?: (name: string) => boolean): { label: string; service: ConnectorService } | null {
+// A connector tool that runs other tools by name (Composio's multi-execute) is named after what
+// it ran: "Gmail Send Email", and "+2" when it ran more than one.
+function ranLabel(tool: string, input: unknown): string | null {
+    const { tools } = desktopConnectorInnerCalls(tool, input)
+    if (!tools.length) return null
+    const first = humanizeToolSegment(tools[0]!.toLowerCase())
+    return tools.length > 1 ? `${first} +${tools.length - 1}` : first
+}
+
+export function resolveConnectorTool(raw: string, map: ConnectorMap, isBuiltin?: (name: string) => boolean, input?: unknown): { label: string; service: ConnectorService } | null {
     const parsed = parseMcpToolName(raw, map.keys(), isBuiltin)
     if (!parsed) return null
     const service = map.get(parsed.server)
     if (!service) return null
-    const tool = humanizeToolSegment(parsed.tool)
+    const tool = ranLabel(parsed.tool, input) ?? humanizeToolSegment(parsed.tool)
     return { label: service.custom ? `${service.name} · ${tool}` : tool, service }
 }

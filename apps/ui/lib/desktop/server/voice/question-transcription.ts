@@ -6,6 +6,7 @@ import { DesktopHttpError } from '../auth'
 import { desktopAuxiliaryBackends } from '../auxiliary/backends'
 import { desktopAuxiliaryStore } from '../auxiliary/store'
 import { decodeDesktopVoiceAudio, inspectDesktopVoiceBytes } from './bytes'
+import { desktopTranscriptionConfigured } from '@/lib/desktop/auxiliary'
 
 export const desktopQuestionVoiceInputSchema = desktopVoiceUploadSchema.pick({ format: true, durationMs: true, levels: true, audioBase64: true })
     .extend({ questionId: z.string().regex(/^[a-f0-9]{64}$/) })
@@ -19,7 +20,7 @@ export async function transcribeDesktopQuestion(input: z.infer<typeof desktopQue
     const signal = AbortSignal.any([requestSignal, AbortSignal.timeout(30_000)])
     const target = await requirePending(signal)
     const store = desktopAuxiliaryStore(target.db)
-    if (!(await store.list()).some(item => item.purpose === 'transcription' && item.configured)) {
+    if (!desktopTranscriptionConfigured(await store.list())) {
         throw new DesktopHttpError(503, 'Configure voice transcription in Settings to use a voice answer.')
     }
     // Dictation yields editable text. Only the explicit question answer can start a turn.

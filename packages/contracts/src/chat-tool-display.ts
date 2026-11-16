@@ -283,6 +283,9 @@ export function toolHeadline(input: unknown, agentName?: string): string | undef
     if (!args) return undefined
     // A paid_data call says what it looked up, not which capability: the label already names it.
     if (typeof args.capability === 'string' && argsOf(args.params)) return toolHeadline(args.params)
+    // A tool that runs other tools by name: the label names the tool that ran, the detail what it was given.
+    const inner = Array.isArray(args.tools) ? argsOf(args.tools[0]) : undefined
+    if (inner && typeof inner.tool_slug === 'string' && argsOf(inner.arguments)) return toolHeadline(inner.arguments)
     const named = HEADLINE_ARGS.map(name => args[name]).find(isReadable)
     return named ?? (agentName || Object.values(args).find(isReadable))
 }

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { foremanAgentFileCatalogEntries } from './desktop-foreman-agent-files.js'
 
-export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'tableViewWrite', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'download', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate', 'teamRead', 'aiProviders', 'vision', 'notify', 'foremanAgentFilesRead', 'foremanAgentFilesWrite', 'foremanWorkspaceRead'] as const
+export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'tableViewWrite', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'docs', 'download', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate', 'teamRead', 'aiProviders', 'vision', 'notify', 'foremanAgentFilesRead', 'foremanAgentFilesWrite', 'foremanWorkspaceRead'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode', 'images'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -44,7 +44,8 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('sharedFilesWrite', 'Edit shared files', 'Create and edit text and Markdown files in the workspace shared folder. Changes are visible to coworkers with shared-file access.', 'shared_write', 'shared_edit'),
     supported('guestShell', 'Run commands in isolated computer', 'Run shell programs in this coworker’s isolated Linux computer. Commands can change guest files, use its browser profile and network, and install software. This does not grant Mac file or host command access.', 'shell_exec', 'shell_inspect'),
     supported('webFetch', 'Read public web pages', 'Read public HTTP(S) text and HTML pages without cookies. A full copy can be saved when Edit workspace files is enabled.', 'web_fetch'),
-    supported('webSearch', 'Search public web', 'Search with the Brave Search or Keirolabs key in Settings. Separate from native Codex search.', 'web_search'),
+    supported('webSearch', 'Search public web', 'Search with the Brave Search or Keirolabs key in Settings, or without a key when keyless search is on. Separate from native Codex search.', 'web_search'),
+    supported('docs', 'Rerun documentation', 'Answer questions about Rerun from its public documentation. Reads docs.rerun.build only; the question’s words are sent there.', 'search_docs'),
     supported('download', 'Download files', 'Download a public file into this coworker’s Files. The file is not executed or unpacked.', 'download'),
     supported('db', 'Private database', 'Read and change structured records in this coworker’s private database.', 'db_query', 'db_execute', 'db_schema'),
     supported('sharedDb', 'Shared database', 'Read and change workspace shared records.', 'shared_db_query', 'shared_db_execute', 'shared_db_schema'),

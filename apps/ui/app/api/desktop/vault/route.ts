@@ -39,6 +39,22 @@ export function POST(request: Request) {
             }
             if (receipt) return Response.json(await vault.list(), { headers })
         }
+        // A replaced key is dialed the same way. The old key cannot be put back (it is never read
+        // out), so the new one stays saved and the person is told now that the app refused it.
+        if (parsed.data.operation === 'replace-server-bearer' || parsed.data.operation === 'replace-server-header') {
+            const id = parsed.data.id
+            const replaced = listing.entries.find(entry => entry.id === id)
+            if (replaced && 'kind' in replaced && replaced.kind === 'mcp' && replaced.catalog) {
+                const service = await getDesktopRemoteMcpService(runtime)
+                const receipt = await service.checkVaultCatalogHealth(replaced.id, replaced.revision, AbortSignal.any([request.signal, AbortSignal.timeout(15_000)])).catch(() => null)
+                guard()
+                if (receipt?.credentialRejected) {
+                    const name = replaced.catalog.name
+                    throw new DesktopHttpError(400, `${name} refused the new key. It is saved, but ${name} will not work until you replace it with the right one.`)
+                }
+                if (receipt) return Response.json(await vault.list(), { headers })
+            }
+        }
         return Response.json(listing, { headers })
     })
 }

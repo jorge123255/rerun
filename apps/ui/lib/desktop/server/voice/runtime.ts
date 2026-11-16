@@ -15,6 +15,7 @@ import { DesktopHttpError } from '../auth'
 import { createDesktopVoiceService } from './service'
 import { desktopVoiceStore, ensureDesktopVoiceSchema } from './store'
 import { desktopVoiceBlobs, desktopVoiceDispatches } from './storage'
+import { desktopTranscriptionConfigured } from '@/lib/desktop/auxiliary'
 
 export type VoiceBackendPorts = {
     agent: (engineAgentId: string, signal: AbortSignal) => Promise<{ id: string; enabled: boolean }>
@@ -40,7 +41,7 @@ export async function createDesktopVoiceRuntime(runtime: DesktopRuntime, db: Cli
         run: (agent, run, signal) => getRun(conn, agent, run, { signal }),
         startChat: startDesktopChat,
         isCurrent: () => true,
-        transcriptionAvailable: async () => (await auxiliary.list()).some(value => value.purpose === 'transcription' && value.configured),
+        transcriptionAvailable: async () => desktopTranscriptionConfigured(await auxiliary.list()),
         transcribe: (bytes, format, signal) => backends.transcribe(bytes, format, signal),
         ...overrides,
     }
