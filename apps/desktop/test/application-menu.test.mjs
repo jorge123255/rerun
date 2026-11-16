@@ -170,3 +170,20 @@ test('the Mac full-screen subscription reports booleans and never overwrites a n
     stop()
     assert.equal(ipcRenderer.listenerCount(channel), 0)
 })
+
+test('the way back to the local workspace has a shortcut and sits on the Dock menu', () => {
+    let menu, dockMenu
+    const Menu = { buildFromTemplate: template => template, setApplicationMenu: value => { menu = value } }
+    const calls = []
+    installMacApplicationMenu({
+        Menu, dock: { setMenu: value => { dockMenu = value } }, appName: 'Rerun', settingsWindow: () => null, isDesktopPage: () => false,
+        openDocumentation() {}, openFind() {}, openNewWindow() {}, openHubPicker() {}, reloadWindow() {},
+        openLocalWorkspace: () => calls.push('local'), openCloud: () => calls.push('cloud'),
+    })
+    const file = menu.find(item => item.role === 'fileMenu').submenu
+    assert.equal(file.find(item => item.id === 'rerun-open-local').accelerator, 'CmdOrCtrl+Shift+L')
+    assert.equal(file.find(item => item.id === 'rerun-open-cloud').accelerator, 'CmdOrCtrl+Shift+U')
+    assert.deepEqual(dockMenu.map(item => item.id), ['rerun-dock-open-local', 'rerun-dock-open-cloud'])
+    dockMenu[0].click(); dockMenu[1].click()
+    assert.deepEqual(calls, ['local', 'cloud'])
+})
