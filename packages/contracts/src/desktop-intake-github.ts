@@ -142,7 +142,7 @@ export type DesktopGithubRepositoryData = z.infer<typeof desktopGithubRepository
 export const DESKTOP_GITHUB_READ_FAILURES = ['not_found', 'token_refused', 'rate_limited', 'timeout', 'failed'] as const
 export type DesktopGithubReadFailure = (typeof DESKTOP_GITHUB_READ_FAILURES)[number]
 export const DESKTOP_GITHUB_READ_FAILURE_COPY: Record<DesktopGithubReadFailure, string> = {
-    not_found: 'Private or not found. For a private repository, add a read-only GitHub token in Settings, Tool services, and make sure it includes this repository.',
+    not_found: 'Private or not found. For a private repository, sign in to GitHub in the Vault with an account that can see it, or add a read-only GitHub token in Settings, Tool services.',
     token_refused: 'GitHub refused the saved token. Replace it in Settings, Tool services.',
     rate_limited: 'GitHub is limiting reads from this network right now. Try again later.',
     timeout: 'GitHub took too long to answer. Try again.',

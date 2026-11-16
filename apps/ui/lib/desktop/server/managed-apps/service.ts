@@ -5,7 +5,7 @@ import type { DesktopManagedAppsAction, DesktopManagedAppsResult, DesktopManaged
 import bundledCatalog from '../services/catalog/bundled-services.json'
 import composioApps from './composio-apps.json'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
-import { COMPOSIO_API, managedAppsClient, managedAppsKeyKind, ManagedAppsError, type ManagedAppsConnect, type ManagedAppsFetch, type ManagedAppsKeyKind } from './client'
+import { COMPOSIO_API, managedAppsClient, managedAppsKeyKind, ManagedAppsError, type ManagedAppsConnect, type ManagedAppsFetch, type ManagedAppsKeyKind, type ManagedProxyAnswer } from './client'
 
 type CatalogApp = { slug: string; name: string; summary: string; toolkit: string; allowedTools: readonly string[] }
 type BundledService = { slug?: string; name?: string; summary?: string; icon?: string | null; manifest?: { authMethods?: { kind?: string; composio?: { toolkit?: string; allowedTools?: string[] } }[] } }
@@ -329,5 +329,24 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
     async function forgetConnect() {
         await db.batch(["DELETE FROM desktop_managed_app_attachments WHERE account_id IN (SELECT id FROM desktop_managed_app_accounts WHERE user_id='')", "DELETE FROM desktop_managed_app_accounts WHERE user_id=''"], 'write')
     }
-    return { view, act, tools, forgetConnect }
+    /**
+     * The GitHub sign-in the Vault holds at Composio, as a reader of GitHub's API: one GET under
+     * /repos/ at a time, answered with GitHub's own status and data. Null when no GitHub account is
+     * signed in. It is for the app's own reading of the owner's projects: no coworker and no model
+     * is handed it, and the Composio key stays in this process.
+     */
+    async function githubReader(): Promise<((path: string, signal: AbortSignal) => Promise<ManagedProxyAnswer>) | null> {
+        const rows = (await accounts()).filter(row => row.toolkit.toLowerCase() === 'github' && row.status === 'active')
+        const guarded = (read: (path: string, signal: AbortSignal) => Promise<ManagedProxyAnswer>) => async (path: string, signal: AbortSignal) => {
+            if (!path.startsWith('/repos/')) throw new ManagedAppsError(400, 'This path cannot be read.')
+            return read(path, signal)
+        }
+        const connect = await connectMode()
+        if (connect) return rows.some(row => row.userId === '') ? guarded((path, signal) => connect.proxyGet('github', path, signal)) : null
+        const row = rows.find(madeHere)
+        if (!row || !await hasKey()) return null
+        const composio = await client()
+        return guarded((path, signal) => composio.proxyGet(row.connectedAccountId, path, signal))
+    }
+    return { view, act, tools, forgetConnect, githubReader }
 }
