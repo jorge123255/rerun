@@ -1,5 +1,5 @@
 import { DESKTOP_PRESET_CONNECTION_ID, DESKTOP_PRESET_LABELS, DESKTOP_PRESET_TIERS, desktopPresetTier, isFreeDesktopOpencodeModel, resolveDesktopPreset, type DesktopPresetTier } from '@rerun/contracts'
-import { PROVIDER_LABELS, connectionReasoningOptions, modelEffortKey, modelLabel, type BoxDefaultModel, type ConnectionSummary, type ModelEfforts, type Provider } from '@rerun/contracts'
+import { DESKTOP_OLLAMA_KINDS, PROVIDER_LABELS, connectionReasoningOptions, desktopOllamaKind, modelEffortKey, modelLabel, type BoxDefaultModel, type ConnectionSummary, type ModelEfforts, type Provider } from '@rerun/contracts'
 import { z } from 'zod'
 import { desktopProvider } from './settings'
 
@@ -19,6 +19,8 @@ export const desktopModelPickSchema = z.object({
 })
 
 const catalogModelSchema = z.object({ id: z.string(), label: z.string() })
+// A custom connection that is one of the named Ollama providers; it picks the logo, nothing else.
+const brandSchema = z.enum(DESKTOP_OLLAMA_KINDS).optional()
 const reasoningSchema = z.object({ effort: z.string(), source: z.enum(['model', 'workspace', 'model-default']) })
 export const desktopModelViewSchema = z.object({
     catalog: z.array(z.object({
@@ -26,6 +28,7 @@ export const desktopModelViewSchema = z.object({
         name: z.string(),
         // A connection's provider, or 'rerun' for the Fast, Balanced and Smart presets.
         provider: z.union([desktopProvider, z.literal('rerun')]),
+        brand: brandSchema,
         models: z.array(catalogModelSchema),
     })),
     workspace: z.object({
@@ -53,6 +56,7 @@ export const desktopModelViewSchema = z.object({
         source: z.enum(['conversation', 'coworker', 'workspace']),
         connectionId: z.string().nullable(),
         provider: z.string().nullable(),
+        brand: brandSchema,
         name: z.string().nullable(),
         model: z.string().nullable(),
         label: z.string(),
@@ -66,7 +70,7 @@ export const desktopModelViewSchema = z.object({
 export type DesktopModelView = z.infer<typeof desktopModelViewSchema>
 
 type CatalogConnection = Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels'
-    | 'codexReasoning' | 'customReasoning' | 'customRevision' | 'subscriptionModels' | 'opencodeModels'> & Partial<Pick<ConnectionSummary, 'credentialRejected'>>
+    | 'codexReasoning' | 'customReasoning' | 'customRevision' | 'subscriptionModels' | 'opencodeModels'> & Partial<Pick<ConnectionSummary, 'credentialRejected' | 'baseUrl'>>
 
 export function desktopConnectionModelLabel(connection: Pick<ConnectionSummary, 'subscriptionModels' | 'opencodeModels'> | null | undefined, id: string | null) {
     const opencode = connection?.opencodeModels?.find(model => model.id === id)
@@ -118,6 +122,11 @@ export function desktopReasoningChoice(connection: CatalogConnection | null, mod
         return { effort: workspace.reasoningEffort, source: 'workspace' }
     }
     return options.default ? { effort: options.default, source: 'model-default' } : undefined
+}
+
+function brandOf(connection: Pick<CatalogConnection, 'provider' | 'baseUrl'> | null | undefined) {
+    const brand = desktopOllamaKind(connection)
+    return brand ? { brand } : {}
 }
 
 function providerName(provider: string | null): string | null {
@@ -196,6 +205,7 @@ export function buildDesktopModelView(input: {
             connectionId: item.id,
             name: item.name,
             provider: desktopProvider.parse(item.provider),
+            ...brandOf(item),
             models: offeredModelIds(item).map(id => ({ id, label: desktopConnectionModelLabel(item, id) })),
         }))],
         workspace,
@@ -205,6 +215,7 @@ export function buildDesktopModelView(input: {
             source,
             connectionId: preset ? DESKTOP_PRESET_CONNECTION_ID : selectedConnection?.id ?? (selected?.connectionId || null),
             provider: preset ? 'rerun' : selectedConnection?.provider ?? coworker?.provider ?? null,
+            ...(!preset && brandOf(selectedConnection)),
             name: preset ? 'Rerun' : selectedConnection?.name ?? providerName(selectedConnection?.provider ?? coworker?.provider ?? null),
             model,
             label: presetLabel(selected) ?? desktopConnectionModelLabel(selectedConnection, model),

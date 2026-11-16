@@ -2,7 +2,7 @@ import { DesktopDefaultPreset } from './DesktopDefaultPreset'
 import { useDesktopLocale } from './DesktopLocale'
 import { flushDesktopWorkspaceMetadata } from '@/lib/desktop/workspaces/metadata'
 import { useMemo, useState, type FormEvent } from 'react'
-import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, PROVIDER_LABELS, connectionReasoningOptions, desktopApiConnectionIdSchema, desktopApiConnectionProviderSchema, hasDesktopApiConnectionPrefix, isDesktopSubscriptionProvider, desktopSubscriptionProvider, type ConnectionsList } from '@rerun/contracts'
+import { CONNECTION_TOKEN_KEY, DEFAULT_CONNECTION_MODELS, DESKTOP_OLLAMA, DESKTOP_OLLAMA_KINDS, PROVIDER_LABELS, connectionReasoningOptions, desktopOllamaKind, desktopApiConnectionIdSchema, desktopApiConnectionProviderSchema, hasDesktopApiConnectionPrefix, isDesktopSubscriptionProvider, desktopSubscriptionProvider, type ConnectionsList } from '@rerun/contracts'
 import { ThemeToggle } from '@rerun/ui/theme'
 import { DesktopLanguageSettings } from './DesktopLanguageSettings'
 import { DesktopCodexLogin } from './DesktopCodexLogin'
@@ -23,6 +23,7 @@ import { desktopProvider, type SettingsChange } from '@/lib/desktop/settings'
 import { customReasoningUnavailable, desktopConnectionModelLabel } from '@/lib/desktop/chat-model'
 import { DesktopOpencodeSettings } from './connections/opencode/DesktopOpencodeSettings'
 import { DesktopCustomProviderPage } from './connections/custom/DesktopCustomProviderPage'
+import { DesktopOllamaSettings, desktopOllamaConnection, useDesktopOllama } from './connections/ollama/DesktopOllamaSettings'
 import { ApiConnectionsPanel } from './connections/api/ApiConnectionsPanel'
 import { createApiConnectionsClient } from '@/lib/desktop/api-connections/client'
 import { desktopApiConnectionUiRoutes } from '@/lib/desktop/api-connections/routes'
@@ -57,7 +58,9 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     const standardConnections = providers.connections.filter(c => !hasDesktopApiConnectionPrefix(c.id) && supports(c.provider))
     const editable = standardConnections.filter(c => !isDesktopSubscriptionProvider(c.provider))
     const defaultSource = editable.find(c => c.id === providers.default?.connectionId)?.id ?? editable[0]?.id ?? 'add:openai'
-    const [source, setSource] = useState(initialConnectionId ?? defaultSource)
+    // An Ollama provider is addressed by its kind, so removing it leaves its own page open.
+    const sourceOf = (id: string) => { const kind = desktopOllamaKind(editable.find(c => c.id === id)); return kind ? 'add:' + kind : id }
+    const [source, setSource] = useState(initialConnectionId ?? sourceOf(defaultSource))
     const [recoveryId, setRecoveryId] = useState(initialConnectionId)
     const [key, setKey] = useState('')
     const [name, setName] = useState(workspaceName)
@@ -70,6 +73,10 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
     const recoveryNamed = recovery && desktopApiConnectionIdSchema.safeParse(recovery.id).success
         && desktopApiConnectionProviderSchema.safeParse(recovery.provider).success ? recovery : undefined
     const current = editable.find(c => c.id === source)
+    // Ollama (this Mac) and Ollama Cloud are named providers of their own, not custom endpoints.
+    const ollamaKind = workspaceId && !recoveryId ? DESKTOP_OLLAMA_KINDS.find(kind => source === 'add:' + kind) ?? null : null
+    const ollamaConnection = ollamaKind ? desktopOllamaConnection(editable, ollamaKind) : undefined
+    const ollama = useDesktopOllama({ workspaceId, connections: editable, defaultModel: providers.default, onConnectionsChanged })
     const provider = current ? desktopProvider.parse(current.provider) : desktopProvider.safeParse(source.replace(/^add:/, '')).data ?? 'openai'
     const missing = desktopProvider.options.filter(p => supports(p) && p !== 'custom' && (p !== 'opencode' || !!workspaceId) && !isDesktopSubscriptionProvider(p) && !editable.some(c => c.provider === p))
     const subscriptions = desktopSubscriptionProvider.options.filter(p => supports(p))
@@ -168,15 +175,22 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                         </div> : <p role="status" className="text-sm text-muted-foreground">Named API-key connections are unavailable until this workspace identity is confirmed.</p>)}
                         {(!recoveryId || recovery && !recoveringNamed && !recoverySubscription) && <div className="space-y-4 rounded-xl border p-4">
                             <label htmlFor="desktop-provider" className="font-semibold">Provider connection</label>
-                            <select id="desktop-provider" className={selectClass} value={connection?.id ?? 'add:' + provider} onChange={e => {
-                                setRecoveryId(null); setSource(e.target.value); setKey(''); setNotice(''); setError('')
+                            <select id="desktop-provider" className={selectClass} value={ollamaKind ? ollamaConnection?.id ?? 'add:' + ollamaKind : connection?.id ?? 'add:' + provider} onChange={e => {
+                                setRecoveryId(null); setSource(sourceOf(e.target.value)); setKey(''); setNotice(''); setError('')
                             }}>
                                 {editable.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                {workspaceId && DESKTOP_OLLAMA_KINDS.filter(kind => !desktopOllamaConnection(editable, kind)).map(kind => <option key={kind} value={'add:' + kind}>Connect {DESKTOP_OLLAMA[kind].label}</option>)}
                                 {workspaceId && <option value="add:custom">Add custom endpoint</option>}
                                 {missing.map(p => <option key={p} value={'add:' + p}>Connect {p === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[p]}</option>)}
                                 {/* Subscriptions signed in on this Mac sit with the other providers. */}
                                 {subscriptions.map(p => <option key={p} value={'add:' + p}>{subscriptionConnected(p) ? PROVIDER_LABELS[p] : `Connect ${PROVIDER_LABELS[p]}`}</option>)}
                             </select>
+                            {ollamaKind ? <>
+                                <div className="flex items-center gap-2 text-sm"><ProviderIcon provider={ollamaKind} className="size-5" /><strong>{DESKTOP_OLLAMA[ollamaKind].label}</strong>
+                                    {ollamaKind === 'ollama-cloud' && <span className="text-muted-foreground">{ollamaConnection ? 'Key saved' : 'No key saved'}</span>}
+                                </div>
+                                <DesktopOllamaSettings key={ollamaKind} kind={ollamaKind} connected={!!ollamaConnection} ollama={ollama} />
+                            </> : <>
                             <div className="flex items-center gap-2 text-sm"><ProviderIcon provider={provider} className="size-5" /><strong>{provider === 'codex' ? 'ChatGPT (Codex)' : PROVIDER_LABELS[provider]}</strong>
                                 {provider !== 'codex' && provider !== 'claude' && provider !== 'custom' && provider !== 'opencode' && !isDesktopSubscriptionProvider(provider) && <span className="text-muted-foreground">{connection?.credentialRejected ? 'Key rejected' : connection?.connected ? 'Key saved' : 'No key saved'}</span>}
                             </div>
@@ -210,6 +224,7 @@ export function DesktopSettings({ providers, workspaceName, onSave, onProviders,
                                     onCommit={baseUrl => void save({ action: 'endpoint', connectionId: connection.id, baseUrl }, 'Endpoint updated.')} />}
                                 {provider === 'openrouter' && <CustomModelList models={connection.extraModels} reserved={DEFAULT_CONNECTION_MODELS.openrouter} onChange={extras => changeModels(connection.models, extras)} />}
                             </div>}
+                            </>}
                         </div>}
                         {!appStoreBuild && recoverySubscription && <DesktopSubscriptionLogin key={workspaceId ?? 'workspace'}
                             only={recoverySubscription} onConnectionsChanged={onConnectionsChanged} />}

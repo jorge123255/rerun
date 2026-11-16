@@ -125,7 +125,21 @@ function DevinIcon({ className = 'size-3.5' }: IconProps) {
     )
 }
 
+// A plain llama head drawn for this app (ears, face, eyes, muzzle); it is not Ollama's own artwork.
+function OllamaIcon({ className = 'size-3.5' }: IconProps) {
+    return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M7.2 9.2V4.6c0-1.5 2.3-1.5 2.3 0v2.5M16.8 9.2V4.6c0-1.5-2.3-1.5-2.3 0v2.5" />
+            <path d="M9.5 7.1c1.6-.6 3.4-.6 5 0 2.3.9 3.6 3 3.6 5.6V21H5.9v-8.3c0-2.6 1.3-4.7 3.6-5.6Z" />
+            <path d="M9.6 12.3v.4M14.4 12.3v.4" />
+            <path d="M10.2 16.2c0-1 .8-1.7 1.8-1.7s1.8.7 1.8 1.7-.8 1.6-1.8 1.6-1.8-.6-1.8-1.6Z" />
+        </svg>
+    )
+}
+
 const PROVIDER_ICONS: Record<string, (p: IconProps) => JSX.Element> = {
+    ollama: OllamaIcon,
+    'ollama-cloud': OllamaIcon,
     rerun: RerunIcon,
     anthropic: AnthropicIcon,
     claude: ClaudeIcon,

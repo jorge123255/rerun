@@ -53,8 +53,8 @@ export function DesktopForemanModelPill({ ref, view, connections, disabled, savi
             <PopoverTrigger asChild>
                 <Button type="button" variant="ghost" size="sm" disabled={(disabled || saving) && !open} className="min-w-0 max-w-full gap-1 text-xs"
                     aria-label={`${t('foreman.modelPicker.select')} · ${label}${usage ? ` · ${usage.label}` : ''}`}>
-                    {usage ? <UsageRing usage={usage}><ProviderIcon provider={effective.provider} /></UsageRing>
-                        : <ProviderIcon provider={effective.provider} className="size-3.5 shrink-0" />}
+                    {usage ? <UsageRing usage={usage}><ProviderIcon provider={effective.brand ?? effective.provider} /></UsageRing>
+                        : <ProviderIcon provider={effective.brand ?? effective.provider} className="size-3.5 shrink-0" />}
                     <span className="truncate">{pillLabel}</span><ChevronDownIcon aria-hidden className="size-3 shrink-0" />
                 </Button>
             </PopoverTrigger>
@@ -84,7 +84,7 @@ export function DesktopForemanModelPill({ ref, view, connections, disabled, savi
                 {modelGroups.searchable && <div className="px-0.5 pt-1.5"><DesktopModelSearch value={modelGroups.query} onChange={modelGroups.setQuery} /></div>}
                 {modelGroups.query.trim() && modelGroups.groups.length === 0 && <p className="px-2.5 py-2 text-xs text-muted-foreground">No model matches.</p>}
                 {modelGroups.groups.map(({ group, models, open: groupOpen }) => <div key={group.connectionId} className="pt-1">
-                    <DesktopModelGroupHeader name={group.name} provider={group.provider} count={models.length} open={groupOpen} searching={!!modelGroups.query.trim()}
+                    <DesktopModelGroupHeader name={group.name} provider={group.provider} brand={group.brand} count={models.length} open={groupOpen} searching={!!modelGroups.query.trim()}
                         onToggle={() => modelGroups.toggle(group.connectionId, groupOpen)} />
                     {groupOpen && models.map(model => {
                         const chosen = conversation?.connectionId === group.connectionId && conversation.model === model.id
