@@ -18,6 +18,7 @@ import { desktopMicrophonePermissions } from './media-permissions.mjs'
 import { createNativeNotifications, hubNotificationPayload } from './notifications.mjs'
 import { QUICK_ASK_SHORTCUT } from './quick-ask-window.mjs'
 import { attachDesktopContextMenu, externalDesktopLink } from './window-context-menu.mjs'
+import { attachLocalSwitch } from './connected-hub-local-switch.mjs'
 
 const pickerPage = new URL('./connected-hub.html', import.meta.url)
 const offlinePage = new URL('./connected-hub-offline.html', import.meta.url)
@@ -28,7 +29,7 @@ const appearanceOf = value => value === 'light' || value === 'dark' ? value : nu
 const backgroundFor = appearance => appearance === 'light' ? '#fafafa' : '#101214'
 const opaqueColor = value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)
 
-export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
+export function createConnectedHubs({ app, BrowserWindow, WebContentsView, openLocalWorkspace, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
     updates, canRestartForUpdate, available, openFind, closeFind, setUnread, desktopSettings, changeDesktopSettings, setLanguage, language, onConnect,
     systemAppearance, localAppearance }) {
     const file = resolve(dataRoot, 'connected-hub.json')
@@ -270,6 +271,8 @@ export function createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notif
             // Keep the connected board's activity and unread updates running while it is hidden.
             webPreferences: { ...preferences(desktopSession), backgroundThrottling: !primary } })
         const contents = window.webContents
+        // The cloud page has no control of ours: the way back to this Mac's workspace is laid over it.
+        if (openLocalWorkspace) attachLocalSwitch({ WebContentsView, window, label: shellText(language(origin))('hub.thisMac'), onOpen: () => { if (available()) openLocalWorkspace() } })
         usedSessions.add(desktopSession)
         downloads.track(desktopSession)
         const userAgent = contents.getUserAgent().replace(/ Electron\/\S+/, '') + ` RerunDesktop/${version} (mac; dev)`

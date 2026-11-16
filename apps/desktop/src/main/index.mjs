@@ -402,7 +402,7 @@ async function launch() {
         shellLanguage = await loadShellLanguage({ dataRoot,
             systemLanguages: [...app.getPreferredSystemLanguages(), app.getLocale()], currentScope: currentLanguageScope,
             onChange: () => { refreshApplicationMenu(); menuBar?.refresh() } })
-        connectedHubs = createConnectedHubs({ app, BrowserWindow, Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
+        connectedHubs = createConnectedHubs({ app, BrowserWindow, WebContentsView, openLocalWorkspace: () => selectLocalWorkspace(), Menu, clipboard, Notification, ipcMain, session, shell, dialog, screen, dataRoot, windowPlacements,
             updates: macUpdates, canRestartForUpdate: () => !transitioning && !changingBoards.size,
             available: () => !quitting, openFind: candidate => windowFind.open(candidate), closeFind: candidate => windowFind.close(candidate),
             setUnread: count => { hubUnread = count; publishMacUnread() }, desktopSettings, changeDesktopSettings,

@@ -48,6 +48,9 @@
             "docs": "Documentación"
         }
     },
+    "hub": {
+        "thisMac": "Este Mac"
+    },
     "tray": {
         "open": "Abrir {name}",
         "quickAsk": "Pregunta rápida",
