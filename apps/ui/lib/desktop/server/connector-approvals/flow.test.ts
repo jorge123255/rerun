@@ -60,7 +60,7 @@ test('a held connector call reaches the connector only in a later run, after the
         expect(card).toMatchObject({ tool: 'mail_send_email', kind: 'send' })
 
         // Calling again before an answer changes nothing.
-        expect((await run('run-2', 'mail_send_email', mail)).content[0]!.text).toMatch(/still waiting/)
+        expect((await run('run-2', 'mail_send_email', mail)).content[0]!.text).toMatch(/already waiting/)
         expect(sent).toEqual([])
 
         // Allowed once: the next run's identical call reaches the connector, exactly once.

@@ -1530,7 +1530,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     if (active && sessionId) {
         // Connector actions that ask first. The answer goes back to the coworker as the next message.
         addRequest(`connector-approvals:${sessionId}`,
-            <DesktopConnectorApprovals sessionId={sessionId} generating={generating || stopping} disabled={draft.quitting || inactive || !ready}
+            <DesktopConnectorApprovals sessionId={sessionId} coworkerName={agent.name} generating={generating || stopping} disabled={draft.quitting || inactive || !ready}
                 onAnswered={text => { void sendMessage({ text }, { body: { agentId: agent.id, sessionId } }) }} />)
     }
     const waitingCard = ready && !generating && !stopping && !draft.quitting

@@ -2,15 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-    desktopConnectorApprovalResultSchema, desktopConnectorApprovalViewSchema, desktopConnectorPreviewSchema, toolLabelOf,
-    type DesktopConnectorActionKind, type DesktopConnectorPreview, type DesktopConnectorApprovalAction, type DesktopConnectorApprovalDecision, type DesktopConnectorApprovalView,
+    DESKTOP_BROWSER_PRESS_TOOL, desktopConnectorApprovalResultSchema, desktopConnectorApprovalViewSchema, desktopConnectorPreviewSchema, toolLabelOf,
+    type DesktopApprovalKind, type DesktopConnectorPreview, type DesktopConnectorApprovalAction, type DesktopConnectorApprovalDecision, type DesktopConnectorApprovalView,
 } from '@rerun/contracts'
 import { Button } from '@/components/ui/button'
 import { useDesktopLocale } from '../DesktopLocale'
 
 const KIND = {
-    delete: 'boardUI.askDelete', send: 'boardUI.askSend', share: 'boardUI.askShare', post: 'boardUI.askPost', pay: 'boardUI.askPay', credential: 'boardUI.askCredential',
-} as const satisfies Record<DesktopConnectorActionKind, string>
+    delete: 'boardUI.askDelete', send: 'boardUI.askSend', share: 'boardUI.askShare', post: 'boardUI.askPost', pay: 'boardUI.askPay', credential: 'boardUI.askCredential', press: 'boardUI.askPressAny',
+} as const satisfies Record<DesktopApprovalKind, string>
 const ANSWERS = [
     ['once', 'boardUI.askOnce'], ['conversation', 'boardUI.askConversation'], ['always', 'boardUI.askAlways'], ['deny', 'boardUI.askDeny'],
 ] as const satisfies readonly (readonly [DesktopConnectorApprovalDecision, string])[]
@@ -21,9 +21,14 @@ export const CONNECTOR_APPROVALS_CHANGED = 'rerun:connector-approvals-changed'
 export const announceConnectorApprovalsChanged = () => { window.dispatchEvent(new Event(CONNECTOR_APPROVALS_CHANGED)) }
 
 /** What the coworker is told once the person has answered. It is a chat message, so it stays in English like the rest of the run. */
+// It is also what the person reads as their own message, so it is said in their voice. A decline tells the
+// coworker not to look for another way round (the wording follows CopilotKit/OpenBot's approval outcomes, MIT).
+// A browser press is never named by its label here: the label is page content, and this is a message from the person.
 export function connectorAnswerText(tool: string, decision: DesktopConnectorApprovalDecision): string {
-    const name = toolLabelOf(tool)
-    return decision === 'deny' ? `Declined: ${name}. Do not run it.` : `Allowed: ${name}. Run it now with exactly the same arguments.`
+    const press = tool === DESKTOP_BROWSER_PRESS_TOOL
+    const name = press ? 'the press in the browser you asked about' : toolLabelOf(tool)
+    if (decision === 'deny') return `Declined: ${name}. I decided not to have this done. Do not do it, or anything equivalent, another way; tell me briefly what you did not do.`
+    return press ? `Allowed once: ${name}. Make exactly the same press now. It covers that one press only.` : `Allowed: ${name}. Run it now with exactly the same arguments.`
 }
 
 const HEADERS = [
@@ -106,8 +111,8 @@ function FieldList({ fields }: { fields: readonly (readonly [string, string])[] 
  * reach it. A held action is asked about here; the coworker runs it only after an allow, and is
  * told the answer through `onAnswered`.
  */
-export function DesktopConnectorApprovals({ sessionId, generating, disabled, onAnswered }: {
-    sessionId: string; generating: boolean; disabled: boolean; onAnswered: (text: string) => void
+export function DesktopConnectorApprovals({ sessionId, generating, disabled, onAnswered, coworkerName }: {
+    sessionId: string; generating: boolean; disabled: boolean; onAnswered: (text: string) => void; coworkerName?: string
 }) {
     const { t } = useDesktopLocale()
     const [view, setView] = useState<DesktopConnectorApprovalView>(EMPTY)
@@ -154,15 +159,21 @@ export function DesktopConnectorApprovals({ sessionId, generating, disabled, onA
 
     if (!view.pending.length && !view.rules.length) return null
     const waiting = view.pending[0]
+    // A press in the coworker's browser: the control's own label and the page's host, as the page gave them.
+    const press = waiting?.tool === DESKTOP_BROWSER_PRESS_TOOL ? readPreview(waiting.preview)?.press ?? { label: '', host: '', via: 'click' as const } : null
+    const title = !waiting ? '' : !press ? t('boardUI.askTitle', { tool: toolLabelOf(waiting.tool) })
+        : t(!press.label ? 'boardUI.askPressUnlabelled' : press.via === 'key' ? 'boardUI.askPressKey' : 'boardUI.askPressTitle',
+            { name: coworkerName || t('boardUI.askPressCoworker'), label: press.label, host: press.host || t('boardUI.askPressHere') })
     return (
         <div className="flex w-full flex-col gap-2" data-testid="desktop-connector-approvals">
             {waiting && (
-                <section className="rounded-lg border border-border bg-card p-3 text-sm" aria-label={t('boardUI.askTitle', { tool: toolLabelOf(waiting.tool) })}>
-                    <p className="font-medium text-foreground">{t('boardUI.askTitle', { tool: toolLabelOf(waiting.tool) })}</p>
+                <section className="rounded-lg border border-border bg-card p-3 text-sm" aria-label={title} data-testid={press ? 'desktop-browser-press-approval' : undefined}>
+                    <p className="break-words font-medium text-foreground">{title}</p>
                     <p className="mt-0.5 text-muted-foreground">{t(KIND[waiting.kind])}</p>
-                    <ConnectorPreview preview={waiting.preview} showTool={waiting.tool.includes('+')} />
+                    {press ? <p className="mt-0.5 text-xs text-muted-foreground">{t('boardUI.askPressNote')}</p>
+                        : <ConnectorPreview preview={waiting.preview} showTool={waiting.tool.includes('+')} />}
                     <div className="mt-3 flex flex-wrap gap-2">
-                        {ANSWERS.map(([decision, label]) => (
+                        {ANSWERS.filter(([decision]) => !press || decision === 'once' || decision === 'deny').map(([decision, label]) => (
                             <Button key={decision} type="button" size="sm" variant={decision === 'once' ? 'default' : decision === 'deny' ? 'ghost' : 'outline'}
                                 disabled={busy || disabled || generating} onClick={() => { void send({ action: 'decide', id: waiting.id, decision }) }}>
                                 {t(label)}

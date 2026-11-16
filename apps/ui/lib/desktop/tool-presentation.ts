@@ -1,4 +1,4 @@
-import { desktopRerunToolCatalog, stripBridgePrefix, toolHeadline } from '@rerun/contracts'
+import { desktopRerunToolCatalog, stripBridgePrefix, toolHeadline, desktopDeclinedByPerson, desktopOutcomeForPerson } from '@rerun/contracts'
 
 // The model and engine retain their protocol messages. Chat and Run Details show only
 // public fields of an actual tool result, never a serialization of the transport envelope.
@@ -105,7 +105,11 @@ export function desktopToolPresentation(name: string, rawInput: unknown, rawOutp
             return part.type === 'text' && typeof part.text === 'string' ? [part.text] : []
         })
         if (chunks.length) result.output = text(chunks.join('\n'))
+    } else if (tool === 'computer' && typeof item.reason === 'string' && desktopDeclinedByPerson(item.reason)) {
+        result.output = item.reason
     }
+    // A step the person declined is told to the coworker in words written for it. The person reads the plain version.
+    if (result.output) result.output = desktopOutcomeForPerson(result.output)
     if (reportedError) {
         result.errorText = fileChange ? 'File changes failed.' : text(reportedError)
         if (tool !== 'exec' && tool !== 'shell_exec') delete result.output

@@ -7,7 +7,7 @@ import { desktopConnectorActionKind, desktopConnectorCall } from '@rerun/contrac
 
 vi.mock('server-only', () => ({}))
 const { initializeDesktopRound61 } = await import('../round61-schema')
-const { admitConnectorCall, connectorPreview, decideConnectorApproval, forgetConnectorRule, forgetConnectorRuleOf, listConnectorRules, pendingConnectorApproval, readConnectorApprovals } = await import('./store')
+const { admitBrowserPress, admitConnectorCall, connectorPreview, decideConnectorApproval, forgetConnectorRule, forgetConnectorRuleOf, listConnectorRules, pendingConnectorApproval, readConnectorApprovals } = await import('./store')
 
 let db: Client, dir: string
 beforeEach(async () => {
@@ -62,7 +62,7 @@ describe('a tool that runs other tools is held for what those tools do', () => {
 describe('holding a connector call until the person answers', () => {
     it('asks once, waits, and lets exactly the allowed call through once', async () => {
         expect(await admitConnectorCall(db, call())).toMatch(/did not run.*card/)
-        expect(await admitConnectorCall(db, call())).toMatch(/still waiting/)
+        expect(await admitConnectorCall(db, call())).toMatch(/already waiting/)
         const view = await readConnectorApprovals(db, 'chat-1')
         expect(view.pending).toHaveLength(1)
         expect(view.pending[0]).toMatchObject({ tool: 'gmail_send_email', kind: 'send' })
@@ -207,4 +207,88 @@ it('a sandbox call’s step label is not read as a tool', () => {
     expect(desktopConnectorCall('composio_COMPOSIO_REMOTE_WORKBENCH', true, {
         code_to_execute: 'result, error = run_composio_tool("GMAIL_FETCH_EMAILS", {"query": "in:sent"})', thought: 'Verify the send.', current_step: 'VERIFYING_SEND', session_id: 'cent',
     })).toBeNull()
+})
+
+describe('a press in a coworker’s browser is held like a connector call', () => {
+    const pay = { kind: 'pay' as const, label: 'Pay now', host: 'checkout.example.test', via: 'click' as const }
+    const ask = (press: Parameters<typeof admitBrowserPress>[1]['press'] = pay, sessionId = 'chat-1') => admitBrowserPress(db, { owner: 'coworker-1', sessionId, press })
+    const status = async () => (await db.execute('SELECT status FROM desktop_connector_approval_requests ORDER BY created_at, rowid')).rows.map(row => String(row.status))
+
+    it('holds the press, shows its label and site on the card, and lets exactly one press through after an allow', async () => {
+        const held = await ask()
+        expect(held).toMatch(/Nothing was pressed\. A card asking them is now in this chat\./)
+        // The page's own words are for the person. The coworker is told nothing the page wrote.
+        expect(held).not.toContain('Pay now')
+        expect(held).not.toContain('checkout.example.test')
+        const view = await readConnectorApprovals(db, 'chat-1')
+        expect(view.pending).toHaveLength(1)
+        expect(view.pending[0]).toMatchObject({ tool: 'browser_press', kind: 'pay' })
+        expect(JSON.parse(view.pending[0]!.preview)).toEqual({ v: 1, items: [], press: { label: 'Pay now', host: 'checkout.example.test', via: 'click' } })
+        // Asked again while the card is open: no second card.
+        expect(await ask()).toMatch(/already waiting for the person’s decision/)
+        expect((await readConnectorApprovals(db, 'chat-1')).pending).toHaveLength(1)
+        expect(await decideConnectorApproval(db, 'chat-1', view.pending[0]!.id, 'once')).toEqual({ tool: 'browser_press', kind: 'pay', decision: 'once' })
+        expect(await ask()).toBeNull()
+        // Spent: the next press on the same button asks again.
+        expect(await ask()).toMatch(/A card asking them is now in this chat/)
+        expect(await status()).toEqual(['used', 'pending'])
+    })
+
+    it('tells the coworker a declined press was the person’s decision and not to find another way', async () => {
+        await ask()
+        const id = (await readConnectorApprovals(db, 'chat-1')).pending[0]!.id
+        await decideConnectorApproval(db, 'chat-1', id, 'deny')
+        const told = await ask()
+        expect(told).toBe('The person declined this action when you asked for their approval, so it was not done. This was their decision, not a policy or a boundary. Do not try this action, or anything equivalent, again in this conversation unless the person asks you to in words; tell them you did not do it because they declined.')
+        expect(await status()).toEqual(['refused'])
+    })
+
+    it('uses the same decline sentence for a connector call', async () => {
+        await admitConnectorCall(db, call())
+        const id = (await readConnectorApprovals(db, 'chat-1')).pending[0]!.id
+        await decideConnectorApproval(db, 'chat-1', id, 'deny')
+        expect(await admitConnectorCall(db, call())).toMatch(/This was their decision, not a policy or a boundary\. Do not try this action, or anything equivalent, again/)
+    })
+
+    it('never gives a press a standing answer', async () => {
+        await ask()
+        const id = (await readConnectorApprovals(db, 'chat-1')).pending[0]!.id
+        expect(await decideConnectorApproval(db, 'chat-1', id, 'always')).toBeNull()
+        expect(await decideConnectorApproval(db, 'chat-1', id, 'conversation')).toBeNull()
+        expect(await status()).toEqual(['pending'])
+        // A rule saved under the press's name by any other route is not read either.
+        await db.execute({ sql: "INSERT INTO desktop_connector_approval_rules(id,owner,tool,session_id,created_at) VALUES('r','coworker-1','browser_press','',?)", args: [new Date().toISOString()] })
+        expect(await ask({ ...pay, label: 'Buy' })).toMatch(/A card asking them/)
+    })
+
+    it('binds an allow to the label and the site it was given for', async () => {
+        await ask()
+        const id = (await readConnectorApprovals(db, 'chat-1')).pending[0]!.id
+        await decideConnectorApproval(db, 'chat-1', id, 'once')
+        // Another label, another site or another conversation is another request.
+        expect(await ask({ ...pay, label: 'Pay $900 now' })).toMatch(/A card asking them/)
+        // And the unspent answer for the button that is no longer there is void.
+        expect(await ask()).toMatch(/A card asking them|already waiting/)
+        expect((await status()).filter(value => value === 'allowed' || value === 'used')).toEqual([])
+        expect(await ask({ ...pay, host: 'evil.example.test' })).toMatch(/A card asking them/)
+        expect(await ask(pay, 'chat-2')).toMatch(/A card asking them/)
+    })
+
+    it('keeps a pending press across a restart of the app', async () => {
+        await ask({ kind: 'press', label: '', host: 'canvas.example.test', via: 'click' })
+        db.close()
+        db = createClient({ url: `file:${join(dir, 'app.db')}` })
+        await initializeDesktopRound61(db)
+        const view = await readConnectorApprovals(db, 'chat-1')
+        expect(view.pending).toHaveLength(1)
+        expect(view.pending[0]!.kind).toBe('press')
+        expect(await pendingConnectorApproval(db, 'chat-1')).toMatchObject({ tool: 'browser_press' })
+        expect(await ask({ kind: 'press', label: '', host: 'canvas.example.test', via: 'click' })).toMatch(/already waiting/)
+        await decideConnectorApproval(db, 'chat-1', view.pending[0]!.id, 'once')
+        expect(await ask({ kind: 'press', label: '', host: 'canvas.example.test', via: 'click' })).toBeNull()
+    })
+
+    it('keeps a connector call and a press under different names', async () => {
+        await expect(admitConnectorCall(db, call({ tool: 'browser_press' }))).rejects.toThrow()
+    })
 })

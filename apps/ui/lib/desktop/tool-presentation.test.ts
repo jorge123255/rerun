@@ -3,6 +3,13 @@ import { desktopToolPresentation as show } from './tool-presentation'
 import { desktopRunDetailsView } from './run-details'
 
 describe('public tool activity', () => {
+    it('shows the person the plain version of a step they declined', () => {
+        const told = 'The person declined this action when you asked for their approval, so it was not done. This was their decision, not a policy or a boundary. Do not try this action, or anything equivalent, again in this conversation unless the person asks you to in words; tell them you did not do it because they declined.'
+        expect(show('mcp__mail__send_email', {}, { content: [{ type: 'text', text: told }] }).output).toBe('You declined it.')
+        expect(show('computer', { action: 'left_click' }, { status: 'refused', reason: told }).output).toBe('You declined it.')
+        // Any other refusal of a screen action stays out of the transcript, as before.
+        expect(show('computer', { action: 'left_click' }, { status: 'refused', reason: 'Another run is using the screen.' }).output).toBeUndefined()
+    })
     it('names what a step was given: a sanitized URL for any tool, another argument only for Rerun\u2019s own tools', () => {
         expect(show('browser_navigate', { url: 'https://user:pw@example.org/a?api_key=abc' }, undefined).input?.preview).toBe('https://[redacted]@example.org/a?api_key=[redacted]')
         expect(show('mcp__docs__open', { url: 'https://example.org/doc' }, undefined)).toEqual({ input: { preview: 'https://example.org/doc' } })
