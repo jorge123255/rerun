@@ -38,6 +38,7 @@ export function useForemanVoiceSlot({ target, active, onEngage, onAccepted, rele
     const { controller, lease } = owner
     controllerRef.current = controller
     const view = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot)
+    const spaceHeld = useRef(false)
     useEffect(() => {
         lease.mounted = true
         return () => {
@@ -49,8 +50,14 @@ export function useForemanVoiceSlot({ target, active, onEngage, onAccepted, rele
     useEffect(() => { if (active) void controller.restore(); else void controller.cancel() }, [active, controller])
     usePushToTalk({
         enabled: active && view.restored && !view.pending && ['idle', 'starting', 'listening'].includes(view.phase),
-        onStart: () => { void controller.start() }, onRelease: () => { void controller.release() },
-        onAbort: () => { if (['starting', 'listening'].includes(controller.getSnapshot().phase)) void controller.cancel() },
+        // Space only ends the recording it began: one started with a click on the microphone waits for Stop.
+        onStart: () => { if (controller.getSnapshot().phase !== 'idle') return; spaceHeld.current = true; void controller.start() },
+        onRelease: () => { if (!spaceHeld.current) return; spaceHeld.current = false; void controller.release() },
+        onAbort: () => {
+            if (!spaceHeld.current) return
+            spaceHeld.current = false
+            if (['starting', 'listening'].includes(controller.getSnapshot().phase)) void controller.cancel()
+        },
     })
     useEffect(() => {
         if (!active) return

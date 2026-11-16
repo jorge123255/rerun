@@ -6,7 +6,7 @@ import { ChevronLeft, History, MessageCircle, MessagesSquare, Plus, X } from 'lu
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { TooltipLabeled } from '@/components/ui/tooltip'
-import { createDesktopForemanConversation, listDesktopForemanConversations } from '@/lib/desktop/foreman-client/runtime-client'
+import { listDesktopForemanConversations } from '@/lib/desktop/foreman-client/runtime-client'
 import { messageDayLabel, messageTime } from '@rerun/i18n/format'
 import { cn } from '@/lib/utils'
 import { useDesktopLocale } from '../DesktopLocale'
@@ -15,8 +15,10 @@ type Conversation = Awaited<ReturnType<typeof listDesktopForemanConversations>>[
 /** Where the thread on screen stands: answering, waiting for the person, or at rest. */
 export type DesktopForemanThreadState = 'live' | 'needs' | 'quiet'
 
-// The task « New task » just opened: its panel mounts after this one is gone, and takes the caret.
+// The task a first message just saved: its panel mounts after this one is gone, and takes the caret.
 let newTaskFocus: string | null = null
+/** The conversation about to open keeps the caret in its composer. */
+export function requestDesktopForemanNewTaskFocus(chatId: string | null) { newTaskFocus = chatId }
 /** True once, for the conversation « New task » just opened. */
 export function takeDesktopForemanNewTaskFocus(chatId: string) {
     if (newTaskFocus !== chatId) return false
@@ -29,18 +31,21 @@ export function takeDesktopForemanNewTaskFocus(chatId: string) {
  * One owner for the list, the way into a conversation and « New task », shared by the header's
  * button, the list behind the clock and the crumb under the tabs.
  */
-export function useDesktopForemanConversations({ chat, thread = false, emptyThread = false, onSelect, onFocusComposer }: {
+export function useDesktopForemanConversations({ chat, thread = false, emptyThread = false, draft = false, onSelect, onNewTask, onFocusComposer }: {
     chat: DesktopForemanChatRef
     // The conversation on screen is a thread rather than General.
     thread?: boolean
     // That thread has no message yet: « New task » returns to it rather than opening another.
     emptyThread?: boolean
+    // The thread on screen is a new task nobody sent a message in: it is not saved, and has no row of its own on the server.
+    draft?: boolean
     onSelect?: (chat: DesktopForemanChatRef | null) => Promise<void>
+    // Opens the unsaved new task. Nothing is created until its first message is sent.
+    onNewTask?: () => void
     onFocusComposer?: () => void
 }) {
     const { t } = useDesktopLocale()
     const lifetime = useRef<AbortController | null>(null)
-    const newRequest = useRef<string | null>(null)
     const [busy, setBusy] = useState(false)
     const [conversations, setConversations] = useState<Conversation[]>([])
     const [error, setError] = useState<string | null>(null)
@@ -61,37 +66,33 @@ export function useDesktopForemanConversations({ chat, thread = false, emptyThre
         const controller = new AbortController()
         lifetime.current = controller
         // General needs no list until the clock opens. A thread reads it once, for its own title.
-        if (thread && enabled) void loadRef.current()
+        if (thread && !draft && enabled) void loadRef.current()
         return () => controller.abort()
-    }, [thread, enabled, chat.chatId])
+    }, [thread, draft, enabled, chat.chatId])
 
-    async function open(target?: DesktopForemanChatRef | null) {
+    async function open(target: DesktopForemanChatRef | null) {
         const lifetimeSignal = lifetime.current?.signal
         if (!onSelect || !lifetimeSignal || lifetimeSignal.aborted || busy) return
-        if (target === undefined && thread && emptyThread) { onFocusComposer?.(); return }
         setBusy(true)
         setError(null)
-        try {
-            const next = target === undefined
-                ? await createDesktopForemanConversation(chat.workspaceId, newRequest.current ??= crypto.randomUUID(),
-                    AbortSignal.any([lifetimeSignal, AbortSignal.timeout(10_000)]))
-                : target
-            if (lifetimeSignal.aborted) return
-            if (target === undefined && next) newTaskFocus = next.chatId
-            await onSelect(next)
-            if (target === undefined) newRequest.current = null
-        } catch {
-            if (target === undefined) newTaskFocus = null
-            if (!lifetimeSignal.aborted) setError(t('foreman.conversationUnavailable'))
-        }
+        try { await onSelect(target) }
+        catch { if (!lifetimeSignal.aborted) setError(t('foreman.conversationUnavailable')) }
         finally { if (!lifetimeSignal.aborted) setBusy(false) }
     }
+    // « New task » saves nothing: it opens a draft, or goes back to the composer of the empty task already on screen.
+    function newTask() {
+        if (!onSelect || busy) return
+        if (thread && emptyThread) onFocusComposer?.()
+        else onNewTask?.()
+    }
 
-    const threads = conversations.filter(row => !row.home)
+    // A task nobody ever wrote in (left behind before « New task » became a draft) stays out of the
+    // list unless it is the one on screen. Nothing is deleted.
+    const threads = conversations.filter(row => !row.home && (!!row.updatedAt || row.title !== null || row.chat.chatId === chat.chatId))
     return {
-        chat, thread, enabled, busy, error, threads, load,
+        chat, thread, draft, enabled, busy, error, threads, load, focusComposer: () => onFocusComposer?.(),
         title: threads.find(row => row.chat.chatId === chat.chatId)?.title ?? null,
-        newTask: () => open(),
+        newTask: async () => newTask(),
         openGeneral: () => open(null),
         openThread: (target: DesktopForemanChatRef) => target.chatId === chat.chatId ? Promise.resolve() : open(target),
     }
@@ -142,7 +143,7 @@ export function DesktopForemanHistory({ conversations, waiting = false, disabled
 }) {
     const { t, language: { locale } } = useDesktopLocale()
     const [open, setOpen] = useState(false)
-    const { chat, thread, threads, busy } = conversations
+    const { chat, thread, draft, threads, busy } = conversations
     const pick = (action: () => Promise<void>) => () => { setOpen(false); void action() }
     // A thread nobody wrote in yet has no day: it stays first, right under General.
     const undated = threads.filter(row => !row.updatedAt)
@@ -199,12 +200,18 @@ export function DesktopForemanHistory({ conversations, waiting = false, disabled
                             <span className="min-w-0 flex-1 truncate">{t('foreman.mainConversation')}</span>
                             {!thread && waiting && <span aria-hidden data-foreman-waiting className="size-1.5 shrink-0 rounded-full bg-amber-400" />}
                         </button>
+                        {/* The unsaved new task is the one on screen: it has a row while it is open, and none once it is left. */}
+                        {draft && <button type="button" data-foreman-history-row data-foreman-history-draft aria-current="true" disabled={busy}
+                            onClick={() => { setOpen(false); conversations.focusComposer() }}
+                            className="flex w-full items-center gap-2.5 rounded-lg bg-muted/60 px-2.5 py-2 text-left transition-colors disabled:opacity-50">
+                            <span className="min-w-0 flex-1 truncate text-sm font-medium">{t('foreman.newConversation')}</span>
+                        </button>}
                         {undated.map(rowOf)}
                         {days.map(({ day, rows }) => <div key={day} className="pb-1">
                             <p data-foreman-history-day className="px-2.5 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">{day}</p>
                             {rows.map(rowOf)}
                         </div>)}
-                        {threads.length === 0 && <p className="px-3 py-6 text-center text-xs text-muted-foreground">{t('foreman.noThreads')}</p>}
+                        {threads.length === 0 && !draft && <p className="px-3 py-6 text-center text-xs text-muted-foreground">{t('foreman.noThreads')}</p>}
                     </div>
                 </div>
             </PopoverContent>

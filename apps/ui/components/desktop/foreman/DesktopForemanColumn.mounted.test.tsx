@@ -234,3 +234,86 @@ it('prefills a team action with the selected coworker and protects the existing 
         draft: 'Ask @Ada QA to ', draftCoworkerMentions: [{ targetId: 'active-ada', token: '@Ada QA', start: 4, end: 11 }],
     }))
 })
+
+it('puts a new task\'s first message in the composer and sends it once, through the composer\'s own path', async () => {
+    const send = vi.fn(async () => true)
+    ports.conversation.sendMessage = send
+    vi.mocked(ports.persistence.load).mockResolvedValue(null)
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    const first = { id: chat.chatId, text: 'Plan the launch', send: true }
+    const render = (firstSend: typeof first) => act(async () => root!.render(<DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]} agentNameOf={id => id} separateConversation firstSend={firstSend} />))
+    await render(first)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    expect(send).toHaveBeenCalledExactlyOnceWith('Plan the launch')
+    // Accepted: the composer is empty again.
+    expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!.value).toBe('')
+    await render({ ...first })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    expect(send).toHaveBeenCalledOnce()
+})
+
+it('keeps a first message that could not be sent in the composer, with the reason', async () => {
+    ports.conversation.sendMessage = vi.fn(async () => { throw new Error('The saved model is unavailable.') })
+    vi.mocked(ports.persistence.load).mockResolvedValue(null)
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]} agentNameOf={id => id} separateConversation
+        firstSend={{ id: chat.chatId, text: 'Plan the launch', send: true }} />))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!.value).toBe('Plan the launch')
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('The saved model is unavailable.')
+})
+
+it('only fills the composer when the first message is held back', async () => {
+    const send = vi.fn(async () => true)
+    ports.conversation.sendMessage = send
+    vi.mocked(ports.persistence.load).mockResolvedValue(null)
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopForemanColumn chat={chat} ports={ports} live={null} messages={[]} agentNameOf={id => id} separateConversation
+        firstSend={{ id: chat.chatId, text: 'Plan the launch', send: false }} />))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    expect(document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!.value).toBe('Plan the launch')
+    expect(send).not.toHaveBeenCalled()
+})
+
+it('runs an unsaved new task in the real column: the welcome and composer show, typing saves nothing, and Send creates the conversation', async () => {
+    const { DesktopForemanDraftTask } = await import('./DesktopForemanDraftTask')
+    const { createDesktopForemanDraftTask, takeDesktopForemanFirstSend } = await import('@/lib/desktop/foreman-client/draft-task')
+    const requests: { url: string; method: string; body: unknown }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        requests.push({ url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : null })
+        if (url === '/api/desktop/foreman/conversations' && init?.method === 'POST') {
+            const body = JSON.parse(String(init.body)) as { requestId: string }
+            return Response.json({ chat: { workspaceId: '1', chatId: `fmc_${body.requestId}` } })
+        }
+        return Response.json({ conversations: [] })
+    }))
+    const draft = createDesktopForemanDraftTask('1')
+    const onSelect = vi.fn(async () => {}), onDiscard = vi.fn(), onClose = vi.fn()
+    const team = [{ id: 'a1', name: 'Pipeline QA' }] as unknown as ComponentProps<typeof DesktopForemanDraftTask>['team']
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopForemanDraftTask draft={draft} base={chat} target={null} onDiscard={onDiscard} onSelectConversation={onSelect}
+        controlledOpen team={team} onClose={onClose} onOpenCoworker={vi.fn()} onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()} agentNameOf={id => id} />))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    const composer = document.querySelector<HTMLTextAreaElement>('[data-desktop-foreman-composer]')!
+    expect(composer.disabled).toBe(false)
+    expect(document.activeElement).toBe(composer)
+    // No attachment picker, no microphone: they need the saved conversation.
+    expect(document.querySelector('[data-voice-view], [data-foreman-voice-controls], input[type="file"]')).toBeNull()
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(composer, 'Plan the launch')
+        composer.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    expect(requests).toEqual([])
+    await click('Send draft')
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    expect(requests).toEqual([{ url: '/api/desktop/foreman/conversations', method: 'POST', body: { workspaceId: '1', requestId: draft.requestId } }])
+    const task = { workspaceId: '1', chatId: `fmc_${draft.requestId}` }
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(task)
+    expect(takeDesktopForemanFirstSend(task.chatId)).toEqual({ chatId: task.chatId, text: 'Plan the launch', coworkerMentions: undefined, model: null })
+    expect(onDiscard).not.toHaveBeenCalled()
+    // Closing the column drops the draft before the panel closes.
+    await click('Close frame')
+    expect(onDiscard).toHaveBeenCalledOnce()
+    expect(onClose).toHaveBeenCalledOnce()
+})

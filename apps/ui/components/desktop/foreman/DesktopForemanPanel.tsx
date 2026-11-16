@@ -30,6 +30,9 @@ import { saveDesktopModelEffort } from '../DesktopModelEffort'
 import { DesktopForemanModelPill, type DesktopForemanModelPillHandle } from './DesktopForemanModelPill'
 import { DesktopForemanContext } from './DesktopForemanContext'
 import { DesktopForemanHistory, DesktopForemanNewTask, DesktopForemanThreadCrumb, takeDesktopForemanNewTaskFocus, useDesktopForemanConversations } from './DesktopForemanConversations'
+import { createDesktopForemanDraftTask, takeDesktopForemanFirstSend, type DesktopForemanDraftTask as DraftTask } from '@/lib/desktop/foreman-client/draft-task'
+import { DesktopForemanDraftTask } from './DesktopForemanDraftTask'
+import type { DesktopForemanColumnProps } from './DesktopForemanColumn'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { EllipsisIcon, ShieldCheckIcon } from '@/lib/icons'
 
@@ -86,10 +89,25 @@ export function DesktopForemanPanel(props: DesktopForemanPanelProps) {
         return () => controller.abort()
     }, [retry, props.target])
     useEffect(() => { if (error && props.command) props.command.settle(new Error(error)) }, [error, props.command])
-    if (initial) return <ConnectedForeman key={`${initial.chat.workspaceId}:${initial.chat.chatId}`} {...props} initial={initial} />
+    // « New task » is a draft on screen only: nothing is saved until its first message is sent.
+    const [draft, setDraft] = useState<DraftTask | null>(null)
+    // Leaving the draft reads the saved conversation under it again, as opening any conversation does.
+    const discardDraft = useCallback(() => { setDraft(null); setInitial(null); setRetry(value => value + 1) }, [])
+    // A closed panel shows no « opening » notice over the board: what was read before stays until the new read lands.
+    const dropDraft = useCallback(() => { setDraft(null); setRetry(value => value + 1) }, [])
+    const workspaceId = initial?.chat.workspaceId
+    const openDraft = useCallback(() => { if (workspaceId) setDraft(createDesktopForemanDraftTask(workspaceId)) }, [workspaceId])
+    // Closing the panel drops the draft, and so does a message addressed to the saved conversation under it.
+    const closed = props.controlledOpen === false, commandId = props.command?.id
+    const drafting = !!draft
+    useEffect(() => { if (drafting && (closed || commandId)) dropDraft() }, [drafting, closed, commandId, dropDraft])
+    if (initial && draft && !closed && !commandId && draft.chat.workspaceId === initial.chat.workspaceId) {
+        return <DesktopForemanDraftTask key={draft.chat.chatId} {...props} draft={draft} base={initial.chat} onDiscard={quiet => quiet ? dropDraft() : discardDraft()} />
+    }
+    if (initial) return <ConnectedForeman key={`${initial.chat.workspaceId}:${initial.chat.chatId}`} {...props} initial={initial} onNewTask={openDraft} />
     return <section className={cn(props.className, 'pointer-events-none col-span-full flex items-center justify-center')} aria-label={t('foreman.name')}><div className="pointer-events-auto flex min-h-40 flex-col items-start gap-3 rounded-3xl border bg-background p-5"><p role={error ? 'alert' : 'status'}>{error ?? t('foreman.opening')}</p>{error && <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t('creation.tryAgain')}</Button>}<Button size="sm" variant="ghost" onClick={props.onClose}>{t('foreman.close')}</Button></div></section>
 }
-function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { initial: DesktopForemanClientState }) {
+function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelProps & { initial: DesktopForemanClientState; onNewTask: () => void }) {
     const { t } = useDesktopLocale()
     const [state, setState] = useState(initial)
     const intakePorts = useMemo(() => createDesktopForemanIntakeClient({ workspaceId: initial.chat.workspaceId, chatId: initial.chat.chatId }), [initial.chat.workspaceId, initial.chat.chatId])
@@ -189,9 +207,26 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
     const [focusRequest, setFocusRequest] = useState<string>()
     // « New task » lands on its empty conversation with the caret in the composer, as on the cloud.
     useEffect(() => { if (takeDesktopForemanNewTaskFocus(initial.chat.chatId)) setFocusRequest(`new-task:${initial.chat.chatId}`) }, [initial.chat.chatId])
+    // The message that saved this task: the model picked in the draft is saved first, then the column sends it.
+    const [firstSend, setFirstSend] = useState<DesktopForemanColumnProps['firstSend']>()
+    useEffect(() => {
+        if (!client) return
+        const first = takeDesktopForemanFirstSend(initial.chat.chatId)
+        if (!first) return
+        void (async () => {
+            let send = true
+            if (first.model) {
+                setModelSaving(true)
+                try { await client.setModel(initial.model, first.model) }
+                catch (error) { send = false; if (active.current) setError(error instanceof Error ? error.message : 'Could not save the model for this task.') }
+                finally { setModelSaving(false) }
+            }
+            if (active.current) setFirstSend({ id: initial.chat.chatId, text: first.text, coworkerMentions: first.coworkerMentions, send })
+        })()
+    }, [client, initial])
     const [permissionsOpen, setPermissionsOpen] = useState(false)
     const conversations = useDesktopForemanConversations({
-        chat: initial.chat, thread: !!props.target, onSelect: props.onSelectConversation,
+        chat: initial.chat, thread: !!props.target, onSelect: props.onSelectConversation, onNewTask,
         emptyThread: !!state.separateConversation && state.messages.length === 0 && !state.view.live && !state.ui.snapshot?.pendingSend,
         onFocusComposer: () => setFocusRequest(`new-task:${crypto.randomUUID()}`),
     })
@@ -275,7 +310,7 @@ function ConnectedForeman({ initial, ...props }: DesktopForemanPanelProps & { in
                     draftRevision={intake.revision} compact={compactBoard} controllerRef={companyProfile} />
             </div>
         ) : undefined}
-        dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} voiceMic={!!voiceModel && !!voice?.mic} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
+        dockFeed={dockFeed} voiceSlot={voiceModel ? voice?.slot : undefined} voiceMic={!!voiceModel && !!voice?.mic} sendDisabled={modelSaving} intake={intakeOpen ? intake : undefined} focusRequest={focusRequest} firstSend={firstSend} chat={state.chat} ports={client.ports} live={state.view.live} messages={desktopForemanMessages(state)} retrySnapshot={state.retrySnapshot}
         question={state.question} onAnswerQuestion={client.answerQuestion}
         approval={state.approval} onDecideApproval={client.decideApproval}
         starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished} separateConversation={state.separateConversation}

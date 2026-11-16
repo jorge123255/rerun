@@ -18,7 +18,7 @@ import { desktopAuxiliarySchema } from '@/lib/desktop/server/auxiliary/store'
 import { ForemanVoiceSlot } from './ForemanVoiceSlot'
 
 vi.mock('@/components/ui/button', () => ({ Button: ({ variant: _variant, size: _size, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string; size?: string }) => <button {...props} /> }))
-vi.mock('@/components/foreman/dock/ForemanPillVoice', () => ({ ForemanPillVoice: () => null }))
+vi.mock('@/components/ui/live-waveform', () => ({ LiveWaveform: () => null }))
 vi.mock('@/components/desktop/voice/DesktopVoiceWaveform', () => ({ DesktopVoiceWaveform: () => null }))
 vi.mock('@rerun/ui', () => ({ TextShimmer: ({ children }: { children: string }) => <span>{children}</span> }))
 

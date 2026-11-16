@@ -92,6 +92,8 @@ export type DesktopForemanColumnProps = {
     composerTrailing?: ReactNode
     sendDisabled?: boolean
     focusRequest?: string
+    /** The message a new task was opened with: it goes into the composer and, unless held back, is sent once. */
+    firstSend?: { id: string; text: string; coworkerMentions?: DesktopCoworkerMention[]; send: boolean }
     controlledOpen?: boolean
     hidden?: boolean
     fill?: boolean
@@ -138,7 +140,7 @@ export function DesktopForemanColumn({
     headerCrumb,
     runNotice,
     renderBoardOverlay,
-    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, controlledOpen, hidden, fill, centerOpen, findEnabled, dockFeed, voiceSlot, voiceMic, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
+    className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, firstSend, controlledOpen, hidden, fill, centerOpen, findEnabled, dockFeed, voiceSlot, voiceMic, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
 }: DesktopForemanColumnProps) {
     const { t } = useDesktopLocale()
     const foreman = useDesktopForemanUi({ chat, ports, live, initialOpen: true, refreshKey, onClose })
@@ -215,6 +217,16 @@ export function DesktopForemanColumn({
             if (confirmed && current.chatId === scope.chatId && current.workspaceId === scope.workspaceId && current.draft === scope.draft) foreman.setDraft('')
         })
     }
+    // A task is saved by its first message: the conversation just created sends it through the same path as the composer.
+    const sendRef = useRef(send)
+    sendRef.current = send
+    const firstSent = useRef<string | undefined>(undefined)
+    useEffect(() => {
+        if (!firstSend || !foreman.restored || firstSent.current === firstSend.id) return
+        firstSent.current = firstSend.id
+        foreman.setDraft(firstSend.text, firstSend.coworkerMentions ?? [])
+        if (firstSend.send) sendRef.current(firstSend.text)
+    }, [firstSend, foreman.restored, foreman.setDraft])
     async function retrySend() {
         if (!pendingSend || !onRetryPendingSend || retryDisabled || retryInFlight.current) return
         const scope = composerScope.current
