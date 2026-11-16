@@ -2,13 +2,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { DESKTOP_KEYLESS_SEARCH_ON, desktopAuxiliarySettingsSchema, type DesktopAuxiliaryStatus } from '@/lib/desktop/auxiliary'
+import { DESKTOP_KEYLESS_SEARCH_ON, DESKTOP_LOCAL_EMBEDDING_DEFAULT, desktopAuxiliarySettingsSchema, desktopLocalEmbeddingModel, desktopLocalEmbeddingStatusSchema, type DesktopAuxiliaryStatus, type DesktopLocalEmbeddingStatus } from '@/lib/desktop/auxiliary'
 
 const labels = {
     search: { title: 'Web search', provider: 'Brave Search', description: 'Find web results with Rerun’s web_search tool.' },
     'keirolabs-search': { title: 'Keirolabs web search', provider: 'Keirolabs', description: 'Rerun uses Keirolabs when no Brave Search key is saved.' },
+    'browser-use-search': { title: 'Web search with Browser Use', provider: 'Browser Use', description: 'Search by a cloud browser run by Browser Use. Slower than a search API (up to 90 seconds) and billed by Browser Use for each search; your coworkers’ queries are sent to them. Used when no Brave Search or Keirolabs key is saved.' },
     'keenable-search': { title: 'Web search without a key', provider: 'Keenable', description: 'Search the web through Keenable with no key. Off by default: when it is on, your coworkers’ search queries are sent to Keenable. A saved Brave Search or Keirolabs key is used first.' },
     embedding: { title: 'Memory search', provider: 'OpenRouter', description: 'Find related saved notes by meaning, using text-embedding-3-small. Keyword search works without a key.' },
+    'local-embedding': { title: 'Memory search on this Mac', provider: 'Ollama', description: 'Find related saved notes by meaning with a model running on this Mac. No key, and the notes never leave the Mac. Used when no OpenRouter memory key is saved.' },
     transcription: { title: 'Voice messages', provider: 'OpenRouter', description: 'Turn recordings into chat text, using Whisper large v3 turbo.' },
     'elevenlabs-transcription': { title: 'Voice messages with ElevenLabs', provider: 'ElevenLabs', description: 'Turn recordings into chat text, using ElevenLabs Scribe. Rerun uses ElevenLabs when no OpenRouter voice key is saved.' },
 }
@@ -49,6 +51,7 @@ function ServiceKey({ row, onSaved }: { row: DesktopAuxiliaryStatus; onSaved: (r
         } catch { if (active.current) { setKey(''); setError('The save could not be confirmed. Reopen Tool services to see the saved state.') } }
         finally { pending.current = false; if (active.current) setBusy(false) }
     }
+    if (row.purpose === 'local-embedding') return <LocalEmbedding row={row} busy={busy} error={error} onSave={save} />
     if (row.purpose === 'keenable-search') return <div className="space-y-3 rounded-xl border p-4">
         <div className="flex items-center justify-between"><h2 className="font-semibold">{label.title}</h2><span className="text-xs text-muted-foreground">{row.configured ? 'On' : 'Off'}</span></div>
         <p className="text-sm text-muted-foreground">{label.description}</p>
@@ -61,6 +64,35 @@ function ServiceKey({ row, onSaved }: { row: DesktopAuxiliaryStatus; onSaved: (r
         <label className="text-sm font-medium" htmlFor={`tool-service-${row.purpose}`}>{label.provider} API key</label>
         <div className="flex gap-2"><Input id={`tool-service-${row.purpose}`} type="password" autoComplete="off" disabled={busy} value={key} onChange={event => setKey(event.target.value)}/><Button type="submit" disabled={busy || !key.trim()}>Save key</Button></div>
         {row.configured && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void save('')}>Remove key</Button>}
+        {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    </form>
+}
+
+function LocalEmbedding({ row, busy, error, onSave }: { row: DesktopAuxiliaryStatus; busy: boolean; error: string; onSave: (value: string) => Promise<void> }) {
+    const label = labels['local-embedding']
+    const [status, setStatus] = useState<DesktopLocalEmbeddingStatus | null>(null)
+    const [model, setModel] = useState('')
+    useEffect(() => {
+        const controller = new AbortController()
+        void fetch('/api/desktop/auxiliary/local-embedding', { cache: 'no-store', signal: controller.signal })
+            .then(async response => { if (response.ok && !controller.signal.aborted) setStatus(desktopLocalEmbeddingStatusSchema.parse(await response.json())) })
+            .catch(() => { if (!controller.signal.aborted) setStatus({ running: false, models: [], embeddingModels: [] }) })
+        return () => controller.abort()
+    }, [row.revision])
+    const suggested = status?.embeddingModels[0] ?? DESKTOP_LOCAL_EMBEDDING_DEFAULT
+    const chosen = model.trim() || suggested
+    const valid = desktopLocalEmbeddingModel.safeParse(chosen).success
+    const hint = !status ? 'Looking for Ollama on this Mac…'
+        : !status.running ? 'Ollama is not running on this Mac. Install and open Ollama, then come back.'
+        : status.embeddingModels.length ? `Ollama is running. Embedding models found: ${status.embeddingModels.join(', ')}.`
+        : `Ollama is running, but it has no embedding model yet. In Terminal, run: ollama pull ${DESKTOP_LOCAL_EMBEDDING_DEFAULT}`
+    return <form className="space-y-3 rounded-xl border p-4" onSubmit={event => { event.preventDefault(); if (valid) void onSave(chosen) }}>
+        <div className="flex items-center justify-between"><h2 className="font-semibold">{label.title}</h2><span className="text-xs text-muted-foreground">{row.configured ? 'On' : 'Off'}</span></div>
+        <p className="text-sm text-muted-foreground">{label.description}</p>
+        <p role="status" className="text-xs text-muted-foreground">{hint}</p>
+        <label className="text-sm font-medium" htmlFor="tool-service-local-embedding">Ollama embedding model</label>
+        <div className="flex gap-2"><Input id="tool-service-local-embedding" autoComplete="off" spellCheck={false} disabled={busy} placeholder={suggested} value={model} onChange={event => setModel(event.target.value)}/><Button type="submit" disabled={busy || !valid || !status?.running}>{row.configured ? 'Change model' : 'Turn on'}</Button></div>
+        {row.configured && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void onSave('')}>Turn off</Button>}
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     </form>
 }

@@ -31,12 +31,16 @@ export function desktopSearchOutcomes(db: Client, owner: string): DesktopWebSear
     }
 }
 
+/** How long a Browser Use search may take before the coworker is told it failed. */
+export const DESKTOP_SLOW_SEARCH_MS = 90_000
 const inputSchema = z.object({ identity: desktopWebSearchRunIdentitySchema, input: desktopWebSearchInputSchema }).strict()
 export async function handleDesktopWebSearch(request: Request) {
     const headers = { 'Cache-Control': 'no-store' }
     try {
         const runtime = await authenticateDesktopEngineRequest(request)
-        const signal = AbortSignal.any([request.signal, AbortSignal.timeout(17_000)])
+        // Browser Use runs a real browser for each search, so it is given longer than a search API.
+        const slow = (await desktopAuxiliaryStore(await openDesktopDatabase(runtime.dataRoot)).readSearch()).credential?.provider === 'browser-use'
+        const signal = AbortSignal.any([request.signal, AbortSignal.timeout(slow ? DESKTOP_SLOW_SEARCH_MS + 5_000 : 17_000)])
         const body = inputSchema.parse(JSON.parse(await boundedText(new Response(request.body), signal, 16_384)))
         const owner = await getDesktopRemoteMcpService(runtime), db = await openDesktopDatabase(runtime.dataRoot)
         const localOwner = await owner.authorizeRun({ engineAgentId: body.identity.agentId, sessionId: body.identity.sessionId, runId: body.identity.runId }, signal, 'webSearch')
@@ -49,10 +53,10 @@ export async function handleDesktopWebSearch(request: Request) {
             },
             adapter: credential ? { generation, search: input => backend.search(input, generation, input.signal) } : null,
             readiness: async () => credential
-                ? { status: 'ready', retryable: false, message: credential.provider === 'brave' ? 'Brave Search key saved.' : credential.provider === 'keirolabs' ? 'Keirolabs key saved.' : 'Keyless search through Keenable is on.' }
+                ? { status: 'ready', retryable: false, message: credential.provider === 'brave' ? 'Brave Search key saved.' : credential.provider === 'keirolabs' ? 'Keirolabs key saved.' : credential.provider === 'browser-use' ? 'Browser Use key saved.' : 'Keyless search through Keenable is on.' }
                 : { status: 'unconfigured', retryable: false, message: 'Add a Brave Search or Keirolabs key, or turn on keyless search, in Settings → Tool services.' },
             outcomes: desktopSearchOutcomes(db, localOwner),
-        })
+        }, credential?.provider === 'browser-use' ? { deadlineMs: DESKTOP_SLOW_SEARCH_MS } : {})
         return Response.json(await service.search(body.identity, body.input, signal), { headers })
     } catch {
         return Response.json({ status: 'error', message: 'Web search is unavailable for this run.' }, { status: 400, headers })
