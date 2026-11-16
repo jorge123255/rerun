@@ -229,6 +229,47 @@ it('shows the saved connection failure with a Settings action and clears it when
     expect(document.querySelector('[role="alert"]')).toBeNull()
 })
 
+// Upstream #254: a transient failure ("thread … already has an active writer") left nothing to press.
+it('offers Retry on a transient failure and sends the last typed message again', async () => {
+    cancelDraftShutdown(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', { randomUUID }); vi.stubGlobal('EventSource', Source)
+    const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
+    const server = { chat, sessionId: 'session', model: null, runFailure: { kind: 'generic', connectionId: 'plan' },
+        messages: [{ id: 'saved-prompt', role: 'user', parts: [{ type: 'text', text: 'Draft the weekly report' }] }, { id: 'partial', role: 'assistant', parts: [{ type: 'text', text: 'Starting' }] }],
+        view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+        ui: { revision: 0, snapshot: null as unknown },
+    }
+    const sends: Array<{ text: string }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_url, init?: RequestInit) => {
+        if (!init?.body) return Response.json(server)
+        const body = JSON.parse(String(init.body))
+        if (body.action === 'ui') { server.ui = { revision: server.ui.revision + 1, snapshot: body.snapshot }; return Response.json({ revision: server.ui.revision }) }
+        if (body.action === 'send') { sends.push(body); return Response.json({ runId: body.requestId }) }
+        return Response.json({ ok: true })
+    }))
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()} agentNameOf={id => id} />))
+    const retry = [...document.querySelectorAll<HTMLElement>('[role="alert"] button, [role="alert"] [role="button"]')].find(item => item.textContent?.includes('Retry'))
+    expect(retry).toBeDefined()
+    await act(async () => { retry!.click(); await Promise.resolve() })
+    await vi.waitFor(() => expect(sends).toHaveLength(1))
+    expect(sends[0]!.text).toBe('Draft the weekly report')
+})
+
+it('offers no Retry on a failure a second send would only repeat', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('EventSource', Source)
+    const chat = { workspaceId: '1', chatId: 'fmc_abcdefgh' }
+    const server = { chat, sessionId: 'session', model: null, runFailure: { kind: 'usage_limit', connectionId: 'plan' },
+        messages: [{ id: 'saved-prompt', role: 'user', parts: [{ type: 'text', text: 'Draft the weekly report' }] }],
+        view: { contractVersion: 1, chat, phase: 'plan', live: null, revisions: [], currentRevisionId: null, decisions: [], build: null, discovery: null, blocked: null },
+        ui: { revision: 0, snapshot: null },
+    }
+    vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(async () => Response.json(server)))
+    root = createRoot(document.body.appendChild(document.createElement('div')))
+    await act(async () => root!.render(<DesktopForemanPanel onClose={vi.fn()} onOpenCoworker={vi.fn()} onOpenCalledChat={vi.fn()} onOpenBox={vi.fn()} agentNameOf={id => id} />))
+    expect(document.querySelector('[role="alert"]')).not.toBeNull()
+    expect(document.querySelector('[role="alert"]')?.textContent).not.toContain('Retry')
+})
+
 it('opens the exact chat model picker from a settled failure and saves only an explicit selection', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     vi.stubGlobal('EventSource', Source)

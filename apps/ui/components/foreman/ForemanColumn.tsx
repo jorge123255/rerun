@@ -67,7 +67,7 @@ export function ForemanColumn({ open, placement }: { open: boolean | null; place
     const { isAnonymous, workspace, phoneStep } = useSession()
     const pendingIntake = useOnboardingStore(state => state.pendingIntake)
     const gated = isAnonymous && pendingIntake !== null && !intakeOpen
-    const { messages, sendMessage, status, error, stop, regenerate, answerWidget, dismissWidget, pendingWidget, restoreDone, composerBackend, backend, contextStats, runError, reconnecting, activeRunId } = useForemanChat()
+    const { messages, sendMessage, status, error, stop, regenerate, retryLastTurn, answerWidget, dismissWidget, pendingWidget, restoreDone, composerBackend, backend, contextStats, runError, reconnecting, activeRunId } = useForemanChat()
     const busy = status === 'submitted' || status === 'streaming' || reconnecting
 
     // Ce que le board dessine à gauche pendant tout le tunnel. L'organisation vit dans le transcript
@@ -193,6 +193,7 @@ export function ForemanColumn({ open, placement }: { open: boolean | null; place
     const handleStop = useCallback(() => void stop(), [stop])
 
     const displayedError = runError || error ? unwrapChatError(runError ?? error?.message) : null
+    const canRetry = backend === 'engine' && !busy && messages.some(message => message.role === 'user')
     const noticeError = useMemo(() => (displayedError === null ? null : { kind: classifyChatError(displayedError), message: displayedError }), [displayedError])
     useForemanDockFeed({ messages, busy, open: open === true, pending: pendingWidget, failed: displayedError !== null })
 
@@ -427,6 +428,7 @@ export function ForemanColumn({ open, placement }: { open: boolean | null; place
                         arrival={arrival}
                         restored={restoreDone}
                         error={noticeError}
+                        onRetry={canRetry ? retryLastTurn : undefined}
                         onWidgetAnswer={answerWidget}
                         onWidgetDismiss={dismissWidget}
                         pending={pendingWidget}

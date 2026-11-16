@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { isDesktopQuitting, subscribeDraftShutdown } from '@/lib/desktop/draft-writes'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
 import { desktopForemanRunFailureText } from '@/lib/desktop/foreman/run-failure'
+import { desktopForemanRetryOf } from '@/lib/desktop/foreman/retry'
 import { createDesktopForemanClient, desktopForemanMessages, readDesktopForemanState, type DesktopForemanClientState } from '@/lib/desktop/foreman-client/runtime-client'
 import { createClientDockFeed } from '@/lib/desktop/foreman-dock/feed'
 import { useMemo } from 'react'
@@ -292,6 +293,14 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
     const modelDisabled = !!(state.view.live || state.question || state.approval || pendingSend || voice?.busy)
     const canSwitchModel = !modelDisabled && !modelSaving && modelPickerView?.catalog.some(group =>
         group.models.some(model => group.connectionId !== effective?.connectionId || model.id !== effective?.model))
+    // Upstream #254: a transient failure left the card with nothing to press. The Mac has no in-place
+    // regenerate for a failed turn, so Retry sends the last typed message again as a new turn.
+    const retry = state.runFailure && !modelDisabled && !modelSaving && !intakeOpen && !pendingStarter ? desktopForemanRetryOf(state.messages) : null
+    const retryFailedTurn = retry ? () => {
+        setError(null)
+        void Promise.resolve(client.ports.conversation.sendMessage(retry.text, undefined, { coworkerMentions: retry.coworkerMentions }))
+            .catch(error => { if (active.current) setError(error instanceof Error ? error.message : 'Could not ask your Chief of Staff.') })
+    } : undefined
     return <>
     {voiceModel && <ForemanVoiceOwner target={{ chat: state.chat, model: voiceModel }}
         active={!props.hidden && !state.view.live && !state.question && !state.approval && !intakeOpen && !pendingStarter && !pendingSend && !modelSaving} engage={() => {}}
@@ -316,6 +325,7 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
         approval={state.approval} onDecideApproval={client.decideApproval}
         starter={state.starter} onStarterAnswer={client.answerStarter} intakeFinished={intake.finished} separateConversation={state.separateConversation}
         runNotice={state.runFailure && !pendingSend ? <ProviderErrorNotice kind={state.runFailure.kind} message={desktopForemanRunFailureText(state.runFailure.detail)}
+            onRetry={retryFailedTurn}
             onSwitchModel={canSwitchModel ? () => modelPicker.current?.open() : undefined}
             onReconnect={failedConnection && props.onReconnectConnection ? () => props.onReconnectConnection?.(failedConnection) : props.onOpenModelSettings}
             onOpenConnections={props.onOpenModelSettings} /> : null}
