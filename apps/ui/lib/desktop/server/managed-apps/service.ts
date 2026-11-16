@@ -115,6 +115,9 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
             if (state !== 'gone' && state !== 'foreign') await composio.remove(row.connectedAccountId, signal)
         } catch (error) { if (!(error instanceof ManagedAppsError) || error.status !== 502 && error.status !== 404) throw error }
     }
+    /** A row whose sign-in this Mac made: it carries this Mac's user naming and an account id to ask Composio about. */
+    const madeHere = (row: Account) => !!row.connectedAccountId && ownUser(row)
+    const forget = (id: string) => db.batch([{ sql: 'DELETE FROM desktop_managed_app_attachments WHERE account_id=?', args: [id] }, { sql: 'DELETE FROM desktop_managed_app_accounts WHERE id=?', args: [id] }], 'write')
     const setStatus = (id: string, status: Account['status']) => db.execute({ sql: 'UPDATE desktop_managed_app_accounts SET status=? WHERE id=?', args: [status, id] })
     async function account(id: string): Promise<Account> {
         const found = (await accounts()).find(row => row.id === id)
@@ -147,6 +150,7 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
         ])
         return {
             configured, ...(connector ? { connector } : {}),
+            ...(configured && !connector ? { keyRemovalSignsOut: rows.filter(madeHere).length } : {}),
             apps: (await offered()).map(app => ({ slug: app.slug, name: app.name, summary: app.summary, ...(app.logo ? { logo: app.logo } : {}) })),
             accounts: rows.map(row => ({ id: row.id, slug: row.slug, name: row.name, ...(row.label ? { label: row.label } : {}), status: row.status, agentIds: attached.rows.filter(link => link.account_id === row.id).map(link => String(link.agent_id)) })),
         }
@@ -165,9 +169,20 @@ export function desktopManagedApps(db: Client, crypto: DesktopSecretCrypto, work
             return { view: await view() }
         }
         if (action.action === 'remove-key') {
-            // The accounts belong to that key's project: without it they cannot be used or cleaned up, so they go with it.
+            // The accounts belong to that key's project: without it they cannot be used or cleaned up, so the ones this
+            // Mac made are signed out at Composio before the key goes, each by the same proof as its own Remove. A row
+            // that does not carry this Mac's user naming is never asked about and nothing of it is touched at Composio.
             const composio = await client().catch(() => null)
-            if (composio) for (const row of await accounts()) await revoke(composio, row, signal).catch(() => {})
+            const left: Account[] = []
+            // A Composio that cannot be reached, or that refuses the key, answers the same for every account: the
+            // first such failure ends the asking, and the accounts not yet signed out are the ones left.
+            let asking = composio !== null
+            for (const row of (await accounts()).filter(madeHere)) {
+                if (asking) try { await revoke(composio!, row, signal); await forget(row.id); continue } catch { signal?.throwIfAborted(); asking = false }
+                left.push(row)
+            }
+            // The key is not dropped over sign-ins that are still there, unless the person chose that knowingly.
+            if (left.length && !action.leaveSignedIn) return { view: await view(), notSignedOut: left.map(row => row.label ? `${row.name} · ${row.label}` : row.name) }
             await db.batch(['DELETE FROM desktop_managed_app_attachments', 'DELETE FROM desktop_managed_app_accounts', 'DELETE FROM desktop_managed_app_key'], 'write')
             toolCache.clear()
             return { view: await view() }
