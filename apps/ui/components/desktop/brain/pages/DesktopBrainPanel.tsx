@@ -22,8 +22,8 @@ import { flushDesktopBrainDrafts, forgetBrainDraft, brainDraftHash, type BrainPa
 import type { EngineDbTable } from '@/lib/engine/types'
 import type { UploadEntry } from '@/lib/files/upload'
 import { BrainIcon, DatabaseIcon, PanelLeftIcon, RefreshCwIcon, TableIcon } from '@/lib/icons'
-import { cn } from '@/lib/utils'
 import type { BrainPageSummary } from '@rerun/contracts'
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { useIsMobile } from '@rerun/ui/primitives/use-is-mobile'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
@@ -118,6 +118,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
     const [importResults, setImportResults] = useState<DesktopSharedImportResult[]>([])
     const [importing, setImporting] = useState(false)
     const searchRef = useRef<HTMLInputElement>(null)
+    const focusSearchOnOpenRef = useRef(false)
     const selectionRef = useRef(selection)
     const importController = useRef<AbortController | null>(null)
     const importSources = useRef(new WeakMap<DesktopSharedImportResult, File>())
@@ -267,6 +268,8 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
             event.preventDefault()
             event.stopPropagation()
             setSidebarOpen(true)
+            // In a narrow window the sidebar is a sheet, not mounted until it opens: the search takes the focus once it is there.
+            if (!searchRef.current) focusSearchOnOpenRef.current = true
             searchRef.current?.focus()
             searchRef.current?.select()
         }
@@ -568,19 +571,7 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
         }
     }
 
-    return (
-        <BrainChromeContext.Provider value={chrome}>
-            <div data-desktop-brain className="relative flex min-h-0 flex-1">
-                {isMobile && sidebarOpen && !offline && <div className="absolute inset-0 z-20 bg-black/20" onClick={() => setSidebarOpen(false)} aria-hidden />}
-                {!offline && (
-                    <aside
-                        className={cn(
-                            'flex w-[248px] shrink-0 flex-col border-r border-border bg-muted/30',
-                            isMobile && 'absolute inset-y-0 left-0 z-30 w-[85%] max-w-[300px] bg-popover shadow-xl transition-transform duration-200',
-                            isMobile && !sidebarOpen && '-translate-x-full',
-                        )}
-                    >
-                        {overview ? (
+    const sidebar = overview ? (
                             <BrainSidebar
                                 pages={pages}
                                 pagesAvailable={available}
@@ -600,9 +591,35 @@ export function DesktopBrainPanel({ actions, onClose, renderProposals, openSlug,
                                 <Skeleton className="h-7 w-full" />
                                 <SkeletonList rows={8} />
                             </div>
-                        )}
-                    </aside>
-                )}
+                        )
+
+    return (
+        <BrainChromeContext.Provider value={chrome}>
+            <div data-desktop-brain className="relative flex min-h-0 flex-1">
+                {!offline &&
+                    (isMobile ? (
+                        // A narrow window shows the sidebar as a sheet: it traps focus, closes on Escape and is announced as a dialog.
+                        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+                            <SheetContent
+                                side="left"
+                                showCloseButton={false}
+                                aria-describedby={undefined}
+                                onOpenAutoFocus={event => {
+                                    event.preventDefault()
+                                    if (!focusSearchOnOpenRef.current) return
+                                    focusSearchOnOpenRef.current = false
+                                    searchRef.current?.focus()
+                                    searchRef.current?.select()
+                                }}
+                                className="gap-0 p-0 data-[side=left]:w-[85%] data-[side=left]:max-w-[300px]"
+                            >
+                                <SheetTitle className="sr-only">{t('sidebar.title')}</SheetTitle>
+                                {sidebar}
+                            </SheetContent>
+                        </Sheet>
+                    ) : (
+                        <aside className="flex w-[248px] shrink-0 flex-col border-r border-border bg-muted/30">{sidebar}</aside>
+                    ))}
 
                 <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
                     {isMobile && !offline && (
