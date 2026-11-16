@@ -19,7 +19,7 @@ import { WorkspaceMembersDialog } from '@/components/dialogs/WorkspaceMembersDia
 import { WorkspaceSettingsDialog } from '@/components/dialogs/WorkspaceSettingsDialog'
 import { SignInPillButton } from '@/components/layout/SignInPill'
 import { ThemeMenuRow } from '@/components/layout/ThemeMenuRow'
-import { HelpMenuItems, WeeklyRewindMenuItem, WhatsNewMenuItem } from '@/components/layout/ToolbarActions'
+import { HelpMenuItems, WhatsNewMenuItem } from '@/components/layout/ToolbarActions'
 import { WorkspacePowerDialog, WorkspacePowerMenuItems, type PowerAction } from '@/components/layout/WorkspacePowerControl'
 import { WorkspacePill } from '@rerun/ui/chrome'
 import { Badge } from '@rerun/ui/primitives'
@@ -227,7 +227,6 @@ export function WorkspaceSwitcher() {
                 </DropdownMenuItem>
             )}
             <WhatsNewMenuItem />
-            <WeeklyRewindMenuItem />
             {!workspace.is_sandbox && appsInMenu.length > 0 && <AppsMenuSection apps={appsInMenu} onOpen={slug => openApp(slug)} />}
         </>
     )

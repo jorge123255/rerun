@@ -6,7 +6,6 @@ import { AuthDialog } from '@/components/dialogs/AuthDialog'
 import { EngineWaitlistDialog } from '@/components/dialogs/EngineWaitlistDialog'
 import { BuilderView } from '@/components/builder/BuilderView'
 import { ForemanDock } from '@/components/foreman/ForemanDock'
-import { useRewindEnabled } from '@/components/layout/FeatureFlagsProvider'
 import { PhoneVerificationDialog } from '@/cloud/phone.client'
 import { PostPaymentDialog, TemplatePurchaseSuccessDialog } from '@/cloud/billing.client'
 import { AgentShareDeepLinkDialog } from '@/components/dialogs/AgentShareDeepLinkDialog'
@@ -15,7 +14,6 @@ import { WorkspacePausedBanner } from '@/components/layout/WorkspacePausedBanner
 import { WorkspaceSwitcher } from '@/components/layout/WorkspaceSwitcher'
 import { ChangelogDialog } from '@/components/changelog/ChangelogDialog'
 import { ControlCenter } from '@/components/control-center/ControlCenter'
-import { RewindViewer, useRewindLauncher, useRewindStore } from '@/cloud/rewind.client'
 import { useChangelogLauncher } from '@/components/changelog/useChangelogLauncher'
 import { useEnsureSandboxSpace } from '@/lib/sandbox/useEnsureSandboxSpace'
 import { useAgentHealthSync } from '@/hooks/useAgentHealthSync'
@@ -74,7 +72,6 @@ export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: {
     const foremanArrival = useForemanStore(state => state.arrival)
     const foremanWaitlisted = useForemanStore(state => state.waitlisted)
     const pendingIntake = useOnboardingStore(state => state.pendingIntake)
-    const rewindEnabled = useRewindEnabled()
     const resumePendingStart = useResumePendingStart()
     const searchParams = useSearchParams()
     const [postPaymentOpen, setPostPaymentOpen] = useState(false)
@@ -369,23 +366,10 @@ export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: {
         return () => window.removeEventListener('beforeunload', handleBeforeUnload)
     }, [selectedAgentWorking])
 
-    // Le Rewind hebdo s'ouvre tout seul une fois, mais jamais par-dessus un parcours qui tient déjà
-    // l'écran (mur d'auth, onboarding, deep link de template ou de partage).
-    const rewindDeepLinked = searchParams.has('rewind')
-    // Le flag entre dans `ready` plutôt qu'autour du hook, qu'on ne peut pas appeler
-    // conditionnellement : `ready` à faux suffit à ne jamais lire les semaines ni ouvrir la story.
-    const rewindReady = rewindEnabled && hydrated && !isAnonymous && Boolean(workspace?.onboarded_at) && !templateLinkSlug && !shareLinkToken && !purchase
-    useRewindLauncher(workspace?.id, rewindReady, rewindDeepLinked)
-    useEffect(() => {
-        // Nettoyé aussi quand la feature est masquée, sinon `?rewind` colle à l'URL sans rien faire.
-        if (rewindDeepLinked && (rewindReady || !rewindEnabled)) clearSearchParams('rewind')
-    }, [rewindReady, rewindDeepLinked, rewindEnabled])
-
-    // Le changelog arrive derrière la même porte que le Rewind, plus deux conditions à lui : une
+    // Le changelog attend que l'écran soit libre, plus deux conditions à lui : une
     // session restée anonyme passerait par `accountWallOpen` seul, qui retombe dès que le mur est
     // écarté ; et deux overlays qui s'ouvrent seuls au même chargement se recouvriraient.
-    const rewindShown = useRewindStore(state => state.shown !== null)
-    const changelogReady = hydrated && !accountWallOpen && !phoneWallOpen && !isAnonymous && Boolean(workspace?.onboarded_at) && !templateLinkSlug && !shareLinkToken && !purchase && !rewindShown
+    const changelogReady = hydrated && !accountWallOpen && !phoneWallOpen && !isAnonymous && Boolean(workspace?.onboarded_at) && !templateLinkSlug && !shareLinkToken && !purchase
     useChangelogLauncher(user?.id, changelogReady)
 
     useEnsureSandboxSpace()
@@ -431,7 +415,6 @@ export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: {
             {purchase && <TemplatePurchaseSuccessDialog slug={purchase.slug} sessionId={purchase.sessionId} onOpenChange={open => !open && useTemplateFlowStore.getState().closePurchase()} />}
             {templateLinkSlug && <TemplateDeepLinkDialog slug={templateLinkSlug} />}
             {shareLinkToken && <AgentShareDeepLinkDialog token={shareLinkToken} />}
-            {rewindEnabled && <RewindViewer />}
             <ChangelogDialog />
             <ControlCenter />
         </div>

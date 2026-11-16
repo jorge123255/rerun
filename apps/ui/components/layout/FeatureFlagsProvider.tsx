@@ -3,19 +3,15 @@
 import { createContext, useContext, useMemo, type PropsWithChildren } from 'react'
 import { APP_SLUGS, type AppSlug } from '@/cloud/apps'
 
-export type FeatureFlags = { rewind: boolean; computer: boolean; apps: Partial<Record<AppSlug, boolean>> }
+export type FeatureFlags = { computer: boolean; apps: Partial<Record<AppSlug, boolean>> }
 
 // Tout à `false` par défaut : un composant rendu hors du provider, comme les menus de toolbar
 // repris par le kit de marque, tombe du côté masqué sans avoir à le dire.
-const FeatureFlagsContext = createContext<FeatureFlags>({ rewind: false, computer: false, apps: {} })
+const FeatureFlagsContext = createContext<FeatureFlags>({ computer: false, apps: {} })
 
-export function FeatureFlagsProvider({ rewind, computer, apps, children }: PropsWithChildren<FeatureFlags>) {
-    const value = useMemo(() => ({ rewind, computer, apps }), [rewind, computer, apps])
+export function FeatureFlagsProvider({ computer, apps, children }: PropsWithChildren<FeatureFlags>) {
+    const value = useMemo(() => ({ computer, apps }), [computer, apps])
     return <FeatureFlagsContext.Provider value={value}>{children}</FeatureFlagsContext.Provider>
-}
-
-export function useRewindEnabled() {
-    return useContext(FeatureFlagsContext).rewind
 }
 
 export function useComputerEnabled() {
