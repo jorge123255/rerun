@@ -27,6 +27,7 @@ import { DesktopExternalMcpDialog } from './external-mcp/DesktopExternalMcpDialo
 import { DesktopCoworkerShareLauncher, DesktopPortableCoworkerImport, DesktopServersNavigation, DesktopWorkspaceDialogStatus } from './DesktopWorkspaceDialogs'
 import { DesktopWorkspaceSettings } from './DesktopWorkspaceSettings'
 import { DesktopVaultDialog } from './vault/DesktopVaultDialog'
+import { DesktopActivityDialog } from './activity/DesktopActivityDialog'
 import { DesktopNotificationDelivery } from './DesktopNotificationDelivery'
 import { DesktopMacUpdateBridge } from './DesktopMacUpdateBridge'
 import { DesktopSharedData } from './DesktopSharedData'
@@ -134,6 +135,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const [runtimeWorkspaceId, setRuntimeWorkspaceId] = useState<number | null>(() => Number.isSafeInteger(initialData.runtimeWorkspaceId) && initialData.runtimeWorkspaceId! > 0 ? initialData.runtimeWorkspaceId! : null)
     const [workspaceSettings, setWorkspaceSettings] = useState(false)
     const [vaultOpen, setVaultOpen] = useState(false)
+    const [activityOpen, setActivityOpen] = useState(false)
     const [workspaceIdentityError, setWorkspaceIdentityError] = useState<string | null>(null)
     const [workspaceIdentityAttempt, setWorkspaceIdentityAttempt] = useState(0)
     const workspaceDialogActive = externalMcpOpen || serversOpen || !!shareTarget || importCoworkerOpen
@@ -203,6 +205,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             setNotificationsTarget(null)
             setSharedDataOpen(false)
             setVaultOpen(false)
+            setActivityOpen(false)
             workspaceDialogEpoch.current++
             workspaceDialogLease.current.active = false
             setExternalMcpOpen(false)
@@ -391,7 +394,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
     const selectedAgent = agents.find(agent => agent.id === selectedAgentId) ?? null
     const currentAgents = useRef(agents)
     currentAgents.current = agents
-    const modalOrActionActive = workspaceDialogActive || templatesActive || settings || workspaceSettings || vaultOpen || profileOpen || shortcutsOpen || helpOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardState.saving || creationNavigationBlocked
+    const modalOrActionActive = workspaceDialogActive || templatesActive || settings || workspaceSettings || vaultOpen || activityOpen || profileOpen || shortcutsOpen || helpOpen || !!notificationsTarget || sharedDataOpen || sharedFilesOpen || brainOpen || creating || !!busy || placingCopy || quitting || themeSaving || boardState.saving || creationNavigationBlocked
     const changelog = useDesktopChangelog(initialData.runtimeLaunchNonce, !modalOrActionActive && !boardInteraction && !controlCenterOpen && !panelOpen)
     const coworkerPanelBlocked = modalOrActionActive || changelog.open
     const controlCenterDisabled = coworkerPanelBlocked || boardInteraction
@@ -940,6 +943,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
         onWorkspaceSettings={() => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting()) setWorkspaceSettings(true) }}
         onTemplates={() => { if (!creationAdmission.current.blocked && !workspaceDialogActive && !isDesktopQuitting()) setTemplatesOpen(true) }}
         onVault={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setVaultOpen(true) }}
+        onActivity={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled && !isDesktopQuitting()) setActivityOpen(true) }}
         onShortcuts={openShortcuts}
         onHelp={openHelp}
         onExternalMcp={openExternalMcp} onServers={openServers} onRerunCloud={openRerunCloud} onImportCoworker={openImportCoworker}
@@ -1061,6 +1065,7 @@ export function DesktopApp({ initialData }: { initialData: DesktopBootstrap }) {
             <DesktopWorkspaceSettings open={workspaceSettings} onOpenChange={setWorkspaceSettings} workspaceName={workspaceName}
                 onSaved={saved => { setWorkspaceName(saved.name); setSavedIcon({ iconCatalogId: saved.iconCatalogId ?? null, iconUploadId: saved.iconUploadId ?? null }) }} />
             {vaultOpen && <DesktopVaultDialog onClose={() => setVaultOpen(false)} />}
+            {activityOpen && <DesktopActivityDialog onClose={() => setActivityOpen(false)} onOpenConversation={openCoworkerChat} />}
             {workspaceDialogActive && runtimeWorkspaceId === null && <DesktopWorkspaceDialogStatus title={shareTarget ? `Share ${shareTarget.name}` : importCoworkerOpen ? 'Import coworker' : serversOpen ? 'Servers' : 'API keys & MCP'} error={workspaceIdentityError} onClose={closeWorkspaceDialogs} onRetry={() => setWorkspaceIdentityAttempt(value => value + 1)} />}
             {runtimeWorkspaceId !== null && externalMcpOpen && <DesktopExternalMcpDialog workspaceId={runtimeWorkspaceId} open onOpenChange={next => { if (!next) closeWorkspaceDialogs() }} />}
             {runtimeWorkspaceId !== null && serversOpen && <DesktopServersNavigation key={runtimeWorkspaceId} workspaceId={runtimeWorkspaceId} onClose={closeWorkspaceDialogs} onRerunCloud={openRerunCloud} />}

@@ -39,6 +39,7 @@ import { createDesktopBrainPagesRouter } from '../desktop/brain-pages-router.js'
 import { createDesktopBrainProposalsRouter } from '../desktop/brain-proposals-router.js'
 import { brainRoutes } from './routes/brain.js'
 import { agentDesktopRoutes, desktopRoutes } from './routes/desktop.js'
+import { createDesktopActivityRouter } from '../desktop/activity-trail/router.js'
 import { HttpError, notFound } from '../lib/errors.js'
 import { agentExists } from '../agents/loader.js'
 import { workspaceDir, sharedDir, dataDir, agentDataDbPath, sharedDbPath } from '../config/paths.js'
@@ -132,6 +133,7 @@ export function createServer(): Hono {
         api.route('/desktop/api-connections', createDesktopApiConnectionRouter())
         api.route('/desktop/brain/pages', createDesktopBrainPagesRouter())
         api.route('/desktop/brain/proposals', createDesktopBrainProposalsRouter())
+        api.route('/desktop/activity', createDesktopActivityRouter())
     }
     api.route('/desktop/templates', desktopTemplateRoutes)
     api.route('/desktop', desktopRoutes)

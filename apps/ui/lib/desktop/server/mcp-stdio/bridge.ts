@@ -5,6 +5,7 @@ import {authenticateDesktopEngineRequest} from '../auth'
 import {abortable,boundedText} from '../mcp/remote'
 import type {stdioRuntime,StdioRun} from './runtime'
 import type {DesktopMcpCallAdmission} from '../mcp/bridge'
+import type {DesktopActivityDecision} from '@rerun/contracts'
 const id=z.string().min(1).max(200),run=z.object({engineAgentId:id,sessionId:id,runId:id})
 const requestSchema=z.discriminatedUnion('action',[
  run.extend({action:z.literal('catalog')}).strict(),
@@ -54,13 +55,14 @@ export function stdioEngineBridge(runtime:ReturnType<typeof stdioRuntime>,author
     if(!catalog || catalog.owner!==owner || identity(catalog.run)!==identity(body))throw new Error('Catalog belongs to another run')
     const definition=catalog.tools.get(body.capabilityId);if(!definition)throw new Error('Local tool unavailable')
     // An action that asks first is answered here, before anything reaches the local server.
-    const held=await admit?.({owner,sessionId:body.sessionId,tool:definition.name,destructive:false,arguments:body.arguments},AbortSignal.any([signal,catalog.controller.signal]))
+    let trail:DesktopActivityDecision|undefined
+    const held=await admit?.({owner,sessionId:body.sessionId,tool:definition.name,destructive:false,arguments:body.arguments},AbortSignal.any([signal,catalog.controller.signal]),said=>{trail=said})
     signal.throwIfAborted();catalog.controller.signal.throwIfAborted()
-    if(typeof held==='string')return Response.json({toolCallId:body.toolCallId,result:{source:'local_mcp_stdio',untrusted:true,result:{isError:true,content:[{type:'text',text:held}]}}},{headers:{'Cache-Control':'no-store'}})
+    if(typeof held==='string')return Response.json({toolCallId:body.toolCallId,result:{source:'local_mcp_stdio',untrusted:true,result:{isError:true,content:[{type:'text',text:held}]}},...(trail&&{trail})},{headers:{'Cache-Control':'no-store'}})
     const result=await definition.execute(body.arguments,body.toolCallId,AbortSignal.any([signal,catalog.controller.signal]))
     if(await abortable(authorizeRun(body,signal,body.action),signal)!==owner)throw new Error('Owner changed')
     signal.throwIfAborted();catalog.controller.signal.throwIfAborted()
-    return Response.json({toolCallId:body.toolCallId,result},{headers:{'Cache-Control':'no-store'}})
+    return Response.json({toolCallId:body.toolCallId,result,...(trail&&{trail})},{headers:{'Cache-Control':'no-store'}})
    }catch{return Response.json({error:'Local tool unavailable or acknowledgement unknown; the call will not be replayed.'},{status:400})}
   },
   async shutdown(){closed=true;const releases=Promise.allSettled([...catalogs.keys()].map(release));await runtime.shutdown();const results=await releases;const failed=results.find(result=>result.status==='rejected');if(failed?.status==='rejected')throw failed.reason},

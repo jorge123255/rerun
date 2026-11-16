@@ -82,7 +82,7 @@ test('a call that asks first is answered without reaching the connector, and run
 
     expect(await handle({ ...call, toolCallId: 'held' })).toEqual({ toolCallId: 'held', result: { source: 'remote_mcp', untrusted: true, result: { isError: true, content: [{ type: 'text', text: 'This call did not run.' }] } } })
     expect(mocks.execute).not.toHaveBeenCalled()
-    expect(admit).toHaveBeenCalledWith({ owner: 'local-owner', sessionId: 'session', tool: 'mail_send_email', destructive: true, arguments: { to: 'pat@example.test' } }, expect.any(AbortSignal))
+    expect(admit).toHaveBeenCalledWith({ owner: 'local-owner', sessionId: 'session', tool: 'mail_send_email', destructive: true, arguments: { to: 'pat@example.test' } }, expect.any(AbortSignal), expect.any(Function))
 
     admit.mockResolvedValueOnce(null)
     expect(await handle({ ...call, toolCallId: 'allowed' })).toMatchObject({ toolCallId: 'allowed', result: { result: { content: [{ type: 'text', text: '42' }] } } })

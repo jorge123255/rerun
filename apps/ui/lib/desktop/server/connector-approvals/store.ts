@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
-import type { DesktopConnectorActionKind, DesktopConnectorApprovalDecision, DesktopConnectorApprovalView, DesktopConnectorPreview } from '@rerun/contracts'
+import type { DesktopActivityDecision, DesktopConnectorActionKind, DesktopConnectorApprovalDecision, DesktopConnectorApprovalView, DesktopConnectorPreview } from '@rerun/contracts'
 import { redactHistoricalText } from '@/components/desktop/tool-presentations/redact'
 
 const MAX_PENDING = 20
@@ -59,8 +59,17 @@ export type ConnectorCall = { owner: string; sessionId: string; tool: string; ki
 const NO_SECOND_ASK = 'The card is the only request needed: do not ask through any other tool, and do not request a sign-in, since the app is already signed in.'
 
 export async function admitConnectorCall(db: Client, call: ConnectorCall, now = new Date()): Promise<string | null> {
-    const rule = (await db.execute({ sql: "SELECT id FROM desktop_connector_approval_rules WHERE owner=? AND tool=? AND session_id IN ('',?) LIMIT 1", args: [call.owner, call.tool, call.sessionId] })).rows[0]
-    if (rule) return null
+    return (await decideConnectorCall(db, call, now)).answer
+}
+
+/**
+ * The same decision with what the activity trail records of it: how the call ended here (a
+ * standing answer, allowed once, declined, still waiting) and the rule that decided.
+ */
+export async function decideConnectorCall(db: Client, call: ConnectorCall, now = new Date()): Promise<{ answer: string | null; trail: DesktopActivityDecision }> {
+    const said = (outcome: NonNullable<DesktopActivityDecision['outcome']>, rule: string): DesktopActivityDecision => ({ outcome, rule, kind: call.kind, action: call.tool.slice(0, 200) })
+    const rule = (await db.execute({ sql: "SELECT id,session_id FROM desktop_connector_approval_rules WHERE owner=? AND tool=? AND session_id IN ('',?) ORDER BY session_id DESC LIMIT 1", args: [call.owner, call.tool, call.sessionId] })).rows[0]
+    if (rule) return { answer: null, trail: said('allowed-by-permission', rule.session_id === '' ? 'standing-answer:always' : 'standing-answer:conversation') }
     const digest = digestOf(call.arguments)
     const tx = await db.transaction('write')
     try {
@@ -69,17 +78,20 @@ export async function admitConnectorCall(db: Client, call: ConnectorCall, now = 
             args: [call.owner, call.sessionId, call.tool, digest],
         })).rows[0]
         let answer: string | null
+        let trail = said('asked-person', `ask-first:${call.kind}`)
         if (row?.status === 'allowed') {
             await tx.execute({ sql: "UPDATE desktop_connector_approval_requests SET status='used' WHERE id=? AND status='allowed'", args: [row.id] })
             answer = null
+            trail = said('allowed-once-by-person', `ask-first:${call.kind}`)
         } else if (row?.status === 'declined') {
             await tx.execute({ sql: "UPDATE desktop_connector_approval_requests SET status='refused' WHERE id=? AND status='declined'", args: [row.id] })
             answer = 'The person declined this action. Do not try it again unless they ask for it.'
+            trail = said('declined-by-person', `ask-first:${call.kind}`)
         } else if (row) {
             answer = 'This action is still waiting for the person’s answer on the card in this chat. End your turn; do not call it again until they have answered. ' + NO_SECOND_ASK
         } else {
             const pending = Number((await tx.execute({ sql: "SELECT COUNT(*) AS n FROM desktop_connector_approval_requests WHERE session_id=? AND status='pending'", args: [call.sessionId] })).rows[0]?.n ?? 0)
-            if (pending >= MAX_PENDING) answer = 'Too many actions are already waiting for the person’s answer in this chat. End your turn and let them answer those first.'
+            if (pending >= MAX_PENDING) { answer = 'Too many actions are already waiting for the person’s answer in this chat. End your turn and let them answer those first.'; trail = said('refused-policy', 'policy:too-many-waiting') }
             else {
                 const text = connectorPreview(call.arguments)
                 await tx.execute({
@@ -91,7 +103,7 @@ export async function admitConnectorCall(db: Client, call: ConnectorCall, now = 
             }
         }
         await tx.commit()
-        return answer
+        return { answer, trail }
     } finally { tx.close() }
 }
 

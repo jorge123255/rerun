@@ -38,6 +38,12 @@ export const brainDir = () => resolve(dataDir(), 'brain')
 
 export const brainPagePath = (slug: string) => resolve(brainDir(), `${pathSegment(slug, 'brain page slug')}.md`)
 
+// The Mac's activity trail: one database for the workspace, beside the coworkers rather than inside
+// one, so a deleted coworker's past actions stay in the owner's history.
+export const activityDbDir = () => resolve(dataDir(), 'activity-db')
+
+export const activityDbPath = () => resolve(activityDbDir(), 'activity.db')
+
 export const brainDbDir = () => resolve(dataDir(), 'brain-db')
 
 export const brainDbPath = () => resolve(brainDbDir(), 'brain.db')

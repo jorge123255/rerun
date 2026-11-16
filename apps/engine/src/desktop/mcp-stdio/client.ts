@@ -4,9 +4,11 @@ import {env} from '../../config/env.js'
 import type {RunContext} from '../../runtime/context.js'
 import {abortable} from '../web-fetch/transport.js'
 const catalogSchema=z.object({catalogId:z.string().uuid(),tools:z.array(z.object({capabilityId:z.string().uuid(),name:z.string().min(1).max(128),description:z.string().max(8000),inputSchema:z.record(z.string(),z.unknown())})).max(256)})
+import {desktopActivityDecisionSchema} from '@rerun/contracts'
+import {noteDesktopActivity} from '../activity-trail/recorder.js'
 const marked=new WeakSet<object>()
 export function isDesktopStdioTool(value:unknown):boolean{return typeof value==='object' && value!==null && marked.has(value)}
-const resultSchema=z.object({toolCallId:z.string(),result:z.object({source:z.literal('local_mcp_stdio'),untrusted:z.literal(true),result:z.record(z.string(),z.unknown())})})
+const resultSchema=z.object({toolCallId:z.string(),result:z.object({source:z.literal('local_mcp_stdio'),untrusted:z.literal(true),result:z.record(z.string(),z.unknown())}),trail:desktopActivityDecisionSchema.optional()})
 function inputSchema(value:Record<string,unknown>){
  const pending=[{value:value as unknown,depth:0}];let count=0
  while(pending.length){const current=pending.pop()!;if(++count>10_000 || current.depth>32)throw new Error('Local MCP schema exceeds limit');if(current.value&&typeof current.value==='object')for(const nested of Object.values(current.value))pending.push({value:nested,depth:current.depth+1})}
@@ -46,6 +48,7 @@ export async function desktopStdioTools(ctx:RunContext,authorize:()=>Promise<voi
    if(!args || typeof args!=='object' || Array.isArray(args))throw new Error('Local MCP arguments must be an object')
    const result=resultSchema.parse(await post({action:'call',catalogId:catalog.catalogId,capabilityId:definition.capabilityId,toolCallId:options.toolCallId,arguments:args},signal))
    await abortable(authorize(),signal);signal.throwIfAborted()
+   noteDesktopActivity(result.trail)
    if(result.toolCallId!==options.toolCallId)throw new Error('Local MCP call identity mismatch')
    if(result.result.result.isError===true)throw new Error(JSON.stringify(result.result))
    return JSON.stringify(result.result)
