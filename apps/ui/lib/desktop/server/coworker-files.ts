@@ -1,6 +1,6 @@
 import { canonicalDesktopEngineRoot } from './runtime'
 import 'server-only'
-import { CHAT_ATTACHMENTS_DIR, DESKTOP_ATTACHMENT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_BYTES, MAX_UPLOAD_FILE_BYTES, isDesktopAttachmentPath, isDesktopStagedDocumentPath } from '@rerun/contracts'
+import { CHAT_ATTACHMENTS_DIR, DESKTOP_ATTACHMENT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_BYTES, DESKTOP_DOCUMENT_STAGED_MAX_BYTES, MAX_UPLOAD_FILE_BYTES, isDesktopAttachmentPath, isDesktopStagedDocumentPath } from '@rerun/contracts'
 import { constants, type BigIntStats } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
@@ -684,8 +684,11 @@ export async function importCoworkerRasterFile(runtime: DesktopRuntime, agentId:
 /** Chat attachment the Mac cannot convert, saved as one file in the coworker's own `chat-uploads`
  * folder. Uses the import's pinned staging and create-only publication: an existing name is never
  * replaced. `beforePublish` is the caller's ownership check, repeated just before the visible link.
- * The bytes are only written; nothing here opens, unpacks or runs them. */
-export async function stageCoworkerAttachmentFile(runtime: DesktopRuntime, agentId: string, path: string, bytes: Uint8Array, beforePublish: () => Promise<void>): Promise<{ path: string; name: string }> {
+ * The bytes are only written; nothing here opens, unpacks or runs them.
+ * A file above the document limit is given as a source that copies itself into the import's own
+ * temp file, so it is never held in memory; the publication and its checks are the same. */
+export type CoworkerStagedSource = { byteLength: number; write: (file: FileHandle) => Promise<void> }
+export async function stageCoworkerAttachmentFile(runtime: DesktopRuntime, agentId: string, path: string, bytes: Uint8Array | CoworkerStagedSource, beforePublish: () => Promise<void>): Promise<{ path: string; name: string }> {
     const name = stagedAttachmentName(path)
     return withCoworkerFiles(runtime, agentId, async () => {
         await beforePublish()
@@ -732,14 +735,22 @@ async function inspectStagedAttachmentFile(runtime: DesktopRuntime, agentId: str
     await assertCoworkerDirectories(located.root, [CHAT_ATTACHMENTS_DIR], uid, name, 'file')
     const listed = await fileStat(join(/* turbopackIgnore: true */ located.target, name))
     if (!listed) return { state: 'missing' }
-    if (!listed.isFile() || listed.uid !== uid || listed.size < BigInt(1) || listed.size > BigInt(DESKTOP_DOCUMENT_MAX_BYTES)) return { state: 'changed' }
+    if (!listed.isFile() || listed.uid !== uid || listed.size < BigInt(1) || listed.size > BigInt(DESKTOP_DOCUMENT_STAGED_MAX_BYTES)) return { state: 'changed' }
     const handle = await openResolved(join(/* turbopackIgnore: true */ located.target, name)).catch(() => null)
     if (!handle) return { state: 'changed' }
     try {
         const opened = await handle.stat({ bigint: true })
         if (!opened.isFile() || !sameFile(opened, listed) || opened.size !== listed.size) return { state: 'changed' }
-        const bytes = await handle.readFile()
-        if (BigInt(bytes.byteLength) !== opened.size || createHash('sha256').update(bytes).digest('hex') !== sha256) return { state: 'changed' }
+        // Hashed a piece at a time: the file may be 100 MB and is never held whole.
+        const hash = createHash('sha256'), piece = Buffer.allocUnsafe(1024 * 1024)
+        let read = 0
+        while (read <= Number(opened.size)) {
+            const part = await handle.read(piece, 0, piece.byteLength, read)
+            if (!part.bytesRead) break
+            hash.update(piece.subarray(0, part.bytesRead))
+            read += part.bytesRead
+        }
+        if (BigInt(read) !== opened.size || hash.digest('hex') !== sha256) return { state: 'changed' }
         return { state: 'same', folder: located.target, identity: { dev: opened.dev, ino: opened.ino } }
     } finally { await handle.close() }
 }
@@ -762,9 +773,15 @@ export function removeCoworkerStagedAttachmentFile(runtime: DesktopRuntime, agen
     })
 }
 
-async function importFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, bytes: Uint8Array, publication?: PrivateToolPublication, beforeRasterPublish?: (workspace: string) => Promise<void>, stagedAttachment = false): Promise<{ path: string; name: string }> {
+async function importFile(runtime: DesktopRuntime, agentId: string, folder: string, name: string, content: Uint8Array | CoworkerStagedSource, publication?: PrivateToolPublication, beforeRasterPublish?: (workspace: string) => Promise<void>, stagedAttachment = false): Promise<{ path: string; name: string }> {
     if (!name || name.includes('/') || name.includes('\\') || name.includes('\0') || name.startsWith('.')) throw new DesktopHttpError(400, 'That file name can’t be imported.')
-    if (stagedAttachment) {
+    // Only a staged attachment may arrive as a source instead of bytes.
+    const source = content instanceof Uint8Array ? null : content
+    const bytes = content instanceof Uint8Array ? content : new Uint8Array()
+    if (source && !stagedAttachment) throw new DesktopHttpError(400, 'That file can’t be imported.')
+    if (source) {
+        if (!Number.isSafeInteger(source.byteLength) || source.byteLength < 1 || source.byteLength > DESKTOP_DOCUMENT_STAGED_MAX_BYTES) throw new DesktopHttpError(413, `Files saved to a coworker’s Files can be up to ${DESKTOP_DOCUMENT_STAGED_MAX_BYTES / 1024 / 1024} MB.`)
+    } else if (stagedAttachment) {
         if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_DOCUMENT_MAX_BYTES) throw new DesktopHttpError(413, 'Documents can be up to 16 MB.')
     } else if (beforeRasterPublish) {
         const kind = desktopRasterKind(name)
@@ -836,7 +853,10 @@ async function importFile(runtime: DesktopRuntime, agentId: string, folder: stri
                 // The temp file must be the one in the pinned folder, not a swapped-in lookalike.
                 const [opened, listed] = await Promise.all([handle.stat({ bigint: true }), lstat(tempPath, { bigint: true })])
                 if (opened.ino !== listed.ino || opened.dev !== listed.dev) throw outside()
-                await handle.writeFile(bytes)
+                if (source) {
+                    await source.write(handle)
+                    if ((await handle.stat({ bigint: true })).size !== BigInt(source.byteLength)) throw new DesktopHttpError(409, 'The upload changed while it was saved. Attach the file again.')
+                } else await handle.writeFile(bytes)
                 await handle.sync()
             } finally {
                 await handle.close()

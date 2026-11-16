@@ -29,12 +29,15 @@ export function desktopVideoKind(name: string): DesktopVideoKind | null {
     return ext === 'mp4' || ext === 'm4v' || ext === 'mov' || ext === 'webm' ? ext : null
 }
 
-type Scan = { kind: DesktopVideoKind; boxes: number; ftyp: boolean; brand: boolean; moov: boolean; mdat: boolean; vide: boolean }
+type Scan = { kind: DesktopVideoKind; boxes: number; maxBoxes: number; ftyp: boolean; brand: boolean; moov: boolean; mdat: boolean; vide: boolean }
 
-export function inspectDesktopVideoBytes(kind: DesktopVideoKind, bytes: Uint8Array): { contentType: DesktopVideoContentType } {
-    if (bytes.byteLength < 1 || bytes.byteLength > DESKTOP_VIDEO_MAX_BYTES) throw new DesktopVideoBytesError('corrupt')
-    if (kind === 'webm') { readWebm(bytes); return { contentType: CONTENT_TYPE[kind] } }
-    const state: Scan = { kind, boxes: 0, ftyp: false, brand: false, moov: false, mdat: false, vide: false }
+/** `maxBytes` is raised only for a chat attachment that is saved to Files and never previewed.
+ * The walk stays bounded: its box and element budgets grow only in step with that size. */
+export function inspectDesktopVideoBytes(kind: DesktopVideoKind, bytes: Uint8Array, maxBytes = DESKTOP_VIDEO_MAX_BYTES): { contentType: DesktopVideoContentType } {
+    if (bytes.byteLength < 1 || bytes.byteLength > maxBytes) throw new DesktopVideoBytesError('corrupt')
+    const scale = Math.max(1, Math.ceil(maxBytes / DESKTOP_VIDEO_MAX_BYTES))
+    if (kind === 'webm') { readWebm(bytes, 65_536 * scale); return { contentType: CONTENT_TYPE[kind] } }
+    const state: Scan = { kind, boxes: 0, maxBoxes: MAX_BOXES * scale, ftyp: false, brand: false, moov: false, mdat: false, vide: false }
     try { readBoxes(bytes, 0, bytes.length, 0, false, state) }
     catch (error) {
         if (error instanceof DesktopVideoBytesError && error.reason === 'mismatch') throw error
@@ -52,7 +55,7 @@ function readBoxes(bytes: Uint8Array, start: number, end: number, depth: number,
     if (depth > MAX_DEPTH) corrupt()
     let offset = start
     while (offset < end) {
-        if (state.boxes >= MAX_BOXES) corrupt()
+        if (state.boxes >= state.maxBoxes) corrupt()
         state.boxes += 1
         if (end - offset < 8) corrupt()
         const size32 = u32be(bytes, offset)
@@ -136,7 +139,7 @@ function unsupported(): never {
 }
 
 type EbmlElement = { id: number; start: number; end: number; unknown: boolean }
-type EbmlBudget = { elements: number }
+type EbmlBudget = { elements: number; limit: number }
 const SEGMENT_FIELDS = new Set([0x114d9b74, 0x1549a966, 0x1654ae6b, 0x1f43b675, 0x1c53bb6b, 0x1941a469, 0x1043a770, 0x1254c367])
 
 /** EBML integers are bounded before converting to JS numbers. No recursive generic walk. */
@@ -156,7 +159,7 @@ function vint(bytes: Uint8Array, offset: number, end: number, kind: 'id' | 'size
 }
 
 function ebmlElement(bytes: Uint8Array, offset: number, end: number, budget: EbmlBudget): EbmlElement {
-    if (++budget.elements > 65_536) corrupt()
+    if (++budget.elements > budget.limit) corrupt()
     const id = vint(bytes, offset, end, 'id')
     const size = vint(bytes, offset + id.length, end)
     const start = offset + id.length + size.length
@@ -190,9 +193,9 @@ function oneField(items: EbmlElement[], id: number): EbmlElement {
     return found[0]!
 }
 
-function readWebm(bytes: Uint8Array): void {
+function readWebm(bytes: Uint8Array, limit: number): void {
     if (bytes.length < 4 || u32be(bytes, 0) !== 0x1a45dfa3) mismatch()
-    const budget = { elements: 0 }
+    const budget = { elements: 0, limit }
     const header = ebmlElement(bytes, 0, bytes.length, budget)
     const fields = ebmlChildren(bytes, header, budget)
     const doc = oneField(fields, 0x4282)

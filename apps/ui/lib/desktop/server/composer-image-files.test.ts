@@ -2,6 +2,7 @@ import { link, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, truncate,
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
+import sharp from 'sharp'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { closeDesktopDatabase, openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
@@ -127,6 +128,101 @@ test('an animated GIF is attached as a PNG of its first frame; the animation byt
     expect((await errorOf(importDesktopComposerImage(runtime, agentId, '', 'tail.gif', new Uint8Array([...ANIMATED_GIF, 1, 2, 3])))).status).toBe(415)
     const frames = Array.from({ length: 257 }, () => [...STATIC_GIF.slice(19, 41)]).flat()
     expect((await errorOf(importDesktopComposerImage(runtime, agentId, '', 'long.gif', new Uint8Array([...STATIC_GIF.slice(0, 19), ...frames, 0x3b])))).status).toBe(413)
+    expect(await readdir(join(agentDir(), 'workspace'))).toEqual(before)
+})
+
+// Two 2x2 frames, red then blue, written by the WebP encoder the app ships.
+const animatedWebp = async () => new Uint8Array(await sharp(Buffer.from([...Array(4).fill([255, 0, 0, 255]).flat(), ...Array(4).fill([0, 0, 255, 255]).flat()]),
+    { raw: { width: 2, height: 4, channels: 4, pageHeight: 2 } }).webp({ lossless: true, loop: 0, delay: [100, 100] }).toBuffer())
+const box = (type: string, ...parts: Uint8Array[]) => {
+    const body = Buffer.concat(parts), head = Buffer.alloc(8)
+    head.writeUInt32BE(body.length + 8); head.write(type, 4, 'latin1')
+    return Buffer.concat([head, body])
+}
+/** A real still AVIF turned into an image sequence the way encoders write one: the `avis` brand,
+ * the first frame kept as the still item, and a `moov` track that lists `frames` samples. */
+async function animatedAvif(frames = 3, handler = 'pict') {
+    const still = await sharp(Buffer.from([255, 0, 0, 0, 0, 255]), { raw: { width: 2, height: 1, channels: 3 } }).avif({ lossless: true, chromaSubsampling: '4:4:4' }).toBuffer()
+    const hdlr = Buffer.alloc(24); hdlr.write(handler, 8, 'latin1')
+    const stsz = Buffer.alloc(12); stsz.writeUInt32BE(frames, 8)
+    const moov = box('moov', box('mvhd', Buffer.alloc(100)), box('trak', box('mdia', box('hdlr', hdlr), box('minf', box('stbl', box('stsz', stsz))))))
+    const bytes = Buffer.concat([still, moov])
+    expect(bytes.toString('latin1', 4, 12)).toBe('ftypavif')
+    bytes.write('avis', 8, 'latin1')
+    bytes.write('msf1', bytes.indexOf('miaf'), 'latin1')
+    return new Uint8Array(bytes)
+}
+// A two-frame 64x64 red sequence written by an AV1 video encoder (ffmpeg, SVT-AV1): unlike the
+// wrapped still above, its frames carry the ordinary video header, not the still-picture one.
+const ENCODED_AVIF_SEQUENCE = new Uint8Array(Buffer.from('AAAALGZ0eXBhdmlzAAAAAGF2aXNhdmlmbXNmMWlzbzhtaWYxbWlhZk1BMUIAAAD5bWV0YQAAAAAAAAAvaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAFBpY3R1cmVIYW5kbGVyAAAAAA5waXRtAAAAAAABAAAAHmlsb2MAAAAARAAAAQABAAAAAQAAA/YAAAAjAAAAKGlpbmYAAAAAAAEAAAAaaW5mZQIAAAAAAQAAYXYwMUNvbG9yAAAAAGppcHJwAAAAS2lwY28AAAAUaXNwZQAAAAAAAABAAAAAQAAAABBwaXhpAAAAAAMICAgAAAAMYXYxQ4EADAAAAAATY29scm5jbHgAAgACAAIAAAAAF2lwbWEAAAAAAAAAAQABBAECgwQAAALJbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAlV0cmFrAAAAaHRraGQBAAADAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAf/////////8AAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAEAAAABAAAAAAAAkZWR0cwAAABxlbHN0AAAAAQAAAAEAAAPoAAAAAAABAAAAAAHBbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAQABVxAAAAAAAL2hkbHIAAAAAAAAAAHBpY3QAAAAAAAAAAAAAAABQaWN0dXJlSGFuZGxlcgAAAAFqbWluZgAAABR2bWhkAAAAAQAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAABKnN0YmwAAACcc3RzZAAAAAAAAAABAAAAjGF2MDEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAQABAAEgAAABIAAAAAAAAAAEOTGF2YyBsaWJzdnRhdjEAAAAAAAAAAAAAAAAAAAAAAAAY//8AAAAMYXYxQ4EADAAAAAAKZmllbAEAAAAAEHBhc3AAAAABAAAAAQAAABBjY3N0AAAAAHwAAAAAAAAYc3R0cwAAAAAAAAABAAAAAgAAIAAAAAAUc3RzcwAAAAAAAAABAAAAAQAAAA5zZHRwAAAAACAYAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAACAAAAAQAAABxzdHN6AAAAAAAAAAAAAAACAAAAIwAAABIAAAAUc3RjbwAAAAAAAAABAAAD9gAAAD1tZGF0CgsCAAAFFX/8SvkAQDIUEADZghts00IAAAiUEwHBEoTHfm4yEDACAAAAACPgAAACAAAAnFA=', 'base64'))
+const redFirst = async (bytes: Uint8Array) => {
+    const pixel = (await sharp(Buffer.from(bytes)).ensureAlpha().raw().toBuffer()).subarray(0, 3)
+    expect(pixel[0]).toBeGreaterThan(200); expect(pixel[2]).toBeLessThan(40)
+}
+
+test('an animated WebP is attached as a PNG of its first frame under its own name', async () => {
+    const source = await animatedWebp()
+    expect(Buffer.from(source).toString('latin1').match(/ANMF/g)).toHaveLength(2)
+    const result = await importDesktopComposerImage(runtime, agentId, '', 'loop.webp', source)
+    expect(result).toMatchObject({ name: 'loop.webp', image: { name: 'loop.webp', mediaType: 'image/png', width: 2, height: 2 } })
+    expect(result.path).toMatch(/^loop-[0-9a-f]{8}\.png$/)
+    const visible = new Uint8Array(await readFile(join(agentDir(), 'workspace', result.path)))
+    expect(isPng(visible)).toBe(true)
+    expect(result.image.sha256).toBe(sha256(visible))
+    await redFirst(visible)
+    expect(isPng((await readDesktopImageSnapshot(runtime, agentId, result.image)).bytes)).toBe(true)
+    expect((await readdir(join(agentDir(), 'workspace'))).some(name => name.endsWith('.webp'))).toBe(false)
+    // A still WebP keeps its own bytes and type.
+    const still = new Uint8Array(await sharp(Buffer.from([255, 0, 0]), { raw: { width: 1, height: 1, channels: 3 } }).webp({ lossless: true }).toBuffer())
+    expect((await importDesktopComposerImage(runtime, agentId, '', 'still.webp', still)).image).toMatchObject({ mediaType: 'image/webp', sha256: sha256(still) })
+    // A cut animation, an animation flag with no frames and an over-long one are refused with nothing saved.
+    const before = await readdir(join(agentDir(), 'workspace'))
+    const cut = source.slice(0, source.length - 9); new DataView(cut.buffer).setUint32(4, cut.length - 8, true)
+    expect(await errorOf(importDesktopComposerImage(runtime, agentId, '', 'cut.webp', cut))).toMatchObject({ status: 415, message: 'This image is damaged and can’t be attached.' })
+    const flagged = new Uint8Array(still.length + 18)
+    flagged.set(still.subarray(0, 12)); flagged.set([...Buffer.from('VP8X'), 10, 0, 0, 0, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0], 12); flagged.set(still.subarray(12), 30)
+    new DataView(flagged.buffer).setUint32(4, flagged.length - 8, true)
+    expect((await errorOf(importDesktopComposerImage(runtime, agentId, '', 'flag.webp', flagged))).status).toBe(415)
+    const frame = source.subarray(Buffer.from(source).lastIndexOf('ANMF'))
+    const long = Buffer.concat([Buffer.from(source), ...Array.from({ length: 256 }, () => Buffer.from(frame))])
+    long.writeUInt32LE(long.length - 8, 4)
+    expect(await errorOf(importDesktopComposerImage(runtime, agentId, '', 'long.webp', new Uint8Array(long)))).toMatchObject({ status: 413, message: 'This image is too large to attach.' })
+    expect(await readdir(join(agentDir(), 'workspace'))).toEqual(before)
+})
+
+test('an animated AVIF is attached as a PNG of its first frame; an unsafe sequence is refused', async () => {
+    const source = await animatedAvif()
+    const result = await importDesktopComposerImage(runtime, agentId, '', 'clip.avif', source)
+    expect(result).toMatchObject({ name: 'clip.avif', image: { name: 'clip.avif', mediaType: 'image/png', width: 2, height: 1 } })
+    expect(result.path).toMatch(/^clip-[0-9a-f]{8}\.png$/)
+    const visible = new Uint8Array(await readFile(join(agentDir(), 'workspace', result.path)))
+    expect(isPng(visible)).toBe(true)
+    expect(result.image.sha256).toBe(sha256(visible))
+    await redFirst(visible)
+    const encoded = await importDesktopComposerImage(runtime, agentId, '', 'encoded.avif', ENCODED_AVIF_SEQUENCE)
+    expect(encoded.image).toMatchObject({ name: 'encoded.avif', mediaType: 'image/png', width: 64, height: 64 })
+    await redFirst(new Uint8Array(await readFile(join(agentDir(), 'workspace', encoded.path))))
+    expect((await readdir(join(agentDir(), 'workspace'))).some(name => name.endsWith('.avif'))).toBe(false)
+    const before = await readdir(join(agentDir(), 'workspace'))
+    const refused = async (name: string, bytes: Uint8Array) => errorOf(importDesktopComposerImage(runtime, agentId, '', name, bytes))
+    // More frames than an animation may have.
+    expect(await refused('long.avif', await animatedAvif(257))).toMatchObject({ status: 413, message: 'This image is too large to attach.' })
+    // A movie that is not an image sequence, and a sequence brand with no track to bound.
+    expect(await refused('video.avif', await animatedAvif(3, 'vide'))).toMatchObject({ status: 415, message: 'This image uses an unsupported layout or took too long to convert.' })
+    const brandOnly = source.slice(0, Buffer.from(source).lastIndexOf('moov') - 4)
+    expect(await refused('brand.avif', brandOnly)).toMatchObject({ status: 415, message: 'Animated images can’t be attached. Choose a static image.' })
+    // A sequence with no still first frame: the track alone is never decoded.
+    const noStill = Buffer.from(source); noStill.write('free', noStill.indexOf('meta'), 'latin1')
+    expect((await refused('track-only.avif', new Uint8Array(noStill))).status).toBe(415)
+    // The still item must be one shown key frame: a repeated or an inter frame is not decoded.
+    const frameAt = Buffer.from(ENCODED_AVIF_SEQUENCE).indexOf(Buffer.from([0x32, 0x14, 0x10])) + 2
+    expect(frameAt).toBeGreaterThan(1000)
+    for (const first of [0x90, 0x30, 0x00]) {
+        const changed = ENCODED_AVIF_SEQUENCE.slice(); changed[frameAt] = first
+        expect(await refused('frame.avif', changed)).toMatchObject({ status: 415, message: 'This image uses an unsupported layout or took too long to convert.' })
+    }
+    // A cut track table.
+    expect(await refused('cut.avif', source.slice(0, source.length - 6))).toMatchObject({ status: 415, message: 'This image is damaged and can’t be attached.' })
     expect(await readdir(join(agentDir(), 'workspace'))).toEqual(before)
 })
 

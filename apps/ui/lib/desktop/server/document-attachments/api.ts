@@ -1,10 +1,11 @@
 import 'server-only'
 import { z } from 'zod'
-import { DESKTOP_DOCUMENT_MAX_BYTES, desktopDocumentRequestSchema, desktopDocumentScopeSchema } from '@rerun/contracts'
+import { DESKTOP_DOCUMENT_MAX_BYTES, DESKTOP_DOCUMENT_STAGED_MAX_BYTES, DESKTOP_DOCUMENT_STAGED_UPLOAD_HEADER, desktopDocumentRequestSchema, desktopDocumentScopeSchema, desktopDocumentStagedUploadSchema } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import { desktopRoute } from '../http'
 import { previewResultBytes } from '../result-files/preview'
 import type { DesktopDocumentAttachmentService } from './service'
+import { desktopStagedUploadLimitMessage } from './staged-upload'
 
 const MAX_BODY_BYTES = Math.ceil(DESKTOP_DOCUMENT_MAX_BYTES / 3) * 4 + 16_384
 const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }
@@ -84,6 +85,38 @@ export function desktopDocumentAttachmentsApi(service: DesktopDocumentAttachment
             if (signal.aborted) throw new DesktopHttpError(499, 'Document request was cancelled. Restore the attachment before retrying.')
             if (error instanceof z.ZodError || error instanceof SyntaxError) throw new DesktopHttpError(400, 'Document request was not understood.')
             throw new DesktopHttpError(502, 'Document request did not finish. Restore the same attempt before retrying.')
+        }
+    }
+}
+/**
+ * The streamed upload of one file above the document limit, for the kinds that are saved into the
+ * coworker's Files. The body is the file's bytes and nothing else: what it is comes in one header.
+ * The declared length is refused before the body is read, and must match the header and the bytes.
+ */
+export function desktopDocumentStagedUploadApi(service: DesktopDocumentAttachmentService) {
+    return async (request: Request, agentId: string): Promise<Response> => {
+        const signal = AbortSignal.any([request.signal, AbortSignal.timeout(120_000)])
+        const refuse = (status: number, message: string): never => { void request.body?.cancel().catch(() => {}); throw new DesktopHttpError(status, message) }
+        try {
+            if (request.method !== 'POST') return Response.json({ error: 'Method unavailable.' }, { status: 405, headers })
+            const declared = request.headers.get('content-length')
+            if (declared === null || !/^\d{1,12}$/.test(declared)) refuse(411, 'The upload did not say how large the file is.')
+            if (Number(declared) > DESKTOP_DOCUMENT_STAGED_MAX_BYTES) refuse(413, desktopStagedUploadLimitMessage())
+            const header = request.headers.get(DESKTOP_DOCUMENT_STAGED_UPLOAD_HEADER)
+            if (!header || header.length > 8192) refuse(400, 'Document request was not understood.')
+            let input: ReturnType<typeof desktopDocumentStagedUploadSchema.parse>
+            try { input = desktopDocumentStagedUploadSchema.parse(JSON.parse(decodeURIComponent(header!))) }
+            catch { return refuse(400, 'Document request was not understood.') }
+            if (input.agentId !== agentId) refuse(409, 'These attachments belong to another coworker.')
+            if (input.byteLength !== Number(declared)) refuse(400, 'The upload size did not match the file size.')
+            if (!request.body) refuse(400, 'Missing document request body.')
+            const scope = { agentId, tabUid: input.tabUid, ...(input.sessionId ? { sessionId: input.sessionId } : {}), ...(input.questionId ? { questionId: input.questionId } : {}) }
+            return Response.json({ attachment: await service.uploadStaged(scope, input, request.body!, signal) }, { headers })
+        } catch (error) {
+            if (error instanceof DesktopHttpError) throw error
+            if (signal.aborted) throw new DesktopHttpError(499, 'The upload was cancelled or took too long. Nothing was attached.')
+            if (error instanceof z.ZodError || error instanceof SyntaxError) throw new DesktopHttpError(400, 'Document request was not understood.')
+            throw new DesktopHttpError(502, 'The upload did not finish. Retry the same file.')
         }
     }
 }

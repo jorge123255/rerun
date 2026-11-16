@@ -1,11 +1,11 @@
 'use client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { documentScopeKey, type DesktopDocumentAttachment, type DesktopDocumentScope, type DesktopDocumentSelection, type DesktopDocumentSendSelection } from '@rerun/contracts'
+import { DESKTOP_DOCUMENT_MAX_BYTES, documentScopeKey, type DesktopDocumentAttachment, type DesktopDocumentScope, type DesktopDocumentSelection, type DesktopDocumentSendSelection } from '@rerun/contracts'
 import { pendingTabWrite } from '@/lib/desktop/tab-writes'
 import { holdDraftAdmission, isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { admitDesktopDocuments, cancelDesktopDocumentUpload, consumeDesktopDocuments, convertDesktopDocument, discardDesktopDocument, detachDesktopDocument, listDesktopDocuments } from './client'
 import { canRetainDocuments, documentPlaceholder, forgetRetainedDocument, retainedDocument, retainedDocuments, retainDocument, saveRetainedDocument, subscribeRetainedDocuments } from './retained'
-import { planDesktopDocumentAdd, summarizeDesktopDocumentAddError, type DesktopDocumentAddResult } from './plan-document-add'
+import { desktopDocumentScopeHasFiles, planDesktopDocumentAdd, summarizeDesktopDocumentAddError, type DesktopDocumentAddResult } from './plan-document-add'
 
 export type { DesktopDocumentAddOutcome, DesktopDocumentAddResult, DesktopDocumentAddRejectReason } from './plan-document-add'
 
@@ -14,6 +14,8 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, ques
     const scopeKey = documentScopeKey(scope), latest = useRef(scopeKey); latest.current = scopeKey
     const [attachments, setAttachments] = useState<DesktopDocumentAttachment[]>([]), rows = useRef(attachments); rows.current = attachments
     const [error, setError] = useState<string | null>(null), [loaded, setLoaded] = useState(false), [pending, setPending] = useState<Set<string>>(new Set())
+    // The sent share (0 to 1) of each large file that is uploading now.
+    const [progress, setProgress] = useState<Record<string, number>>({})
     const mounted = useRef(true), generation = useRef(0), operations = useRef(new Map<string, AbortController>()), selection = useRef<DesktopDocumentSendSelection | null>(null)
     const current = useCallback((key: string, token: number) => mounted.current && latest.current === key && generation.current === token, [])
     const update = useCallback((next: DesktopDocumentAttachment) => { setAttachments(old => { const found = old.some(a => a.attachmentId === next.attachmentId); return (found ? old.map(a => a.attachmentId === next.attachmentId ? next : a) : [...old, next]).sort((a, b) => a.position - b.position) }) }, [])
@@ -33,13 +35,17 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, ques
         if (!load) return
         mounted.current = true; generation.current++
         const key = scopeKey, token = generation.current
-        selection.current = null; setPending(new Set()); setLoaded(false); setError(null)
+        selection.current = null; setPending(new Set()); setProgress({}); setLoaded(false); setError(null)
         const raw = retainedDocuments(scope).map(documentPlaceholder); rows.current = raw; setAttachments(raw)
         void refresh(key, token).catch(error => { if (current(key, token)) setError(error instanceof Error ? error.message : 'Could not restore attachments.') })
         const unsubscribe = subscribeRetainedDocuments(record => {
             if (!current(key, token) || documentScopeKey(record.scope) !== key) return
             update(documentPlaceholder(record))
             setPending(old => { const next = new Set(old); record.work ? next.add(record.id) : next.delete(record.id); return next })
+            setProgress(old => {
+                if (record.progress === null) { if (!(record.id in old)) return old; const rest = { ...old }; delete rest[record.id]; return rest }
+                return old[record.id] === record.progress ? old : { ...old, [record.id]: record.progress }
+            })
             if (record.error) setError(record.error)
         })
         for (const item of retainedDocuments(scope)) if (item.work) setPending(old => new Set(old).add(item.id))
@@ -64,6 +70,8 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, ques
             files,
             attachedCount: rows.current.length,
             attachedBytes: rows.current.reduce((sum, row) => sum + row.byteLength, 0),
+            attachedLargeBytes: rows.current.reduce((sum, row) => sum + (row.byteLength > DESKTOP_DOCUMENT_MAX_BYTES ? row.byteLength : 0), 0),
+            stagedFiles: desktopDocumentScopeHasFiles(scope),
             canRetainOne: (file, accepting) => canRetainDocuments([...accepting, file]),
         })
         selection.current = null
@@ -163,5 +171,5 @@ export function useDesktopDocumentAttachments({ agentId, tabUid, sessionId, ques
         await consumeDesktopDocuments(selected.scope, selected.admissionId)
         if (latest.current === documentScopeKey(selected.scope)) { selection.current = null; await refresh() }
     }, [refresh])
-    return { attachments, busy: pending.size, error, loaded, add, prepare, retry, remove, settle, consumed, refresh }
+    return { attachments, busy: pending.size, error, loaded, progress, add, prepare, retry, remove, settle, consumed, refresh }
 }

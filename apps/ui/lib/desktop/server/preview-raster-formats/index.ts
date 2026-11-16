@@ -8,15 +8,16 @@ import { inspectIcon, type IconFrame } from './ico'
 import { checkInput, checkOpen, fail, formatOf, RasterPreviewError, type RasterPreviewDisplay, type RasterPreviewInspection } from './common'
 
 export { RasterPreviewError } from './common'
+export { avifSequenceStill } from './avif-sequence'
 export type { RasterPreviewDisplay, RasterPreviewFormat, RasterPreviewInspection, RasterPreviewReason } from './common'
 export const RASTER_PREVIEW_DEADLINE_MS = 5_000
 
 type Plan = { info: RasterPreviewInspection; bitmap?: BitmapPlan; frame?: IconFrame }
-function inspect(bytes: Uint8Array, extension: string, signal: AbortSignal): Plan {
+function inspect(bytes: Uint8Array, extension: string, signal: AbortSignal, sequenceFrame = false): Plan {
     checkInput(bytes, signal)
     const format = formatOf(extension)
     if (format === 'avif') {
-        const size = inspectAvif(bytes, signal)
+        const size = inspectAvif(bytes, signal, sequenceFrame)
         return { info: { format, ...size, frames: 1, animated: false, sourceFrames: 1 } }
     }
     if (format === 'bmp') {
@@ -26,8 +27,9 @@ function inspect(bytes: Uint8Array, extension: string, signal: AbortSignal): Pla
     const icon = inspectIcon(bytes, signal), selected = icon.selected
     return { frame: selected, info: { format, width: selected.width, height: selected.height, aggregatePixels: icon.aggregatePixels, selectedFrame: selected.index, frames: 1, animated: false, sourceFrames: icon.frames.length } }
 }
-export function inspectRasterPreviewImage(bytes: Uint8Array, extension: string, signal: AbortSignal): RasterPreviewInspection {
-    const result = inspect(bytes, extension, signal).info
+/** `sequenceFrame`: the bytes are the still copy `avifSequenceStill` made of an animated AVIF. */
+export function inspectRasterPreviewImage(bytes: Uint8Array, extension: string, signal: AbortSignal, sequenceFrame = false): RasterPreviewInspection {
+    const result = inspect(bytes, extension, signal, sequenceFrame).info
     checkOpen(signal)
     return result
 }
@@ -43,13 +45,13 @@ async function guarded<T>(pipeline: Sharp, signal: AbortSignal, action: () => Pr
         })
     } finally { signal.removeEventListener('abort', abort); pipeline.destroy() }
 }
-export async function convertRasterPreviewImage(input: Uint8Array, extension: string, callerSignal: AbortSignal): Promise<RasterPreviewDisplay> {
+export async function convertRasterPreviewImage(input: Uint8Array, extension: string, callerSignal: AbortSignal, sequenceFrame = false): Promise<RasterPreviewDisplay> {
     checkInput(input, callerSignal)
     const bytes = new Uint8Array(input)
     const deadline = new AbortController(), timer = setTimeout(() => deadline.abort(), RASTER_PREVIEW_DEADLINE_MS)
     const signal = AbortSignal.any([callerSignal, deadline.signal])
     try {
-        const plan = inspect(bytes, extension, signal), info = plan.info
+        const plan = inspect(bytes, extension, signal, sequenceFrame), info = plan.info
         let sharp: typeof import('sharp').default
         try { sharp = (await import('sharp')).default } catch { fail('dependency') }
         checkOpen(signal)

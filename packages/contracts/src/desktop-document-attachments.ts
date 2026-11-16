@@ -1,8 +1,17 @@
 import { z } from 'zod'
 import { CHAT_ATTACHMENTS_DIR } from './chat-attachments.js'
+import { MAX_UPLOAD_FILE_BYTES } from './file.js'
 
 export const DESKTOP_DOCUMENT_MAX_BYTES = 16 * 1024 * 1024
 export const DESKTOP_DOCUMENT_TOTAL_MAX_BYTES = 48 * 1024 * 1024
+/** A file kept only in the coworker's Files (see `isDesktopStagedDocumentKind`) may be as large as
+ * an upload in the original app. Above DESKTOP_DOCUMENT_MAX_BYTES it is streamed to disk: it is
+ * never held in a request body, in memory as a whole (a video is checked from one copy) or in the
+ * database. */
+export const DESKTOP_DOCUMENT_STAGED_MAX_BYTES = MAX_UPLOAD_FILE_BYTES
+/** All such large files of one unsent message together: two files of the full size. They cost disk
+ * in the coworker's Files, and each send reads them once from disk to prove they are unchanged. */
+export const DESKTOP_DOCUMENT_STAGED_TOTAL_MAX_BYTES = 2 * DESKTOP_DOCUMENT_STAGED_MAX_BYTES
 export const DESKTOP_DOCUMENT_MAX_FILES = 10
 export const DESKTOP_DOCUMENT_TEXT_MAX_CHARS = 500_000
 export const DESKTOP_DOCUMENT_INPUT_MAX_BYTES = 128 * 1024
@@ -31,6 +40,14 @@ export function questionDocumentIndex(position: number): number {
 
 export const desktopDocumentKindSchema = z.enum(['pdf', 'audio', 'video', 'binary', 'text', 'image'])
 export type DesktopDocumentKind = z.infer<typeof desktopDocumentKindSchema>
+/** Only the kinds that are saved into Files may exceed the document limit. */
+function withinDesktopDocumentSize(value: { kind: DesktopDocumentKind; byteLength: number }): boolean {
+    return value.byteLength <= DESKTOP_DOCUMENT_MAX_BYTES || value.kind === 'video' || value.kind === 'binary'
+}
+/** A staged file above the document limit: its only copy is the file in the coworker's Files. */
+export function isDesktopLargeStagedDocument(value: { kind: DesktopDocumentKind; byteLength: number }): boolean {
+    return value.byteLength > DESKTOP_DOCUMENT_MAX_BYTES && (value.kind === 'video' || value.kind === 'binary')
+}
 export const desktopDocumentInputModeSchema = z.enum(['pdf-text', 'voice-transcript', 'staged-file', 'unsupported', 'plain-text', 'image'])
 export type DesktopDocumentInputMode = z.infer<typeof desktopDocumentInputModeSchema>
 export const desktopDocumentConversionStateSchema = z.enum(['pending', 'converting', 'ready', 'failed', 'unsupported'])
@@ -59,7 +76,7 @@ export const desktopDocumentAttachmentSchema = z.object({
     name: z.string().min(1).max(255),
     mimeType: z.string().min(1).max(128),
     kind: desktopDocumentKindSchema,
-    byteLength: z.number().int().min(1).max(DESKTOP_DOCUMENT_MAX_BYTES),
+    byteLength: z.number().int().min(1).max(DESKTOP_DOCUMENT_STAGED_MAX_BYTES),
     sha256: z.string().regex(/^[0-9a-f]{64}$/),
     conversion: desktopDocumentConversionSchema,
     admitted: z.boolean().default(false),
@@ -69,8 +86,19 @@ export const desktopDocumentAttachmentSchema = z.object({
     revision: z.string().uuid(),
     createdAt: z.string(),
     updatedAt: z.string(),
-}).strict()
+}).strict().refine(withinDesktopDocumentSize, 'This kind of attachment can be up to 16 MB.')
 export type DesktopDocumentAttachment = z.infer<typeof desktopDocumentAttachmentSchema>
+
+/** What the streamed upload of a large staged file declares before any byte is read. */
+export const desktopDocumentStagedUploadSchema = desktopDocumentScopeSchema.extend({
+    attachmentId: z.string().uuid(),
+    name: z.string().min(1).max(255),
+    mimeType: z.string().min(1).max(128),
+    position: z.number().int().min(0).max(1_000_000).default(0),
+    byteLength: z.number().int().min(DESKTOP_DOCUMENT_MAX_BYTES + 1).max(DESKTOP_DOCUMENT_STAGED_MAX_BYTES),
+}).strict()
+export type DesktopDocumentStagedUpload = z.infer<typeof desktopDocumentStagedUploadSchema>
+export const DESKTOP_DOCUMENT_STAGED_UPLOAD_HEADER = 'x-rerun-document-upload'
 
 export const desktopDocumentUploadSchema = desktopDocumentScopeSchema.extend({
     attachmentId: z.string().uuid(),
@@ -87,15 +115,16 @@ export const desktopDocumentRevisionActionSchema = z.object({
 }).strict()
 export type DesktopDocumentRevisionAction = z.infer<typeof desktopDocumentRevisionActionSchema>
 
-export const desktopDocumentReferenceSchema = z.object({
+const documentReferenceObject = z.object({
     attachmentId: z.string().uuid(),
     scope: desktopDocumentScopeSchema,
     name: z.string().min(1).max(255),
     mimeType: z.string().min(1).max(128),
     kind: desktopDocumentKindSchema,
     sha256: z.string().regex(/^[0-9a-f]{64}$/),
-    byteLength: z.number().int().min(1).max(DESKTOP_DOCUMENT_MAX_BYTES),
+    byteLength: z.number().int().min(1).max(DESKTOP_DOCUMENT_STAGED_MAX_BYTES),
 }).strict()
+export const desktopDocumentReferenceSchema = documentReferenceObject.refine(withinDesktopDocumentSize, 'This kind of attachment can be up to 16 MB.')
 export type DesktopDocumentReference = z.infer<typeof desktopDocumentReferenceSchema>
 
 /** Where an attachment the Mac cannot convert is kept: one visible file directly inside the
@@ -158,6 +187,12 @@ export const desktopDocumentRequestSchema = z.discriminatedUnion('operation', [
     desktopDocumentScopeSchema.extend({ operation: z.literal('cancel-upload'), attachmentId: z.string().uuid() }).strict(),
 ])
 
+/** The largest file this name may be attached as. `stagedFiles` is false where there is no
+ * coworker Files to save into (Chief of Staff, a question's upload). */
+export function desktopDocumentMaxBytesForName(name: string, stagedFiles: boolean): number {
+    return stagedFiles && isDesktopStagedDocumentKind(desktopDocumentKindForName(name)) ? DESKTOP_DOCUMENT_STAGED_MAX_BYTES : DESKTOP_DOCUMENT_MAX_BYTES
+}
+
 /** Pure name classification. Actual media inspection remains on the server. */
 export function desktopDocumentKindForName(name: string): DesktopDocumentKind {
     if (/\.(?:png|jpe?g|webp|gif|avif|ico|bmp|svg)$/i.test(name)) return 'image'
@@ -182,8 +217,10 @@ export function isDesktopTextPreviewName(name: string): boolean {
 export const DESKTOP_TEXT_PREVIEW_MAX_BYTES = 256 * 1024
 
 const directImageMime = z.enum(['image/png', 'image/jpeg', 'image/webp'])
-const convertedImageMime = z.enum(['image/gif', 'image/avif', 'image/x-icon', 'image/bmp', 'image/svg+xml'])
-const imageReference = desktopDocumentReferenceSchema.extend({
+// `image/webp` is in both lists: a still WebP is sent as it is, an animated one as the PNG of its
+// first frame. Which form a saved reference has is told by whether it carries a rendered image.
+const convertedImageMime = z.enum(['image/gif', 'image/avif', 'image/x-icon', 'image/bmp', 'image/svg+xml', 'image/webp'])
+const imageReference = documentReferenceObject.extend({
     kind: z.literal('image'),
     byteLength: z.number().int().min(1).max(DESKTOP_DOCUMENT_IMAGE_MAX_BYTES),
 })

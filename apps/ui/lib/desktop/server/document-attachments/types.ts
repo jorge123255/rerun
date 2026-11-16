@@ -1,9 +1,12 @@
+import type { FileHandle } from 'node:fs/promises'
 import type { DesktopDocumentAdmission, DesktopDocumentAttachment, DesktopDocumentRenderedImage, DesktopDocumentScope, DesktopDocumentSelection } from '@rerun/contracts'
 
 export type DesktopDocumentAttachmentRecord = { attachment: DesktopDocumentAttachment; fingerprint: string; deletion?: boolean }
 export type DesktopDocumentAdmissionRecord = { scope: DesktopDocumentScope; selection: DesktopDocumentSelection; fingerprint: string; admission: DesktopDocumentAdmission }
 export interface DesktopDocumentStore {
     reserve(record: DesktopDocumentAttachmentRecord): Promise<{ record: DesktopDocumentAttachmentRecord; created: boolean }>
+    /** Refuses, before any byte of a large upload is read, a file `reserve` would refuse for room. */
+    assertRoom(scope: DesktopDocumentScope, attachmentId: string, byteLength: number): Promise<void>
     read(scope: DesktopDocumentScope, attachmentId: string): Promise<DesktopDocumentAttachmentRecord | null>
     list(scope: DesktopDocumentScope): Promise<DesktopDocumentAttachmentRecord[]>
     save(record: DesktopDocumentAttachmentRecord, expectedRevision: string): Promise<void>
@@ -21,11 +24,13 @@ export interface DesktopDocumentBlobStore {
     readRenderedImage(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, image: DesktopDocumentRenderedImage, signal: AbortSignal): Promise<Uint8Array>
     delete(scope: DesktopDocumentScope, attachment: DesktopDocumentAttachment, signal: AbortSignal): Promise<void>
 }
+export type DesktopDocumentStagedSource = { byteLength: number; write: (file: FileHandle) => Promise<void> }
 /** The coworker's own Files. Paths are the contract's `chat-uploads/<name>` form; every call
  * repeats the workspace, ownership and symlink checks of the Files code it is built on. */
 export interface DesktopDocumentStagedFiles {
-    /** Create-only. Returns once `path` holds exactly these bytes, also when a replay finds its own file. */
-    put(scope: DesktopDocumentScope, path: string, bytes: Uint8Array, sha256: string, signal: AbortSignal): Promise<void>
+    /** Create-only. Returns once `path` holds exactly these bytes, also when a replay finds its own file.
+     * A file above the document limit is given as a source that writes itself into the import's temp file. */
+    put(scope: DesktopDocumentScope, path: string, bytes: Uint8Array | DesktopDocumentStagedSource, sha256: string, signal: AbortSignal): Promise<void>
     state(scope: DesktopDocumentScope, path: string, sha256: string, signal: AbortSignal): Promise<'missing' | 'changed' | 'same'>
     /** Removes the file only while it still holds the saved bytes. */
     remove(scope: DesktopDocumentScope, path: string, sha256: string, signal: AbortSignal): Promise<void>

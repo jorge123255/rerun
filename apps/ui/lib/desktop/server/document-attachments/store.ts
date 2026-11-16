@@ -1,6 +1,6 @@
 import 'server-only'
 import type { Client, Row } from '@libsql/client'
-import { DESKTOP_DOCUMENT_MAX_FILES, DESKTOP_DOCUMENT_TOTAL_MAX_BYTES, desktopDocumentAttachmentSchema, desktopDocumentAdmissionSchema, desktopDocumentSelectionSchema, type DesktopDocumentScope } from '@rerun/contracts'
+import { DESKTOP_DOCUMENT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_FILES, DESKTOP_DOCUMENT_STAGED_TOTAL_MAX_BYTES, DESKTOP_DOCUMENT_TOTAL_MAX_BYTES, desktopDocumentAttachmentSchema, desktopDocumentAdmissionSchema, desktopDocumentSelectionSchema, type DesktopDocumentScope } from '@rerun/contracts'
 import { DesktopHttpError } from '../auth'
 import type { DesktopDocumentAttachmentRecord, DesktopDocumentAdmissionRecord, DesktopDocumentStore } from './types'
 
@@ -85,7 +85,22 @@ function admissionOf(row: Row, scope: DesktopDocumentScope): DesktopDocumentAdmi
 }
 export function desktopDocumentStore(db: Client, owner: 'coworker' | 'foreman' = 'coworker'): DesktopDocumentStore {
     const tables = desktopDocumentTables(owner)
+    // One unsent message: ten files; 48 MB across the files that are kept in the database; and a
+    // separate total for the large files that are kept only in the coworker's Files.
+    async function assertRoom(tx: Pick<Client, 'execute'>, scope: DesktopDocumentScope, byteLength: number) {
+        const cap = (await tx.execute({ sql: `SELECT COUNT(*) AS count, COALESCE(SUM(CASE WHEN byte_length<=? THEN byte_length ELSE 0 END),0) AS total,
+            COALESCE(SUM(CASE WHEN byte_length>? THEN byte_length ELSE 0 END),0) AS large
+            FROM ${tables.attachments} WHERE agent_id=? AND tab_uid=? AND question_id IS ? AND selected=1 AND deleting=0`,
+            args: [DESKTOP_DOCUMENT_MAX_BYTES, DESKTOP_DOCUMENT_MAX_BYTES, scope.agentId, scope.tabUid, scope.questionId ?? null] })).rows[0]!
+        const large = byteLength > DESKTOP_DOCUMENT_MAX_BYTES
+        if (Number(cap.count) >= DESKTOP_DOCUMENT_MAX_FILES || !large && Number(cap.total) + byteLength > DESKTOP_DOCUMENT_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments can be up to 48 MB across ten files.')
+        if (large && Number(cap.large) + byteLength > DESKTOP_DOCUMENT_STAGED_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, `Files larger than 16 MB can be up to ${DESKTOP_DOCUMENT_STAGED_TOTAL_MAX_BYTES / 1024 / 1024} MB in total in one message.`)
+    }
     return {
+        async assertRoom(scope, attachmentId, byteLength) {
+            if ((await db.execute({ sql: `SELECT 1 FROM ${tables.attachments} WHERE attachment_id=?`, args: [attachmentId] })).rows.length) return
+            await assertRoom(db, scope, byteLength)
+        },
         reserve: record => documentTransaction(db, async tx => {
             const a = record.attachment
             if ((await tx.execute({ sql: `SELECT 1 FROM ${tables.cancellations} WHERE attachment_id=?`, args: [a.attachmentId] })).rows.length) throw documentConflict()
@@ -94,8 +109,7 @@ export function desktopDocumentStore(db: Client, owner: 'coworker' | 'foreman' =
                 if (!documentScopeMatches(previous, a.scope) || previous.fingerprint !== record.fingerprint || Number(previous.deleting)) throw documentConflict()
                 return { record: decode(previous), created: false }
             }
-            const cap = (await tx.execute({ sql: `SELECT COUNT(*) AS count, COALESCE(SUM(byte_length),0) AS total FROM ${tables.attachments} WHERE agent_id=? AND tab_uid=? AND question_id IS ? AND selected=1 AND deleting=0`, args: [a.scope.agentId, a.scope.tabUid, a.scope.questionId ?? null] })).rows[0]!
-            if (Number(cap.count) >= DESKTOP_DOCUMENT_MAX_FILES || Number(cap.total) + a.byteLength > DESKTOP_DOCUMENT_TOTAL_MAX_BYTES) throw new DesktopHttpError(413, 'Attachments can be up to 48 MB across ten files.')
+            await assertRoom(tx, a.scope, a.byteLength)
             await tx.execute({ sql: `INSERT INTO ${tables.attachments}(attachment_id,agent_id,tab_uid,session_id,question_id,fingerprint,name,mime_type,kind,byte_length,sha256,conversion,admitted,selected,position,uploaded,deleting,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 args: [a.attachmentId, ...documentScopeArgs(a.scope), record.fingerprint, a.name, a.mimeType, a.kind, a.byteLength, a.sha256, JSON.stringify(a.conversion), 0, 1, a.position, 0, 0, a.revision, a.createdAt, a.updatedAt] })
             return { record, created: true }

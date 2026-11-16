@@ -40,7 +40,7 @@ async function fixture(withFiles = true) {
     const files = new Map<string, Uint8Array>(), calls: string[] = []
     const key = (owner: DesktopDocumentScope, path: string) => `${owner.agentId}:${path}`
     const stagedFiles: DesktopDocumentStagedFiles = {
-        async put(owner, path, value) { calls.push(`put ${path}`); files.set(key(owner, path), value) },
+        async put(owner, path, value) { calls.push(`put ${path}`); if (!(value instanceof Uint8Array)) throw new Error('unexpected large file'); files.set(key(owner, path), value) },
         async state(owner, path, digest) { const found = files.get(key(owner, path)); return !found ? 'missing' : sha(found) === digest ? 'same' : 'changed' },
         async remove(owner, path, digest) { calls.push(`remove ${path}`); const found = files.get(key(owner, path)); if (found && sha(found) === digest) files.delete(key(owner, path)) },
     }

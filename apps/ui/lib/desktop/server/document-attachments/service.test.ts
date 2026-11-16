@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import sharp from 'sharp'
 import { afterEach, expect, it, vi } from 'vitest'
 vi.mock('server-only', () => ({}))
 import { createDesktopDocumentAttachmentService } from './service'
@@ -11,7 +12,7 @@ import { desktopDocumentBlobs } from './storage'
 import { desktopDocumentAttachmentsApi } from './api'
 import { uploadDesktopDocument, listDesktopDocuments, convertDesktopDocument } from '../../document-attachments/client'
 import { DesktopHttpError } from '../auth'
-import type { DesktopDocumentScope } from '@rerun/contracts'
+import { desktopDocumentContextParts, desktopResolvedDocumentSchema, desktopStoredDocumentReferences, type DesktopDocumentScope } from '@rerun/contracts'
 
 const scope = { agentId: 'owner', tabUid: 'tab', sessionId: 'session' }
 const pdf = new TextEncoder().encode('%PDF-1.7\n%%EOF')
@@ -143,4 +144,32 @@ it('a source file with UTF-8 text is admitted as model text, restored after reop
     const admitted = await f.service.admission(scope, { admissionId: randomUUID(), attachmentIds: [py.attachmentId] }, f.signal)
     expect(admitted).toMatchObject({ allowed: true, inputs: [{ mode: 'text', text: 'def main():\n    return 42\n' }], references: [{ name: 'main.py', kind: 'text', mimeType: 'text/plain' }] })
     expect((await f.service.admission(scope, { admissionId: randomUUID(), attachmentIds: [blob.attachmentId] }, f.signal)).allowed).toBe(false)
+})
+
+it('an animated WebP document is sent as the PNG of its first frame, and a still WebP as itself', async () => {
+    const f = await fixture(), isPng = (bytes: Uint8Array) => bytes[0] === 0x89 && bytes[1] === 0x50
+    const service = createDesktopDocumentAttachmentService({ store: desktopDocumentStore(f.db), blobs: desktopDocumentBlobs(f.db), owner: f.owner, references: f.references, allowChatImages: true })
+    const animated = new Uint8Array(await sharp(Buffer.from([...Array(4).fill([255, 0, 0, 255]).flat(), ...Array(4).fill([0, 0, 255, 255]).flat()]), { raw: { width: 2, height: 4, channels: 4, pageHeight: 2 } }).webp({ lossless: true, loop: 0, delay: [100, 100] }).toBuffer())
+    const still = new Uint8Array(await sharp(Buffer.from([255, 0, 0]), { raw: { width: 1, height: 1, channels: 3 } }).webp({ lossless: true }).toBuffer())
+    const put = (name: string, bytes: Uint8Array, position: number) => service.upload(scope, { ...scope, attachmentId: randomUUID(), name, mimeType: 'image/webp', position }, bytes, f.signal)
+    const moving = await put('loop.webp', animated, 0), fixed = await put('still.webp', still, 1)
+    expect(moving).toMatchObject({ kind: 'image', mimeType: 'image/webp', conversion: { mode: 'image', state: 'ready', renderedImage: { mimeType: 'image/png' } } })
+    expect(fixed.conversion).toEqual({ mode: 'image', state: 'ready' })
+    // The original stays the download; the model and the preview get the first frame.
+    expect((await service.read(scope, moving.attachmentId, moving.sha256, f.signal)).bytes).toEqual(animated)
+    const preview = await service.read(scope, moving.attachmentId, moving.sha256, f.signal, 'preview')
+    expect(isPng(preview.bytes)).toBe(true)
+    expect(preview.renderedImage).toEqual(moving.conversion.renderedImage)
+    const admission = await service.admission(scope, { admissionId: randomUUID(), attachmentIds: [moving.attachmentId, fixed.attachmentId] }, f.signal)
+    expect(admission.allowed).toBe(true)
+    // The send contract carries both forms of a WebP, and a saved message restores each of them.
+    const resolved = [
+        desktopResolvedDocumentSchema.parse({ reference: admission.references[0], dataBase64: Buffer.from(preview.bytes).toString('base64'), renderedImage: preview.renderedImage }),
+        desktopResolvedDocumentSchema.parse({ reference: admission.references[1], dataBase64: Buffer.from(still).toString('base64') }),
+    ]
+    const parts = desktopDocumentContextParts(resolved)
+    expect(parts.map(part => 'mediaType' in part && part.mediaType)).toEqual(['image/png', 'image/webp'])
+    expect(desktopStoredDocumentReferences(parts)).toEqual(admission.references)
+    // A rendered image never rides on a type that is always sent as it is.
+    expect(desktopResolvedDocumentSchema.safeParse({ reference: { ...admission.references[1], mimeType: 'image/png' }, dataBase64: 'AAAA', renderedImage: preview.renderedImage }).success).toBe(false)
 })
