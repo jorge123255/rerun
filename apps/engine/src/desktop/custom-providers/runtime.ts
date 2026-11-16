@@ -43,6 +43,7 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
             catch (error) { bound.close(); throw error }
             const discovered = bound.snapshot.catalog.models.find(row => row.id === modelId)
             const window = discovered?.contextWindow ?? selected.contextWindow ?? bound.snapshot.config.contextWindow ?? CUSTOM_DEFAULT_CONTEXT_WINDOW
+            const noTools = (discovered?.tools ?? selected.tools) === false
             const baseURL = endpointBase(bound.snapshot.config)
             const options: NonNullable<Parameters<typeof createOpenAI>[0]> = { baseURL, apiKey: bound.key ?? 'none', fetch: async (url, init) => {
                 const headers = new Headers(init?.headers)
@@ -64,6 +65,8 @@ export function createCustomProviderRuntime(authority: CustomProviderAuthority) 
                 specificationVersion: 'v3',
                 transformParams: async ({ params }) => {
                     if (params.maxOutputTokens && params.maxOutputTokens >= window) throw new Error('Requested output exceeds custom model context window.')
+                    // Ollama says which models cannot call tools; say so here instead of a bare refusal from the server.
+                    if (noTools && params.tools?.length) throw new Error(`${modelId} cannot call tools in Ollama. Choose a model that supports tools in Settings.`)
                     if (!effort || kimi) return params
                     return { ...params, providerOptions: { ...params.providerOptions, openai: { ...params.providerOptions?.openai, reasoningEffort: effort } } }
                 },

@@ -5,7 +5,7 @@ import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { ChevronDownIcon, SearchIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
-type Group = { connectionId: string; name: string; provider: string; models: { id: string; label: string }[] }
+type Group = { connectionId: string; name: string; provider: string; brand?: string; models: { id: string; label: string }[] }
 
 /**
  * A model list by provider, one provider open at a time unless the person opens more: the one whose
@@ -38,12 +38,12 @@ export function DesktopModelSearch({ value, onChange, label = 'Search models' }:
     </label>
 }
 
-export function DesktopModelGroupHeader({ name, provider, count, open, searching, onToggle }: {
-    name: string; provider: string; count: number; open: boolean; searching?: boolean; onToggle(): void
+export function DesktopModelGroupHeader({ name, provider, brand, count, open, searching, onToggle }: {
+    name: string; provider: string; brand?: string; count: number; open: boolean; searching?: boolean; onToggle(): void
 }) {
     return <button type="button" aria-expanded={open} disabled={searching} data-model-group={name}
         className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-muted-foreground hover:bg-muted/40 disabled:hover:bg-transparent" onClick={onToggle}>
-        <ProviderIcon provider={provider} className="size-3.5 shrink-0" />
+        <ProviderIcon provider={brand ?? provider} className="size-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate">{name}</span>
         <span className="shrink-0 tabular-nums">{count}</span>
         {!searching && <ChevronDownIcon aria-hidden className={cn('size-3.5 shrink-0 transition-transform', !open && '-rotate-90')} />}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Cpu } from 'lucide-react'
-import { DESKTOP_CLI_TOOLS, PROVIDER_LABELS, desktopProviderUsageSchema, type BoxDefaultModel, type ConnectionSummary, type DesktopProviderUsage, type Provider } from '@rerun/contracts'
+import { DESKTOP_CLI_TOOLS, PROVIDER_LABELS, desktopOllamaKind, desktopProviderUsageSchema, type BoxDefaultModel, type ConnectionSummary, type DesktopProviderUsage, type Provider } from '@rerun/contracts'
 import { PlanLimitMeter } from '@/components/connections/SourceBits'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -83,7 +83,7 @@ export function DesktopProviderStatus({ providerLabel, modelLabel, connections =
                     const usage = desktopPlanUsage(connection)
                     return <li key={connection.id} data-provider={connection.provider} className="rounded-lg border border-border p-2.5">
                         <div className="flex items-center gap-2">
-                            <ProviderIcon provider={connection.provider} className="size-4 shrink-0" />
+                            <ProviderIcon provider={desktopOllamaKind(connection) ?? connection.provider} className="size-4 shrink-0" />
                             <span className="min-w-0 flex-1 truncate text-sm font-medium">{connection.name || labelOf(connection)}</span>
                             <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
                         </div>

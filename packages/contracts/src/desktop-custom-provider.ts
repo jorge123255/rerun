@@ -27,7 +27,9 @@ export const customProviderReasoningSchema = z.strictObject({
     supported: z.array(customReasoningLevel).min(1).max(4),
     default: customReasoningLevel.optional(),
 }).refine(value => value.default === undefined || value.supported.includes(value.default))
-export const customProviderModelSchema = z.strictObject({ id: opaque, contextWindow: z.number().int().min(256).max(10_000_000).nullable(), vision: z.boolean().default(false), source: z.enum(['discovered', 'manual']), reasoning: customProviderReasoningSchema.optional() })
+export const customProviderModelSchema = z.strictObject({ id: opaque, contextWindow: z.number().int().min(256).max(10_000_000).nullable(), vision: z.boolean().default(false), source: z.enum(['discovered', 'manual']), reasoning: customProviderReasoningSchema.optional(),
+    // Only a server that reports it says so (Ollama's model list). Absent means unknown, not "no".
+    tools: z.boolean().optional() })
 export type CustomProviderModel = z.infer<typeof customProviderModelSchema>
 export const customEndpointPolicySchema = z.strictObject({ reviewedOrigin: endpoint.refine(value => { const url = new URL(value); return url.pathname === '/' }, 'Review an exact origin.'), allowHttp: z.boolean().default(false), allowPrivate: z.boolean().default(false) })
 export const customProviderConfigSchema = z.strictObject({ name: z.string().trim().min(1).max(60), baseUrl: endpoint, preset: customProviderPresetSchema.nullable(), models: z.array(customProviderModelSchema).min(1).max(256), contextWindow: z.number().int().min(256).max(10_000_000).nullable(), vision: z.boolean(), policy: customEndpointPolicySchema })

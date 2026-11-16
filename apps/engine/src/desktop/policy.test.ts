@@ -237,3 +237,12 @@ test('allows only the exact saved workspace attachment read for a regular cowork
         '/agents/owner/sessions/chat/messages/turn%2Fother/attachment',
     ]) expect(desktopRouteAllowed('GET', path)).toBe(false)
 })
+
+test('Ollama providers are admitted on the Mac only as registered custom connections', () => {
+    const registered = '55555555-5555-4555-8555-555555555555'
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    expect(() => assertDesktopProvider('custom', registered)).not.toThrow()
+    for (const id of [undefined, 'ollama', 'ollama-cloud', 'cnx_ollama']) expect(() => assertDesktopProvider('custom', id)).toThrow('unavailable in the desktop preview')
+    // Neither name is an engine provider of its own that could skip that registration.
+    for (const provider of ['ollama', 'ollama-cloud']) expect(() => assertDesktopProvider(provider, registered)).toThrow('unavailable in the desktop preview')
+})

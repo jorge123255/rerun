@@ -1,4 +1,4 @@
-import { DESKTOP_XAI_BASE_URL, xaiReasoningLevel, type CustomProviderModel, type CustomProviderSnapshot } from '@rerun/contracts'
+import { DESKTOP_OLLAMA, DESKTOP_XAI_BASE_URL, desktopOllamaKindOfBase, xaiReasoningLevel, type CustomProviderModel, type CustomProviderSnapshot } from '@rerun/contracts'
 import { isKimiPlatform } from './kimi-reasoning.js'
 
 const KIMI_K3_MODELS = new Set(['kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed', 'kimi-k3'])
@@ -28,7 +28,37 @@ export function parseCustomModels(body: unknown, includeXaiReasoning = false): C
     return [...models.values()]
 }
 
+/**
+ * Ollama's own model list (GET /api/tags), locally and on ollama.com. Unlike /v1/models it says
+ * what each model can do, so a model that cannot call tools is known before a coworker runs on it.
+ * An Ollama too old to report capabilities leaves `tools` unknown.
+ */
+export function parseOllamaTags(body: unknown): CustomProviderModel[] {
+    const rows = body && typeof body === 'object' && 'models' in body && Array.isArray(body.models) ? body.models : null
+    if (!rows) throw new Error('Custom catalog unavailable.')
+    const models = new Map<string, CustomProviderModel>()
+    for (const value of rows) {
+        if (models.size >= 256) break
+        if (!value || typeof value !== 'object') continue
+        const row = value as Record<string, unknown>
+        const id = typeof row.name === 'string' && row.name.trim() ? row.name.trim() : typeof row.model === 'string' ? row.model.trim() : ''
+        if (!id || id.length > 256 || models.has(id)) continue
+        const capabilities = Array.isArray(row.capabilities) ? row.capabilities.filter((item): item is string => typeof item === 'string') : null
+        // Embedding-only models cannot answer a chat.
+        if (capabilities && !capabilities.includes('completion')) continue
+        const details = row.details && typeof row.details === 'object' ? row.details as Record<string, unknown> : {}
+        const context = details.context_length
+        models.set(id, {
+            id, contextWindow: typeof context === 'number' && Number.isInteger(context) && context >= 256 && context <= 10_000_000 ? context : null,
+            vision: !!capabilities?.includes('vision'), source: 'discovered', ...(capabilities && { tools: capabilities.includes('tools') }),
+        })
+    }
+    return [...models.values()]
+}
+
 export function customModelCatalog(base: string) {
+    const ollama = desktopOllamaKindOfBase(base)
+    if (ollama) return { url: DESKTOP_OLLAMA[ollama].tagsUrl, parse: parseOllamaTags }
     if (base !== DESKTOP_XAI_BASE_URL) return { url: `${base}/models`, parse: parseCustomModels }
     return {
         // xAI's general catalog also offers image and video generation models.
