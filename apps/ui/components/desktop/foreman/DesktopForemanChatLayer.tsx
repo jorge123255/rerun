@@ -13,6 +13,8 @@ import { DesktopForemanHistoryMessage } from './transcript/DesktopForemanHistory
 import { DesktopForemanLiveReply } from './DesktopForemanLiveReply'
 import type { DesktopForemanLiveReply as LiveReply } from '@/lib/desktop/foreman/live-reply'
 import { DesktopForemanAnswerActions } from './DesktopForemanAnswerActions'
+import { DesktopReadAloud } from '../speech/DesktopReadAloud'
+import { desktopForemanSpeechScope } from '@/lib/desktop/speech-player'
 
 import { AnimatePresence, motion } from 'motion/react'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
@@ -111,6 +113,7 @@ export function DesktopForemanChatLayer({
     onOpenBox,
     answerFeedback,
     replyRetry,
+    readAloud,
     threads, onOpenThread,
     renderChildWork,
     children,
@@ -150,6 +153,8 @@ export function DesktopForemanChatLayer({
     /** Local thumbs for a restored saved answer; absent on read-only or still-live transcripts. */
     answerFeedback?: { ratingOf: (messageId: string) => MessageFeedbackRating | null; onRate: (messageId: string, rating: MessageFeedbackRating) => void; disabled?: boolean } | null
     replyRetry?: { review: (messageId: string) => void; disabled: boolean }
+    /** Set when an ElevenLabs key is saved: this conversation's saved answers can be read aloud. */
+    readAloud?: { workspaceId: string; chatId: string }
     /** General's saved tasks, each drawn under the message it started after. Only General has them. */
     threads?: readonly DesktopForemanGeneralThread[]
     onOpenThread?: (thread: DesktopForemanGeneralThread) => void
@@ -235,6 +240,8 @@ export function DesktopForemanChatLayer({
                                         onRate={answerFeedback ? rating => answerFeedback.onRate(message.id, rating) : undefined}
                                         onReviewRetry={replyRetry && /^engine-[A-Za-z0-9_-]{1,128}$/.test(message.id) ? () => replyRetry.review(message.id) : undefined}
                                         retryDisabled={replyRetry?.disabled}
+                                        readAloud={readAloud && active && !streaming && /^engine-[A-Za-z0-9_-]{1,128}$/.test(message.id)
+                                            ? <DesktopReadAloud agentId={desktopForemanSpeechScope(readAloud.workspaceId)} sessionId={readAloud.chatId} messageId={message.id} foreman={readAloud} /> : undefined}
                                     />
                                 )}
                             </> : <>
