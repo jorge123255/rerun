@@ -48,6 +48,24 @@ it('greets an empty new task with the cloud\'s team welcome under « Ask »', as
     expect(document.querySelector<HTMLTextAreaElement>('textarea[data-desktop-foreman-composer]')?.placeholder).toBe('Send a message...')
 })
 
+it('offers GitHub projects on the welcome: the choice starts the sentence, and links in the box say they will be read', async () => {
+    await render({ sessionId: 'engine-session' })
+    const choice = [...document.querySelectorAll('button')].find(button => /^Build a team from GitHub projects/.test(button.textContent ?? ''))!
+    expect(choice.textContent).toContain('private ones too')
+    expect(document.querySelector('[data-foreman-github-hint]')).toBeNull()
+    await act(async () => choice.click())
+    const box = document.querySelector<HTMLTextAreaElement>('textarea[data-desktop-foreman-composer]')!
+    expect(box.value).toBe('Build a team for these GitHub projects: ')
+    // Nothing was sent, and nothing is said until a link is in the box.
+    expect(ports.conversation.sendMessage).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-foreman-github-hint]')).toBeNull()
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(box, 'Build a team for these GitHub projects: https://github.com/acme/web https://github.com/acme/api')
+        box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(document.querySelector('[data-foreman-github-hint]')!.textContent).toContain('2 GitHub repositories will be read when you send')
+})
+
 it('keeps the team welcome on an empty task even where the template library is wired and the company questions never ran', async () => {
     await render({ onReviewTemplate: vi.fn(), intakeFinished: false })
     expect(document.body.textContent).toContain("Hi Sam, I'm your Chief of Staff. Here is your team.")

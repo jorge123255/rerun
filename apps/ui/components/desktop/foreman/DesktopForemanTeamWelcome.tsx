@@ -6,6 +6,9 @@ import { WELCOME_ORB_SIZE } from '@rerun/ui/foreman'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopForemanOrb } from '../panel-motion/DesktopForemanOrb'
 
+export const DESKTOP_GITHUB_WELCOME = { title: 'Build a team from GitHub projects', description: 'Paste repository links, private ones too' } as const
+export const DESKTOP_GITHUB_WELCOME_PROMPT = 'Build a team for these GitHub projects: '
+
 export function DesktopForemanTeamWelcome({ agents, firstName, nextRoutine, now, disabled, onAction }: {
     agents: TeamAgent[]
     firstName: string
@@ -39,7 +42,11 @@ export function DesktopForemanTeamWelcome({ agents, firstName, nextRoutine, now,
         }),
         build: team.build,
     } })
-    return <ForemanTeamEmptyState model={model} now={now} disabled={disabled} orb={<DesktopForemanOrb role="welcome" size={WELCOME_ORB_SIZE} />}
+    // A Mac addition: the Chief of Staff reads any GitHub repositories linked in a message, so the
+    // welcome says so. It sits after the first choice and starts the sentence for the links.
+    const rows = [...model.rows]
+    rows.splice(1, 0, { id: 'github-projects', leading: 'build', ...DESKTOP_GITHUB_WELCOME, action: { type: 'prefill', text: DESKTOP_GITHUB_WELCOME_PROMPT } })
+    return <ForemanTeamEmptyState model={{ ...model, rows }} now={now} disabled={disabled} orb={<DesktopForemanOrb role="welcome" size={WELCOME_ORB_SIZE} />}
         // An empty conversation (a new task, or General before its first message) fades its welcome in.
         className="animate-in fade-in-0 slide-in-from-bottom-2 duration-300 ease-out motion-reduce:animate-none"
         pulseLabels={(count, working) => ({ coworkers: t('chatStart.pulseCoworkers', { count }), working: t('chatStart.pulseWorking', { count: working }) })}
