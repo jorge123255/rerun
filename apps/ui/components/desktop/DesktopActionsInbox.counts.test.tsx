@@ -10,6 +10,11 @@ import { desktopMessages, type DesktopLanguage } from '@/lib/desktop/locale'
 import { DesktopLocale } from './DesktopLocale'
 import { DesktopActionsInbox } from './DesktopActionsInbox'
 
+// The list and a peek swap inside a step transition whose exit is animated: here they swap at once.
+vi.mock('@rerun/ui/steps', async importOriginal => ({
+    ...await importOriginal<typeof import('@rerun/ui/steps')>(),
+    StepTransition: ({ children }: { children: React.ReactNode }) => children,
+}))
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const checkedAt = '2026-11-04T12:00:00.000Z'
@@ -311,7 +316,12 @@ test('French Actions keeps pending counts and opens the exact request without ac
     expect(panel?.querySelector('button[aria-label="' + language.messages.actions.markRead + '"]')).not.toBeNull()
     const row = panel?.querySelector<HTMLElement>('[data-actions-inbox-item="question-first"]')
     expect(row).not.toBeNull()
+    // The question opens its peek, in French; the conversation opens from its footer.
     await act(async () => { row!.click() })
+    expect(open).not.toHaveBeenCalled()
+    const peek = container.querySelector<HTMLElement>('[data-actions-inbox-peek="question-first"]')!
+    expect(peek.querySelector('button[aria-label="Retour"]')).not.toBeNull()
+    await act(async () => { [...peek.querySelectorAll('button')].find(node => node.textContent?.trim() === 'Ouvrir la conversation')!.click() })
     expect(open).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: question.sessionId, agentId: question.agentId }))
     expect(posts(fetcher)).toEqual([])
 })

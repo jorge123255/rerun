@@ -9,6 +9,7 @@
         "unknownCoworker": "Coworker",
         "detail": {
             "close": "Fermer",
+            "back": "Retour",
             "seeAll": "Tout voir",
             "seeAllCount": "Tout voir ({count})",
             "markRead": "Marquer comme lu",
@@ -23,6 +24,18 @@
                 "done": "Terminé",
                 "waiting_human": "En attente"
             }
+        },
+        "peek": {
+            "close": "Fermer",
+            "back": "Retour",
+            "openConversation": "Ouvrir la conversation",
+            "showMore": "Afficher plus",
+            "showLess": "Afficher moins",
+            "sent": "Envoyé à {agent}",
+            "stale": "Cette demande a déjà reçu une réponse.",
+            "openToAnswer": "Ouvrez la conversation pour répondre.",
+            "busy": "{agent} travaille encore. Réessayez dans un instant.",
+            "failed": "Votre réponse n'est pas partie. Réessayez."
         },
         "markAll": {
             "title": "Tout marquer comme lu ?",

@@ -18,14 +18,16 @@ import { Field } from '@/components/ui/field'
 import { Switch } from '@/components/ui/switch'
 import { MarkdownTextarea } from '@/components/ui/markdown-textarea'
 import { TimezoneCombobox } from '@/components/agent/TimezoneCombobox'
-import { PanelList,PanelListHeader,PanelScroller } from '@/components/ui/panel-list'
-import { PanelRow } from '@/components/ui/panel-row'
+import { PanelListHeader } from '@/components/ui/panel-list'
 import { PanelSteps } from '@/components/ui/panel-steps'
-import { FxSchedulesLoading } from '../fx-repairs/PanelLoadingSkeletons'
 import { PanelDeleteButton,PanelEditorBody,PanelEditorFooter,PanelEditorHeader,PanelEditorShell } from '@/components/ui/panel-editor'
 import { EmptyState } from '@/components/ui/empty-state'
 import { CalendarClockIcon,PlusIcon } from '@/lib/icons'
-import { Badge } from '@rerun/ui/primitives'
+import { RoutineList, routineKey } from '@rerun/ui/foreman'
+import { createDesktopWorkspaceRoutinesClient } from '@/lib/desktop/workspace-routines/client'
+import { DesktopRoutineMenu } from '../routines/DesktopRoutineMenu'
+import { DesktopRoutinesSkeleton } from '../routines/DesktopRoutinesSkeleton'
+import { useDesktopRoutines } from '../routines/useDesktopRoutines'
 import type { DesktopScheduleInput } from '@/lib/desktop/server/schedules/api'
 import { useDesktopScheduleToolNotices } from '@/lib/desktop/use-schedule-tool-notices'
 import { DesktopScheduleToolNotice } from '../schedule-tools/DesktopScheduleToolNotice'
@@ -75,6 +77,13 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
     },[request, t])
     useEffect(()=>{void load()},[load])
     const notice=useDesktopScheduleToolNotices(agentId,()=>{if(editing)setExternalChange(true);void load()})
+    // The rows' state and what they do, shared with the Chief of Staff's list (upstream #318).
+    const routinesClient = useMemo(() => createDesktopWorkspaceRoutinesClient(), [])
+    const rows = useMemo(() => tasks?.map(task => ({ ...task, agentId, revision: task.revision ?? '' })) ?? null, [tasks, agentId])
+    const patch = (key: string, change: Partial<Pick<Task, 'enabled' | 'name' | 'revision'>>) => setTasks(current => current && current.map(task => routineKey({ agentId, slug: task.slug }) === key ? { ...task, ...change } : task))
+    const list = useDesktopRoutines({ client: routinesClient, routines: rows, patch, reload: load, onOpenChat: onOpenSession,
+        onSaved: (key, routine) => patch(key, { enabled: routine.enabled, name: routine.name, revision: routine.revision }) })
+    const taskOf = (slug: string) => tasks?.find(task => task.slug === slug)
     function navigate(task:Task|'new'|null){epoch.current++;setEditing(task);setExternalChange(false)}
     async function change(method:string,body:unknown){const own=epoch.current;listEpoch.current++;await request(method,body);if(alive.current && own===epoch.current){navigate(null);await load()}}
     const newButton=<Button size="sm" variant="outline" disabled={loading || Boolean(error) || tasks===null} onClick={()=>{if(!loading && !error && tasks!==null)navigate('new')}}><PlusIcon className="size-3.5 mr-1"/>{t('routines.coworker.newTask')}</Button>
@@ -90,15 +99,31 @@ function Schedules({agentId,onOpenSession}:{agentId:string;onOpenSession:(chat:C
                 {newButton}
             </PanelListHeader>
             {error && <p role="alert" className="p-3 text-xs text-destructive">{error}</p>}
-            {loading && !error && <FxSchedulesLoading label={t('routines.coworker.loading')} />}
+            {loading && !error && !tasks?.length && <DesktopRoutinesSkeleton withAgent={false} label={t('routines.coworker.loading')} className="min-h-0 flex-1 pt-1" />}
             {error && tasks !== null && tasks.length > 0 && <p className="px-3 pt-2 text-xs text-muted-foreground">{t('routines.coworker.previous')}</p>}
             {!loading && !error && tasks?.length === 0 && <EmptyState icon={CalendarClockIcon} title={t('routines.coworker.emptyTitle')} description={t('routines.coworker.emptyDescription')} />}
-            {tasks && tasks.length > 0 && <PanelScroller><PanelList>{tasks.map(task => <div key={task.slug}>
-                <PanelRow onClick={() => navigate(task)} title={task.name} description={desktopScheduleSummary(task, t, locale)}
-                    meta={!task.enabled ? <Badge size="xs" tone="neutral" glow={false}>{t(task.autoDisabledAt ? 'routines.autoOffBadge' : 'routines.coworker.paused')}</Badge> : task.warnings?.length ? <Badge size="xs" tone="neutral" glow={false}>{t('routines.warningBadge')}</Badge> : undefined}
-                    footer={<span>{t('routines.coworker.nextRun', { date: task.nextRunAt ? formatDate(task.nextRunAt, locale) : '—' })} · {usageLine(task, iso => formatDate(iso, locale)) ?? t('routines.lastResult', { status: resultLabel(task.lastResult, t) })}</span>} />
-                {task.lastResult?.chat && <Button size="sm" variant="ghost" onClick={() => onOpenSession(task.lastResult!.chat)}>{t('routines.openResult')}</Button>}
-            </div>)}</PanelList></PanelScroller>}
+            {/* The list the Chief of Staff's routines use (upstream #318): grouped by when each runs next, the
+                paused ones folded, a switch to pause or resume each, and its menu. Every row is this coworker's,
+                so the rows drop its face and its name; the last run stays under the rule. */}
+            {tasks && tasks.length > 0 && list.routines && <RoutineList
+                routines={list.routines}
+                now={list.now}
+                copy={(key, values) => t(`routines.${key}`, values)}
+                onOpen={routine => { const task = taskOf(routine.slug); if (task) navigate(task) }}
+                onToggle={list.toggle}
+                isSaving={list.isSaving}
+                renamingKey={list.renamingKey}
+                onRename={list.rename}
+                onCancelRename={list.cancelRename}
+                renderMenu={routine => <DesktopRoutineMenu routine={routine} canRename onRename={() => list.startRename(routine)}
+                    onEdit={() => { const task = taskOf(routine.slug); if (task) navigate(task) }} onRunNow={() => list.runNow(routine)}
+                    onOpenResult={() => { if (routine.lastResult?.chat) onOpenSession(routine.lastResult.chat) }} />}
+                renderFooter={routine => <span className="truncate">{[
+                    !routine.enabled && routine.autoDisabledAt ? t('routines.autoOffBadge') : routine.warnings?.length ? t('routines.warningBadge') : null,
+                    usageLine(routine, iso => formatDate(iso, locale)) ?? t('routines.lastResult', { status: resultLabel(routine.lastResult, t) }),
+                ].filter(Boolean).join(' · ')}</span>}
+                className="min-h-0 flex-1 pt-1"
+            />}
             <p className="p-3 text-xs text-muted-foreground">{t('routines.coworker.scheduleHelp')}</p>
             <Button size="sm" variant="ghost" disabled={loading} onClick={() => void load()}>{t('routines.coworker.reload')}</Button>
         </div>}</PanelSteps>

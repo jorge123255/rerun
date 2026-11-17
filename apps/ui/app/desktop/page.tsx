@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { DesktopApp } from '@/components/desktop/DesktopApp'
 import { DesktopLocale } from '@/components/desktop/DesktopLocale'
 import { DesktopMacTitleBar } from '@/components/desktop/DesktopMacTitleBar'
+import { DesktopPageAttention } from '@/components/desktop/DesktopPageAttention'
 import { readDesktopLanguage } from '@/lib/desktop/server/language'
 import { authenticateDesktopRequest, DesktopHttpError } from '@/lib/desktop/server/auth'
 import { readDesktopRuntime } from '@/lib/desktop/server/runtime'
@@ -37,5 +38,5 @@ async function readPageData() {
 
 export default async function DesktopPage() {
     const [bootstrap, language, mac, speech, usageWaits] = await readPageData()
-    return <>{mac && <DesktopMacTitleBar />}<DesktopSpeechPrime settings={speech} /><DesktopLocale initial={language}><DesktopApp initialData={bootstrap} usageWaits={usageWaits} /></DesktopLocale></>
+    return <>{mac && <DesktopMacTitleBar />}<DesktopPageAttention /><DesktopSpeechPrime settings={speech} /><DesktopLocale initial={language}><DesktopApp initialData={bootstrap} usageWaits={usageWaits} /></DesktopLocale></>
 }

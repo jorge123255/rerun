@@ -21,6 +21,11 @@ import { DesktopForemanTeamWelcome } from './DesktopForemanTeamWelcome'
 import { DesktopForemanHeader } from './DesktopForemanHeader'
 import { DesktopForemanMove, desktopForemanAnchorOf } from './DesktopForemanMove'
 import { DesktopForemanRoutines } from './DesktopForemanRoutines'
+import { DesktopForemanNameMark, DesktopForemanTopBar, type DesktopForemanFramedBar } from './DesktopForemanTopBar'
+import { DesktopForemanDetails } from './DesktopForemanDetails'
+import { DESKTOP_DETAILS_ROOM, DesktopDetailsColumn } from '../simple/DesktopDetailsColumn'
+import { FloatingPill } from '@/components/agent/sheet/floating'
+import { setDesktopDetailsWanted, useDesktopDetailsWanted } from '@/lib/desktop/simple-details'
 import { DesktopWorkspaceRoutines } from './routines/DesktopWorkspaceRoutines'
 import { createDesktopWorkspaceRoutinesClient } from '@/lib/desktop/workspace-routines/client'
 import { useMemo } from 'react'
@@ -41,7 +46,8 @@ import { DesktopQuestionCard } from '@/components/desktop/DesktopQuestionCard'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import type { DesktopTemplateIdentity } from '@/components/desktop/templates/types'
 import { Button } from '@/components/ui/button'
-import { RotateCwIcon } from '@/lib/icons'
+import { ChevronDownIcon, RotateCwIcon } from '@/lib/icons'
+import { cn } from '@/lib/utils'
 import { useDesktopLocale } from '../DesktopLocale'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { DesktopForemanAlternateReview, DesktopForemanAlternates } from './DesktopForemanAlternates'
@@ -89,6 +95,8 @@ export type DesktopForemanColumnProps = {
     headerActions?: ReactNode
     /** The thread on screen, on its own row under the tabs. */
     headerCrumb?: ReactNode
+    /** What the header shows in the Simple view's middle, where the column takes a coworker's frame. */
+    framedBar?: DesktopForemanFramedBar
     /** General's saved tasks and the way into one, drawn as branches in the transcript. */
     threads?: readonly DesktopForemanGeneralThread[]
     onOpenThread?: (thread: DesktopForemanGeneralThread) => void
@@ -149,7 +157,7 @@ export function DesktopForemanColumn({
     agentNameOf,
     orbState = 'idle',
     headerActions,
-    headerCrumb, threads, onOpenThread,
+    headerCrumb, framedBar, threads, onOpenThread,
     runNotice,
     renderBoardOverlay,
     className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, firstSend, controlledOpen, hidden, fill, centerOpen, findEnabled, dockFeed, voiceSlot, voiceMic, voiceRecording, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
@@ -190,7 +198,18 @@ export function DesktopForemanColumn({
     const composerScope = useRef({ chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft, mentions: ui.draftCoworkerMentions })
     composerScope.current = { chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft, mentions: ui.draftCoworkerMentions }
     const pendingStarter = !!starter && !starter.decision?.settled
-    const onRoutines = ui.tab === 'routines'
+    const mobile = useMediaQuery('(max-width: 767px)')
+    const wide = useMediaQuery('(min-width: 1280px)')
+    // In the Simple view's middle the Chief of Staff takes the frame a coworker's chat has (upstream #316).
+    const framed = !!fill && !mobile && !!framedBar
+    // There the routines are not in a tab over the chat.
+    const onRoutines = ui.tab === 'routines' && !framed
+    // The column beside the chat: open or closed as a coworker's card was left, and kept from one to the other.
+    const detailsWanted = useDesktopDetailsWanted()
+    const detailsOpen = framed && detailsWanted
+    // Mounted by the first opening and kept, so opening it again draws nothing new.
+    const [detailsMounted, setDetailsMounted] = useState(false)
+    if (detailsOpen && !detailsMounted) setDetailsMounted(true)
     const [sendingDocuments, setSendingDocuments] = useState(false)
     const [retryingSend, setRetryingSend] = useState(false)
     const retryInFlight = useRef(false)
@@ -301,8 +320,6 @@ export function DesktopForemanColumn({
         }
     }
     const triggerRef = useRef<HTMLElement | null>(null)
-    const mobile = useMediaQuery('(max-width: 767px)')
-    const wide = useMediaQuery('(min-width: 1280px)')
     const dockBinding = useDesktopForemanDockBinding({ chat, placement: ui.placement, dock: ui.dock ?? DEFAULT_DOCK_EXTRAS, setPlacement: foreman.setPlacement, setDock: foreman.setDock })
     const consumedFocus = useRef<string | undefined>(undefined)
     const changeOpen = useCallback((open: boolean) => {
@@ -342,8 +359,21 @@ export function DesktopForemanColumn({
         <DesktopForemanDockLayout scope={dockBinding.scope} open={ui.open} hidden={hidden} fill={fill}
             placement={dockBinding.placement} dock={dockBinding.dock} onPlacement={dockBinding.onPlacement} onDock={dockBinding.onDock}
             onClose={() => changeOpen(false)} returnFocus={() => triggerRef.current} onLayout={onLayout}>
-            {header => <div ref={column} className="relative flex h-full min-h-0 flex-col">
-                <DesktopForemanHeader
+            {header => <div ref={column} className={cn('relative flex h-full min-h-0 flex-col', detailsOpen && wide && DESKTOP_DETAILS_ROOM)} onKeyDown={event => {
+                // Escape in its panel closes it, as it closes a coworker's card. A dialog or a field in it keeps its own Escape.
+                const target = event.target as HTMLElement
+                if (detailsOpen && event.key === 'Escape' && !event.defaultPrevented && target.closest('[data-foreman-details]') && !target.closest('[role="dialog"], [role="alertdialog"], input, textarea')) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setDesktopDetailsWanted(false)
+                }
+            }}>
+                {framed && framedBar ? <DesktopForemanTopBar bar={framedBar}
+                    name={<FloatingPill label={t('workspaceView.foreman.card')} active={detailsOpen} onClick={() => setDesktopDetailsWanted(!detailsOpen)} className="max-w-full pl-1.5">
+                        <DesktopForemanNameMark orbState={orbState} />
+                        <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    </FloatingPill>} />
+                : <DesktopForemanHeader
                     onDragPointerDown={header.onPointerDown}
                     anchor={desktopForemanAnchorOf(dockBinding.placement)}
                     crumb={intake ? undefined : headerCrumb}
@@ -360,7 +390,7 @@ export function DesktopForemanColumn({
                             <Button type="button" size="icon-xs" variant="ghost" aria-label={t('foreman.alternates.title')}
                                 title={t('foreman.alternates.title')} onClick={alternates.openList}><RotateCwIcon /></Button>}
                     </>}
-                />
+                />}
                 <div className={onRoutines || alternates.open ? 'hidden' : 'contents'}>
                     {intake ? <>
                         <div className="relative flex min-h-0 flex-1 flex-col justify-center overflow-y-auto px-3 py-6">
@@ -396,6 +426,7 @@ export function DesktopForemanColumn({
                             </DesktopArrive>}
                         </> : null}
                         underCrumb={!!headerCrumb}
+                        framed={framed}
                         emptyWelcome={!starterPack && !pendingStarter}
                         emptyContent={team && !starterPack && !pendingStarter && !starter && <DesktopForemanTeamWelcome
                             agents={team} firstName={firstName} nextRoutine={nextRoutine} now={routineNow}
@@ -474,6 +505,8 @@ export function DesktopForemanColumn({
                     {!intake && !pendingStarter && draftRepositories > 0 && <p data-foreman-github-hint role="status" className="mx-3 mt-2 text-[11px] text-muted-foreground">
                         {draftRepositories === 1 ? '1 GitHub repository' : `${draftRepositories} GitHub repositories`} will be read when you send. Nothing is cloned or run.
                     </p>}
+                    {/* In a coworker's frame the composer sits under its line, in the conversation's column. */}
+                    <div className={framed ? 'shrink-0 border-t border-border' : 'contents'}>
                     <DesktopForemanComposer
                         mentions={mentions}
                         trailing={intake || pendingStarter ? undefined : composerTrailing}
@@ -486,7 +519,9 @@ export function DesktopForemanColumn({
                             ? <DesktopDocumentAttachmentControls controller={documents} disabled={!editAttachments} /> : undefined}
                         hasAttachments={attachmentComposer && documents.attachments.length > 0}
                         onFiles={editAttachments && documents.loaded ? documents.add : undefined}
-                        placeholder={intake || pendingStarter ? t('foreman.ownEntryPlaceholder') : undefined}
+                        className={framed ? 'mx-auto w-full max-w-[48rem]' : undefined}
+                        placeholder={intake || pendingStarter ? t('foreman.ownEntryPlaceholder') : !framed || !framedBar ? undefined
+                            : framedBar.thread?.named ? t('reply', { title: framedBar.thread.title }) : t('message', { name: t('workspaceView.foreman.name') })}
                         maxLength={intake || pendingStarter ? 4000 : undefined}
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
@@ -498,10 +533,27 @@ export function DesktopForemanColumn({
                         onSend={send}
                         onStop={() => void foreman.stop()}
                     />
+                    </div>
                 </div>
                 {!onRoutines && alternates.open && <DesktopForemanAlternates ui={alternates}
                     sourceText={id => messages.find(message => message.id === id)?.text} />}
                 <DesktopForemanAlternateReview ui={alternates} />
+                {/* Its panel beside the chat, the column a coworker's card has: who it is, then every routine of
+                    the workspace (upstream #317). Over the chat on a narrower window, behind the same backdrop. */}
+                {framed && detailsOpen && !wide && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => setDesktopDetailsWanted(false)} />}
+                {framed && <DesktopDetailsColumn label={t('workspaceView.foreman.card')} open={detailsOpen} beside={wide}>
+                    {detailsMounted && <DesktopForemanDetails orbState={orbState} shown={detailsOpen} onClose={() => setDesktopDetailsWanted(false)} routines={
+                        <DesktopWorkspaceRoutines
+                            key={`details:${chat.workspaceId}`}
+                            client={routinesClient}
+                            // Out of sight it reads nothing, and reads once when it shows again (upstream #319).
+                            active={detailsOpen && ui.open && !hidden}
+                            onOpenChat={target => foreman.navigate({ kind: 'open_coworker', agentId: target.agentId, sessionId: target.sessionId })}
+                            docked={false}
+                            agentNameOf={agentNameOf}
+                            className="min-h-0 flex-1"
+                        />} />}
+                </DesktopDetailsColumn>}
                 {onRoutines && (
                     <DesktopWorkspaceRoutines
                         key={`${chat.workspaceId}:${chat.chatId}`}
