@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest'
 import { DESKTOP_GITHUB_PROJECT_LIMITS, githubRepositoryLinksMessage, parseGithubRepositoryLinks, type DesktopGithubProject, type DesktopGithubProjectsRecord } from '@rerun/contracts'
 
 vi.mock('server-only', () => ({}))
-import { acceptedGithubProjects, desktopGithubProjectsData, desktopGithubProjectsInstruction, DESKTOP_GITHUB_PROJECTS_PROPOSAL_RULES } from './github-projects'
+import { acceptedGithubProjects, desktopGithubProjectsData, desktopGithubProjectsInstruction, desktopGithubProjectsUnreadInstruction, DESKTOP_GITHUB_PROJECTS_PROPOSAL_RULES } from './github-projects'
 import { createDesktopGithubProjectsStore, readDesktopGithubProjects } from '../server/github-projects/store'
 
 const project = (name: string, patch: Partial<DesktopGithubProject> = {}): DesktopGithubProject => ({
@@ -105,4 +105,20 @@ it('tells the Chief of Staff how to name each coworker\'s repository and what to
     expect(rules).toContain('calling still needs the Call coworkers permission')
     // The rules are the app's own text and ride along with the data line.
     expect(desktopGithubProjectsInstruction(record([project('openflix')]))!.endsWith(rules)).toBe(true)
+})
+
+it('tells the Chief of Staff which listed repositories could not be read, and not to promise them', () => {
+    const lost = project('private-one', { state: 'unavailable', failure: 'not_found', purpose: null, stack: [], build: null, suggestedRoles: [], roles: [] })
+    expect(desktopGithubProjectsUnreadInstruction(null)).toBeNull()
+    expect(desktopGithubProjectsUnreadInstruction(record([project('openflix')]))).toBeNull()
+    // A project the owner removed from the review is not mentioned again.
+    expect(desktopGithubProjectsUnreadInstruction(record([{ ...lost, removed: true }]))).toBeNull()
+    const said = desktopGithubProjectsUnreadInstruction(record([project('openflix'), lost]))!
+    expect(said).toContain('["acme/private-one"]')
+    expect(said).not.toContain('acme/openflix')
+    expect(said).toContain('do not set `repository` on it')
+    expect(said).toContain('do not say it will work on a copy')
+    expect(said).toContain("this Mac's GitHub sign-in")
+    // Nothing is passed on as project data when none was read.
+    expect(desktopGithubProjectsInstruction(record([lost]))).toBeNull()
 })
