@@ -75,10 +75,11 @@ test('the Chief of Staff is told the settings as they are and how to run the set
     )
     expect(text).toContain('{"name":"Ada","on":true,"model":"ChatGPT (Codex) · gpt-6-sol","allowed":["callAgent"],"setup":"needed"}')
     // Read, and following the workspace default; not read at all says nothing about model or permissions.
-    expect(text).toContain('{"name":"Ben","on":false,"model":"workspace default","allowed":[]}')
+    expect(text).toContain('{"name":"Ben","on":false,"model":"workspace default","allowed":[],"setup":"not needed"}')
     expect(text).toContain('{"name":"Cy","on":true}')
     expect(text).toContain('The setup conversation.')
     expect(text).toContain('settle this before any start_setup')
+    expect(text).toContain('Never propose start_setup for a coworker whose setup is not needed')
     expect(text).toContain('never a line for something already so')
     expect(text).toContain('are not yours to propose')
     expect(text).not.toContain('engine-key')
