@@ -1,6 +1,6 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { parseJsonEventStream, uiMessageChunkSchema } from 'ai'
+import { parseJsonEventStream, uiMessageChunkSchema, type UIMessageChunk } from 'ai'
 import { COMPANY_BRIEF_MODEL_PROVIDERS, FOREMAN_AGENT_ID, desktopCoworkerMentionFieldsOf, documentScopeKey, foremanDocumentScope, questionDocumentIndex, githubRepositoryLinksInText, type CompanyBriefModelRef, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopForemanLiveEvent, type DesktopForemanModelRef } from '@rerun/contracts'
 import { EngineRequestError, cancelRun, getRun, getSessionMessages } from '@/lib/engine/client'
 import { publicDesktopHistory, transformEngineMessages } from '@/lib/chat/engine-history'
@@ -59,6 +59,7 @@ const REPLY_UPDATE_INTERVAL = 350
 type ForemanEvent = DesktopForemanLiveEvent | DesktopForemanReplyChanged
 type Subscriber = { chat: DesktopForemanChatRef; send: (event: ForemanEvent) => void }
 type ReplyActivity = { binding: DesktopForemanBinding; sessionId: string; preview: ReturnType<typeof createForemanReplyPreview> }
+export type ForemanReplyWatcher = { chunk(chunk: UIMessageChunk): void; end(): void }
 type Binding = Awaited<ReturnType<typeof createBinding>>
 const bindings = () => ((globalThis as unknown as Record<symbol, Map<string, Promise<Binding>>>)[KEY] ??= new Map())
 const shutdowns = () => ((globalThis as unknown as Record<symbol, WeakMap<Promise<Binding>, Promise<void>>>)[SHUTDOWN_KEY] ??= new WeakMap())
@@ -85,6 +86,8 @@ async function createBinding(runtime: DesktopRuntime) {
         for (const subscriber of subscribers) if (subscriber.chat.chatId === chat.chatId && subscriber.chat.workspaceId === chat.workspaceId) subscriber.send(event)
     }
     const replies = new Map<string, ReplyActivity>()
+    // Listeners on one run's raw reply stream, registered before its send (the voice conversation).
+    const replyWatchers = new Map<string, Set<ForemanReplyWatcher>>()
     type VoiceGuard = { signal: AbortSignal; assertCurrent(): Promise<void> }
     const voiceLifetime = new AbortController()
     async function checkVoice(guard?: VoiceGuard) {
@@ -257,6 +260,7 @@ async function createBinding(runtime: DesktopRuntime) {
             }
             void parseJsonEventStream({ stream: response.body, schema: uiMessageChunkSchema }).pipeTo(new WritableStream({
                 write(result) {
+                    if (result.success) for (const watcher of replyWatchers.get(turn.binding.runId) ?? []) watcher.chunk(result.value)
                     if (!result.success || !activity.preview.accept(result.value) || replyTimer || replies.get(chatId) !== activity || !subscribers.size) return
                     replyTimer = setTimeout(() => {
                         replyTimer = undefined
@@ -265,6 +269,7 @@ async function createBinding(runtime: DesktopRuntime) {
                 },
             })).catch(() => {}).finally(() => {
                 if (replyTimer) clearTimeout(replyTimer)
+                for (const watcher of replyWatchers.get(turn.binding.runId) ?? []) watcher.end()
                 if (replies.get(chatId) !== activity) return
                 replies.delete(chatId)
                 notifyReplyChange()
@@ -497,6 +502,16 @@ async function createBinding(runtime: DesktopRuntime) {
             const connection = usableConnection((await readDesktopProviders(runtime)).connections, pair)
             if (!connection || !(COMPANY_BRIEF_MODEL_PROVIDERS as readonly string[]).includes(connection.provider)) throw new DesktopHttpError(409, 'Choose a connected model for company research.')
             return { ...pair, provider: connection.provider as CompanyBriefModelRef['provider'], source: 'conversation', agentId: 'foreman', foremanChat: chat }
+        },
+        /** Every chunk of run `runId`'s reply stream from its admission on, then its end. */
+        watchReply(runId: string, watcher: ForemanReplyWatcher) {
+            const watchers = replyWatchers.get(runId) ?? new Set<ForemanReplyWatcher>()
+            replyWatchers.set(runId, watchers)
+            watchers.add(watcher)
+            return () => {
+                watchers.delete(watcher)
+                if (!watchers.size && replyWatchers.get(runId) === watchers) replyWatchers.delete(runId)
+            }
         },
         voiceShutdownSignal: voiceLifetime.signal,
         closeVoiceAdmission: () => voiceLifetime.abort(),

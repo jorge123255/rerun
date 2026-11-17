@@ -7,6 +7,7 @@ import { desktopVaultMcpRuntime } from './vault/mcp-runtime'
 import { createDesktopSecretCrypto } from './secret-requests/crypto'
 import { shutdownDesktopForeman } from './foreman/binding'
 import { shutdownDesktopForemanVoice } from './foreman-voice/binding'
+import { shutdownDesktopVoiceEngine } from './voice-engine/binding'
 import { canonicalDesktopEngineRoot, desktopEngineParts } from './runtime'
 import 'server-only'
 import { createCanonicalMcpSecretReferences } from './mcp-secret-references/binding'
@@ -424,7 +425,7 @@ export async function handleDesktopMcpBridge(request: Request): Promise<Response
         const signal = AbortSignal.any([request.signal, AbortSignal.timeout(10_000)])
         const body = desktopMcpBridgeRequest.parse(JSON.parse(await boundedText(new Response(request.body), signal, 96_000)))
         if (body.action === 'shutdown') {
-            const outcomes = await Promise.allSettled([shutdownDesktopCompanyProfile(runtime), shutdownDesktopForeman(runtime), shutdownDesktopForemanVoice(runtime), shutdownDesktopRemoteMcp(runtime)])
+            const outcomes = await Promise.allSettled([shutdownDesktopCompanyProfile(runtime), shutdownDesktopForeman(runtime), shutdownDesktopForemanVoice(runtime), shutdownDesktopVoiceEngine(runtime), shutdownDesktopRemoteMcp(runtime)])
             const failures = outcomes.filter((item): item is PromiseRejectedResult => item.status === 'rejected')
             if (failures.length) throw new AggregateError(failures.map(item => item.reason), 'Workspace shutdown is not confirmed')
             return Response.json({ stopped: true }, { headers: { 'Cache-Control': 'no-store' } })

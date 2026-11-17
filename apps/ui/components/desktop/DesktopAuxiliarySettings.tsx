@@ -1,8 +1,9 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DesktopSpeechSettings } from './speech/DesktopSpeechSettings'
+import { DesktopVoiceEngineSettings } from './speech/DesktopVoiceEngineSettings'
 import { announceDesktopSpeechChange } from '@/lib/desktop/speech-player'
 import { DESKTOP_SPEECH_KEY_PURPOSE } from '@/lib/desktop/speech'
 import { DESKTOP_KEYLESS_SEARCH_ON, DESKTOP_LOCAL_EMBEDDING_DEFAULT, desktopAuxiliarySettingsSchema, desktopLocalEmbeddingModel, desktopLocalEmbeddingStatusSchema, type DesktopAuxiliaryStatus, type DesktopLocalEmbeddingStatus } from '@/lib/desktop/auxiliary'
@@ -35,7 +36,10 @@ export function DesktopAuxiliarySettings() {
         <p className="text-sm text-muted-foreground">Rerun uses these services for search, memories and voice. Enter a service API key to enable it. ChatGPT sign-in continues to power your chats.</p>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         {!rows && !error && <p role="status" className="text-sm text-muted-foreground">Loading tool services…</p>}
-        {rows?.map(row => <ServiceKey key={row.purpose + row.revision} row={row} onSaved={setRows}/>)}
+        {rows?.map(row => <Fragment key={row.purpose + row.revision}>
+            <ServiceKey row={row} onSaved={setRows}/>
+            {row.purpose === DESKTOP_SPEECH_KEY_PURPOSE && <DesktopVoiceEngineSettings keySaved={row.configured} />}
+        </Fragment>)}
     </div>
 }
 
