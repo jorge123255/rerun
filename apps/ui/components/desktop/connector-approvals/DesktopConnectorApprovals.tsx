@@ -30,7 +30,7 @@ export const announceConnectorApprovalsChanged = () => { window.dispatchEvent(ne
 // A browser press is never named by its label here: the label is page content, and this is a message from the person.
 export function connectorAnswerText(tool: string, decision: DesktopConnectorApprovalDecision): string {
     const press = tool === DESKTOP_BROWSER_PRESS_TOOL
-    const name = press ? 'the press in the browser you asked about' : toolLabelOf(tool)
+    const name = press ? 'the press in the browser you asked about' : REPOSITORY_ACTS[tool] ?? toolLabelOf(tool)
     if (decision === 'deny') return `Declined: ${name}. I decided not to have this done. Do not do it, or anything equivalent, another way; tell me briefly what you did not do.`
     return press ? `Allowed once: ${name}. Make exactly the same press now. It covers that one press only.` : `Allowed: ${name}. Run it now with exactly the same arguments.`
 }
@@ -42,6 +42,9 @@ const BODY = /^(?:body|message|text|content|html_?body)$/i
 const words = (key: string) => { const text = key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().toLowerCase(); return text.charAt(0).toUpperCase() + text.slice(1) }
 // A list arrives as JSON text: ["a","b"] reads better as a, b.
 const plain = (value: string) => { try { const parsed: unknown = JSON.parse(value); return Array.isArray(parsed) && parsed.every(item => typeof item === 'string') ? parsed.join(', ') : value } catch { return value } }
+
+// The app's own two acts on a coworker's repository are named for what they are, not by their tool.
+const REPOSITORY_ACTS: Record<string, string> = { repo_publish: 'this pull request', repo_comment: 'this comment on GitHub' }
 
 function readPreview(preview: string): DesktopConnectorPreview | null {
     try { const parsed = desktopConnectorPreviewSchema.safeParse(JSON.parse(preview)); return parsed.success ? parsed.data : null } catch { return null }
@@ -169,7 +172,7 @@ export function DesktopConnectorApprovals({ sessionId, generating, disabled, onA
     const waiting = view.pending[0]
     // A press in the coworker's browser: the control's own label and the page's host, as the page gave them.
     const press = waiting?.tool === DESKTOP_BROWSER_PRESS_TOOL ? readPreview(waiting.preview)?.press ?? { label: '', host: '', via: 'click' as const } : null
-    const title = !waiting ? '' : !press ? t('boardUI.askTitle', { tool: toolLabelOf(waiting.tool) })
+    const title = !waiting ? '' : !press ? t('boardUI.askTitle', { tool: REPOSITORY_ACTS[waiting.tool] ?? toolLabelOf(waiting.tool) })
         : t(!press.label ? 'boardUI.askPressUnlabelled' : press.via === 'key' ? 'boardUI.askPressKey' : 'boardUI.askPressTitle',
             { name: coworkerName || t('boardUI.askPressCoworker'), label: press.label, host: press.host || t('boardUI.askPressHere') })
     return (
