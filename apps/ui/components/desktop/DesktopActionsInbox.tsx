@@ -334,6 +334,16 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
     const latest = useRef({ items, doneItems, onOpenConversation })
     latest.current = { items, doneItems, onOpenConversation }
     const rootRef = useRef<HTMLDivElement>(null)
+    // The pill sits at the foot of the board and at the head of the Simple view's list. The card
+    // opens toward the room there is: upward from the foot, downward from the head, where opening
+    // upward put it off the top of the window.
+    const [opensDown, setOpensDown] = useState(false)
+    useLayoutEffect(() => {
+        const root = rootRef.current
+        if (!open || !root) return
+        const { top, bottom } = root.getBoundingClientRect()
+        setOpensDown(bottom > 0 && top < window.innerHeight - bottom)
+    }, [open])
     const pillRef = useRef<HTMLButtonElement>(null)
     const cardId = useId()
     const sorted = useMemo(() => [...items].sort((a, b) => (b.requestedAt ?? b.updatedAt).localeCompare(a.requestedAt ?? a.updatedAt)), [items])
@@ -472,7 +482,7 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
     return (
         <div ref={rootRef} className={cn('relative flex flex-col items-start', className)}>
             {open && (
-                <div id={cardId} role="region" aria-label={t('actions.region')} className="absolute bottom-full z-10 mb-2 overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+                <div id={cardId} role="region" aria-label={t('actions.region')} data-opens={opensDown ? 'down' : 'up'} className={cn('absolute z-30 overflow-hidden rounded-2xl border border-border bg-card shadow-2xl', opensDown ? 'top-full mt-2' : 'bottom-full mb-2')}>
                     {/* Upstream #288: the list and a request slide past each other, the card resizing around them. */}
                     <AnimatedSize axis="both" transition={reducedMotion ? { duration: 0 } : undefined}>
                     <StepTransition stepKey={peeked ? `peek:${peeked.id}` : 'list'} direction={reducedMotion ? 0 : direction}>
