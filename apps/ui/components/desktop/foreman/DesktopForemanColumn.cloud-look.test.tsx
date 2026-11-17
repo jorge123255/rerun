@@ -66,6 +66,15 @@ it('offers GitHub projects on the welcome: the choice starts the sentence, and l
     expect(document.querySelector('[data-foreman-github-hint]')!.textContent).toContain('2 GitHub repositories will be read when you send')
 })
 
+it('offers to set the team up on the welcome once there are coworkers: one tap sends the request', async () => {
+    await render({ sessionId: 'engine-session' })
+    const choice = [...document.querySelectorAll('button')].find(button => /^Set up my team/.test(button.textContent ?? ''))
+    expect(choice!.textContent).toContain('Models, permissions and setup')
+    await act(async () => choice!.click())
+    expect(ports.conversation.sendMessage).toHaveBeenCalledTimes(1)
+    expect(JSON.stringify(ports.conversation.sendMessage.mock.calls[0])).toContain('Set up my team: walk me through the models, permissions and setup')
+})
+
 it('keeps the team welcome on an empty task even where the template library is wired and the company questions never ran', async () => {
     await render({ onReviewTemplate: vi.fn(), intakeFinished: false })
     expect(document.body.textContent).toContain("Hi Sam, I'm your Chief of Staff. Here is your team.")

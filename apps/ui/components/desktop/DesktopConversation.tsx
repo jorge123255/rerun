@@ -812,6 +812,11 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const webhookOwns = (kind: TriggerRequestView['link']['kind'], id: string | undefined) => !!wrappedWebhook && wrappedWebhook.link.kind === kind && wrappedWebhook.link.requestId === id
     const pendingRequest = question || approval || takeover || (serviceRequest ? { id: serviceRequest.serviceRequestId, toolCallId: serviceRequest.source.toolCallId } : null) || (secretRequest ? { id: secretRequest.requestId, toolCallId: secretRequest.source.toolCallId } : null) || (mcpRequest ? { id: mcpRequest.requestId, toolCallId: mcpRequest.source.toolCallId } : null)
     // Every pending request must be known before a later turn or an automatic queue flush.
+    // One picker, shown where the person is: in the message box, or on the install screen while the
+    // coworker's setup holds the message box back, so the model can be chosen before setup runs on it.
+    const modelPicker = <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
+        connections={connections} workspaceDefault={workspaceDefault} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel}
+        onReady={setModelReady} onBlocked={setModelBlock} openRequest={openModelRequest} />
     const requestBlocked = reconnecting || setupBlocked || !!sessionId && (question !== null || approval !== null || takeover !== null || serviceRequest !== null || secretRequest !== null || mcpSignIn === undefined || !!mcpRequest)
     const canRegenerate = draft.loaded && !draft.error && !draft.quitting && !quickReplyBusy && !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
@@ -1856,7 +1861,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     busy={generating} pending={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || queue.pending || stopping || inactive || !!flushingQueue.current}
                     onSendNow={() => void sendQueuedNow()} onDiscard={() => { if (queued && !isDesktopQuitting()) void queue.action('remove', queued.id).then(() => { setQueueNotice(undefined); setSendQueuedId(null) }).catch(() => {}) }} />
                 {setup.error && <div role="alert" className="p-2 text-sm text-destructive">{setup.error}<Button type="button" size="sm" variant="ghost" onClick={()=>void setup.refresh()}>Retry setup</Button></div>}
-                {setupBlocked && <DesktopSetupGate agentId={agent.id} agentName={agent.name} apps={[]} canStart={modelReady} onStartBlocked={onOpenModelSettings} modelSlot={<Button type="button" variant="ghost" size="sm" onClick={onOpenModelSettings}>{modelLabel ?? 'Choose a model'}</Button>} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
+                {setupBlocked && <DesktopSetupGate agentId={agent.id} agentName={agent.name} apps={[]} canStart={modelReady} onStartBlocked={onOpenModelSettings} modelSlot={modelPicker} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {setup.view?.skipped && <DesktopSetupSkippedBanner agentId={agent.id} canStart={modelReady} onStartBlocked={onOpenModelSettings} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {documentPreview && <DesktopDocumentLightbox {...documentPreview} onIndexChange={index => setDocumentPreview(value => value ? { ...value, index } : null)} onClose={() => setDocumentPreview(null)} />}
                 {active && workspacePreview?.owner === uploadOwner && <DesktopWorkspaceAttachmentLightbox {...workspacePreview}
@@ -1939,9 +1944,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     </DesktopCoworkerMentions>
                     <div ref={setVoiceReviewTarget} />
                     <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 pb-1.5">
-                        <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
-                            connections={connections} workspaceDefault={workspaceDefault} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel}
-                            onReady={setModelReady} onBlocked={setModelBlock} openRequest={openModelRequest} />
+                        {!setupBlocked && modelPicker}
                         <div className="flex shrink-0 items-center gap-1">
                             <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={uploadDisabled || uploadsActive}
                                 paths={textAttachments} onChange={paths => {
