@@ -1,0 +1,34 @@
+# Copy to wrangler.toml (which git ignores) and deploy from your own Cloudflare account.
+# No account id, zone or hostname belongs in this file: wrangler asks for the account, and a custom
+# hostname is added under [[routes]] in your own copy only.
+name = "rerun-voice-relay"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+# Your own subdomain instead of workers.dev, in your copy only:
+# [[routes]]
+# pattern = "voice.your-domain.example"
+# custom_domain = true
+
+# The relay logs nothing itself. Keep Workers Logs off too: requests carry what people say.
+[observability]
+enabled = false
+
+[[durable_objects.bindings]]
+name = "VOICE_RELAY"
+class_name = "VoiceRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["VoiceRelay"]
+
+[vars]
+# "on" admits ElevenLabs' side only from the addresses below. Off by default: the Mac checks every
+# connection's signed token anyway. The list is ElevenLabs' published egress addresses (their "IP
+# allowlisting" page); keep it in step with that page if you turn the check on.
+ELEVENLABS_EGRESS_CHECK = "off"
+ELEVENLABS_EGRESS_IPS = "34.67.146.145,34.59.11.47,35.204.38.71,34.147.113.54,35.185.187.110,35.247.157.189,34.77.234.246,34.140.184.144,34.93.26.174,34.93.252.69,34.87.23.17,34.126.179.103"
+
+# RELAY_INSTALLS is a secret, never a var: `npx wrangler secret put RELAY_INSTALLS`, then paste the
+# value the Mac shows once under Settings > Tool services > Talk from your phone.

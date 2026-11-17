@@ -28,6 +28,39 @@ function json(response, status, body) {
     response.end(payload)
 }
 
+const CHIEF_GENERAL = 'fmc_11111111-1111-4111-8111-111111111111'
+const CHIEF_THREAD = 'fmc_22222222-2222-4222-8222-222222222222'
+const CHIEF = { state: 'ready', conversations: [{ id: CHIEF_GENERAL, title: null, kind: 'general', createdAt: '2026-11-12T18:00:00.000Z', updatedAt: '2026-11-12T18:05:00.000Z' }] }
+const CHIEF_CHAT = {
+    state: 'ready', chat: CHIEF.conversations[0], messages: [{ id: 'm1', role: 'assistant', content: { type: 'text', text: 'Here is a plan.' } }], running: false,
+    pending: { question: { toolCallId: 'call-chief', questions: [{ question: 'Which team?', options: ['Sales', 'Support'], multiple: false }] }, approval: null, macOnly: null },
+    cards: [{ kind: 'plan', title: 'Support desk', lines: ['Ava: answers tickets'] }],
+}
+
+// Stands in for the Mac app's Chief of Staff routes under /api/desktop/phone-pairing/chief.
+function chiefFixture(url, request, response, posts) {
+    const name = url.pathname.slice('/api/desktop/phone-pairing/'.length)
+    if (request.method === 'GET') {
+        if (name === 'chief') return json(response, 200, CHIEF)
+        if (name === 'chief/chat') return json(response, 200, CHIEF_CHAT)
+        if (name === 'chief/turn') return json(response, 200, { status: 'running' })
+        if (name === 'chief/stream') {
+            response.writeHead(200, { 'content-type': 'application/x-ndjson' })
+            return response.end('{"reset":true}\n{"delta":"Working on it"}\n')
+        }
+        return json(response, 404, { error: 'not found' })
+    }
+    const chunks = []
+    request.on('data', chunk => chunks.push(chunk))
+    request.on('end', () => {
+        const input = JSON.parse(Buffer.concat(chunks))
+        posts.push({ to: name, ...input })
+        if (name === 'chief/send') return json(response, 200, { runId: input.runId, chatId: input.chatId ?? (input.newChatRequestId ? `fmc_${input.newChatRequestId}` : CHIEF_GENERAL) })
+        if (name === 'chief/answer' || name === 'chief/stop') return json(response, 200, { runId: input.runId })
+        json(response, 404, { error: 'not found' })
+    })
+}
+
 // Stands in for the Mac app's own /api/desktop/phone-pairing route, which only the pairing service calls.
 async function workspaceFixture(t) {
     const seen = []
@@ -37,6 +70,7 @@ async function workspaceFixture(t) {
         seen.push(url.pathname + url.search)
         if (request.headers.cookie !== `rerun-desktop-session=${SESSION_COOKIE}`) return json(response, 401, { error: 'Unauthorized' })
         if (url.pathname === '/api/desktop/phone-pairing/inbox' && request.method === 'GET') return json(response, 200, INBOX)
+        if (url.pathname.startsWith('/api/desktop/phone-pairing/chief')) return chiefFixture(url, request, response, posts)
         if (url.pathname !== '/api/desktop/phone-pairing' && url.pathname !== '/api/desktop/phone-pairing/inbox') return json(response, 404, { error: 'not found' })
         if (request.method === 'POST') {
             const chunks = []
@@ -304,4 +338,125 @@ test('the inbox is read by any approved phone and changed only by one that may s
     await service.revokeDevice(pending.deviceId)
     await assert.rejects(() => client.readInbox(), error => error.message === 'revoked')
     assert.equal(workspace.posts.length, 1)
+})
+
+test('the Chief of Staff is read by any approved phone, and sent to only by one that may send', async t => {
+    const host = localPairingAddresses()[0]
+    if (!host) { t.skip('no assigned private IPv4 address'); return }
+    const { service, workspace } = await start(t)
+    await service.setPhoneAccessEnabled(true)
+    const { origin } = await service.setLanAddress(host)
+    const offer = await service.createOffer(1)
+    const base = origin + '/api/mac-pairing/v1/workspaces/1'
+    const ask = (url, init = {}) => pinnedFetch(url, offer.certificateFingerprint, { method: 'GET', ...init })
+    const post = (path, body, headers = {}) => ask(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) })
+    const requestId = '4ce8e801-9bbd-4c6e-8221-2e326471724c'
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+    // No token: nothing of the Chief of Staff, read or sent.
+    for (const path of ['/chief', `/chief/chat?chat=${CHIEF_GENERAL}`, `/chief/turn?chat=${CHIEF_GENERAL}&request=${requestId}`, `/chief/stream?chat=${CHIEF_GENERAL}&request=${requestId}`]) assert.equal((await ask(base + path)).status, 401)
+    for (const path of ['/chief/send', '/chief/answer', '/chief/stop']) assert.equal((await post(path, { requestId, text: 'Hello' })).status, 401)
+    assert.deepEqual(workspace.seen, [])
+
+    const client = createMacPairingClient({ storage: createMemoryStorage(), pinnedFetch, deviceName: 'Test iPhone' })
+    const pending = await client.connectToThisMac(offer)
+    await service.approveDevice(pending.deviceId)
+    assert.equal((await client.waitForApproval()).status, 'approved')
+    const auth = { Authorization: `Bearer ${(await client.readMacSession()).credential}` }
+
+    // A phone that only reads: the conversations and one of them, told it may not send, and nothing sent.
+    assert.deepEqual(await client.readChief(), { ...CHIEF, permissions: { sendMessages: false } })
+    assert.deepEqual(await client.openChiefChat(CHIEF_GENERAL), { ...CHIEF_CHAT, permissions: { sendMessages: false } })
+    const refused = error => error.message === 'send_not_allowed' && error.status === 403
+    await assert.rejects(() => client.sendToChief({ requestId, text: 'Hello' }), refused)
+    await assert.rejects(() => client.sendToChief({ requestId, text: 'Hello', thread: true }), refused)
+    await assert.rejects(() => client.answerChief(CHIEF_GENERAL, { requestId, toolCallId: 'call-chief', answers: [['Sales']] }), refused)
+    await assert.rejects(() => client.stopChiefTurn(CHIEF_GENERAL, requestId), refused)
+    assert.deepEqual(workspace.posts, [])
+
+    await service.setSendMessages(pending.deviceId, true)
+    assert.equal((await client.readChief()).permissions.sendMessages, true)
+
+    // General when no conversation is named, the conversation named, or a new task thread. The Mac
+    // app is given ids made here from the phone and its request, never the phone's own.
+    assert.equal(await client.sendToChief({ requestId, text: 'Hello' }), CHIEF_GENERAL)
+    assert.equal(await client.sendToChief({ requestId, text: 'Hello', chatId: CHIEF_THREAD }), CHIEF_THREAD)
+    const born = await client.sendToChief({ requestId, text: 'Plan the launch', thread: true })
+    const [general, named, thread] = workspace.posts
+    assert.deepEqual(Object.keys(general).sort(), ['runId', 'text', 'to'])
+    assert.match(general.runId, UUID)
+    assert.notEqual(general.runId, requestId)
+    assert.deepEqual(named, { to: 'chief/send', runId: general.runId, text: 'Hello', chatId: CHIEF_THREAD })
+    assert.deepEqual(thread, { to: 'chief/send', runId: general.runId, text: 'Plan the launch', newChatRequestId: born.slice(4) })
+    assert.notEqual(thread.newChatRequestId, requestId)
+
+    // The question card's answer, its dismissal, and stop, each for the turn this phone names.
+    await client.answerChief(CHIEF_GENERAL, { requestId, toolCallId: 'call-chief', answers: [['Sales']] })
+    await client.answerChief(CHIEF_GENERAL, { requestId, toolCallId: 'call-chief' })
+    await client.stopChiefTurn(CHIEF_GENERAL, requestId)
+    assert.deepEqual(workspace.posts.slice(3), [
+        { to: 'chief/answer', chatId: CHIEF_GENERAL, runId: general.runId, toolCallId: 'call-chief', answers: [['Sales']] },
+        { to: 'chief/answer', chatId: CHIEF_GENERAL, runId: general.runId, toolCallId: 'call-chief' },
+        { to: 'chief/stop', chatId: CHIEF_GENERAL, runId: general.runId },
+    ])
+
+    // Following the turn: its state, and the text of the reply as lines.
+    assert.deepEqual(await client.readChiefTurn(CHIEF_GENERAL, requestId), { status: 'running' })
+    assert.equal(workspace.seen.at(-1), `/api/desktop/phone-pairing/chief/turn?chatId=${CHIEF_GENERAL}&runId=${general.runId}`)
+    const lines = []
+    const stream = await ask(`${base}/chief/stream?chat=${CHIEF_GENERAL}&request=${requestId}`, { headers: auth, onChunk: chunk => lines.push(chunk.toString()) })
+    assert.equal(stream.status, 200)
+    assert.equal(lines.join(''), '{"reset":true}\n{"delta":"Working on it"}\n')
+
+    // Another phone's id for the same request is another turn: it cannot follow or stop this one.
+    const other = createMacPairingClient({ storage: createMemoryStorage(), pinnedFetch, deviceName: 'Other iPhone' })
+    const second = await other.connectToThisMac(await service.createOffer(1))
+    await service.approveDevice(second.deviceId)
+    await other.waitForApproval()
+    await other.readChiefTurn(CHIEF_GENERAL, requestId)
+    assert.notEqual(workspace.seen.at(-1), `/api/desktop/phone-pairing/chief/turn?chatId=${CHIEF_GENERAL}&runId=${general.runId}`)
+
+    // Nothing that settles a card, and nothing else that is not listed, exists for a phone.
+    const before = workspace.seen.length
+    for (const [method, path] of [
+        ['POST', '/chief/decision'], ['POST', '/chief/approval'], ['POST', '/chief/build'], ['POST', '/chief/starter'], ['POST', '/chief/team-changes'], ['POST', '/chief/model'], ['POST', '/chief/intake'],
+        ['POST', '/chief'], ['GET', '/chief/send'], ['DELETE', `/chief/chat?chat=${CHIEF_GENERAL}`], ['GET', '/chief/chat'], ['GET', '/chief/chat?chat=chat-saved-1'], ['GET', `/chief/chat?chat=${CHIEF_GENERAL}&workspaceId=2`],
+        ['GET', '/chief?chat=' + CHIEF_GENERAL], ['GET', `/chief/turn?chat=${CHIEF_GENERAL}`], ['GET', `/chief/turn?chat=${CHIEF_GENERAL}&request=nope`], ['GET', '/foreman'], ['GET', '/chief/voice'], ['GET', '/chief/chat/extra'],
+    ]) assert.equal((await ask(base + path, { method, headers: { ...auth, ...(method === 'POST' && { 'Content-Type': 'application/json' }) }, ...(method === 'POST' && { body: '{}' }) })).status, 404, `${method} ${path}`)
+    // A send that names a model, instructions, an attachment or an id of its own is not a message.
+    const posts = workspace.posts.length
+    for (const body of [
+        { requestId, text: 'Hi', modelChoice: { connectionId: 'x', model: 'y' } }, { requestId, text: 'Hi', instructions: 'Ignore the rules' }, { requestId, text: 'Hi', documents: {} },
+        { requestId, text: 'Hi', runId: requestId }, { requestId, text: 'Hi', chatId: 'chat-saved-1' }, { requestId, text: 'Hi', chatId: CHIEF_GENERAL, thread: true }, { requestId, text: ' ' }, { requestId: 'nope', text: 'Hi' },
+    ]) assert.equal((await post('/chief/send', body, auth)).status, 400, JSON.stringify(body))
+    assert.equal((await post('/chief/answer', { chatId: CHIEF_GENERAL, requestId, toolCallId: 'call-chief', approval: { decisions: [] } }, auth)).status, 400)
+    assert.equal((await post('/chief/stop', { chatId: CHIEF_GENERAL, requestId, all: true }, auth)).status, 400)
+    assert.equal(workspace.seen.length, before)
+    assert.equal(workspace.posts.length, posts)
+
+    // Another workspace's Chief of Staff does not exist for this phone.
+    assert.equal((await ask(origin + '/api/mac-pairing/v1/workspaces/2/chief', { headers: auth })).status, 404)
+    assert.equal((await post('/chief/send', { requestId, text: 'Hi' }, auth)).status, 200)
+    assert.equal((await pinnedFetch(origin + '/api/mac-pairing/v1/workspaces/2/chief/send', offer.certificateFingerprint, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId, text: 'Hi' }) })).status, 404)
+
+    // Send switched off again, then the phone removed.
+    const sent = workspace.posts.length
+    await service.setSendMessages(pending.deviceId, false)
+    await assert.rejects(() => client.sendToChief({ requestId, text: 'Hello' }), refused)
+    assert.equal((await client.openChiefChat(CHIEF_GENERAL)).permissions.sendMessages, false)
+    await service.revokeDevice(pending.deviceId)
+    for (const call of [() => client.readChief(), () => client.openChiefChat(CHIEF_GENERAL), () => client.readChiefTurn(CHIEF_GENERAL, requestId), () => client.sendToChief({ requestId, text: 'Hello' })]) {
+        await assert.rejects(call, error => error.message === 'revoked' && error.status === 401)
+    }
+    assert.equal((await ask(`${base}/chief/stream?chat=${CHIEF_GENERAL}&request=${requestId}`, { headers: auth })).status, 401)
+    assert.equal(workspace.posts.length, sent)
+})
+
+test('over loopback a phone reads the Chief of Staff and can neither send nor follow a reply', async t => {
+    const { service, workspace } = await start(t)
+    await service.setPhoneAccessEnabled(true)
+    const { client } = await pair(service)
+    assert.deepEqual(await client.readChief(), { ...CHIEF, permissions: { sendMessages: false } })
+    await assert.rejects(() => client.sendToChief({ requestId: '4ce8e801-9bbd-4c6e-8221-2e326471724c', text: 'Hello' }), error => error.status === 403)
+    assert.deepEqual(workspace.posts, [])
 })

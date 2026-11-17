@@ -1,7 +1,7 @@
-import { agentConversationsOverviewSchema, agentViewSchema, boardAgentSchema, boxSchema, conversationMessageSchema, conversationSchema, findPendingHitl, inboxSchema, meSchema } from '@rerun/contracts'
+import { foremanEngineConversationSchema, foremanEngineFilesSchema, foremanEngineMessagesSchema, foremanStateSchema, agentConversationsOverviewSchema, agentViewSchema, boardAgentSchema, boxSchema, conversationMessageSchema, conversationSchema, findPendingHitl, inboxSchema, meSchema } from '@rerun/contracts'
 
 import type { MacClient } from './client'
-import { createMacHub, messagesOf, NOT_ON_A_MAC, waitingOf } from './hub'
+import { chiefMessagesOf, createMacHub, messagesOf, NOT_ON_A_MAC, waitingOf } from './hub'
 
 const CHAT = { id: 'chat-1', agentId: 'ada', title: 'Saved briefing', createdAt: '2026-11-12T18:00:00.000Z', updatedAt: '2026-11-12T18:05:00.000Z', kind: 'thread' as const }
 const OLDER = { ...CHAT, id: 'chat-0', title: 'Older', updatedAt: '2026-11-11T10:00:00.000Z', kind: 'general' as const }
@@ -133,7 +133,7 @@ describe('the hub paths a paired Mac answers', () => {
 
     it('answers what a Mac does not serve with a refusal, and sends nothing', async () => {
         const { hub, client } = setup()
-        for (const [path, method] of [['/api/v1/agents', 'POST'], ['/api/v1/me/account', 'DELETE'], ['/api/chat/foreman/state', 'GET'], ['/api/v1/agents/ada/files', 'GET'], ['/api/v1/agents/ada/model', 'PUT']] as const) {
+        for (const [path, method] of [['/api/v1/agents', 'POST'], ['/api/v1/me/account', 'DELETE'], ['/api/v1/foreman/routines', 'GET'], ['/api/v1/foreman/voice', 'POST'], ['/api/v1/agents/ada/files', 'GET'], ['/api/v1/agents/ada/model', 'PUT']] as const) {
             await expect(hub.api(path, { method })).rejects.toMatchObject({ status: 404, message: NOT_ON_A_MAC })
         }
         expect(Object.values(client).every(call => call.mock.calls.length === 0)).toBe(true)
@@ -196,5 +196,95 @@ describe('messagesOf', () => {
     it('adds nothing to a chat that waits on nobody, or to a Mac older than the cards', () => {
         expect(findPendingHitl(messagesOf(READ))).toBeNull()
         expect(findPendingHitl(messagesOf({ ...READ, pending: { question: null, approval: null } }))).toBeNull()
+    })
+})
+
+const GENERAL = 'fmc_11111111-1111-4111-8111-111111111111'
+const THREAD = 'fmc_22222222-2222-4222-8222-222222222222'
+const CHIEF = {
+    state: 'ready',
+    conversations: [
+        { id: GENERAL, title: null, kind: 'general', createdAt: '2026-11-17T10:00:00.000Z', updatedAt: '2026-11-17T10:05:00.000Z' },
+        { id: THREAD, title: 'Launch plan', kind: 'thread', createdAt: '2026-11-17T11:00:00.000Z', updatedAt: '2026-11-17T11:30:00.000Z' },
+    ],
+    permissions: { sendMessages: false },
+}
+const PLAN = { kind: 'plan' as const, title: 'Support desk', lines: ['Ava: answers tickets'] }
+const CHIEF_CHAT = {
+    state: 'ready',
+    chat: CHIEF.conversations[0],
+    messages: [{ id: 'm1', role: 'user', content: { type: 'text', text: 'Plan the week' } }, { id: 'm2', role: 'assistant', content: { type: 'text', text: 'Here is a plan.' } }],
+    running: false,
+    pending: { question: null, approval: null, macOnly: null },
+    cards: [PLAN],
+    permissions: { sendMessages: false },
+}
+
+describe('the Chief of Staff of a paired Mac', () => {
+    it('opens the page on its conversations once the Mac is past its first-run questions, and never walks the hub\'s own', async () => {
+        const readChief = jest.fn(async () => CHIEF)
+        const { hub } = setup({ readChief } as never)
+        expect(foremanStateSchema.parse(await hub.api('/api/chat/foreman/state'))).toMatchObject({ surface: 'engine', phase: 'companion' })
+        const listed = conversationSchema.array().parse(await hub.api('/api/v1/foreman/conversations'))
+        expect(listed.map(row => [row.id, row.kind, row.title])).toEqual([[GENERAL, 'general', ''], [THREAD, 'thread', 'Launch plan']])
+        // The Home's row: the conversation written in last.
+        expect(foremanEngineConversationSchema.parse(await hub.api('/api/chat/foreman/engine'))).toMatchObject({ sessionId: THREAD, title: 'Launch plan' })
+        // Attachments stay on the Mac.
+        expect(foremanEngineFilesSchema.parse(await hub.api('/api/v1/foreman/files')).supported).toBe(false)
+    })
+
+    it('says to finish on the Mac while it still asks its first-run company questions', async () => {
+        const { hub } = setup({ readChief: jest.fn(async () => ({ state: 'intake', conversations: [] })) } as never)
+        // The page reads the surface; the phase keeps the app out of the hub's own first-run questions.
+        expect(foremanStateSchema.parse(await hub.api('/api/chat/foreman/state'))).toMatchObject({ surface: 'onboarding', phase: 'companion' })
+        expect(await hub.api('/api/v1/foreman/conversations')).toEqual([])
+        expect(await hub.api('/api/chat/foreman/engine')).toBeNull()
+    })
+
+    it('reads a conversation as text, with its change cards as words in a message of their own', async () => {
+        const openChiefChat = jest.fn(async () => CHIEF_CHAT)
+        const { hub } = setup({ openChiefChat } as never)
+        const { messages } = foremanEngineMessagesSchema.parse(await hub.api(`/api/chat/foreman/engine?sessionId=${GENERAL}`))
+        expect(openChiefChat).toHaveBeenCalledWith(GENERAL, undefined)
+        expect(messages.map(message => [message.role, message.parts.map(part => part.type)])).toEqual([['user', ['text']], ['assistant', ['text']], ['assistant', ['text']]])
+        expect(messages[2].parts[0]).toEqual({ type: 'text', text: '**A plan to build**\n\nSupport desk\n\n- Ava: answers tickets\n\n_Open on your Mac to approve_' })
+        expect(findPendingHitl(messages)).toBeNull()
+    })
+
+    it('puts a waiting question where the chat looks for it, and keeps the Chief of Staff\'s approval as words', async () => {
+        const question = { toolCallId: 'call-chief', questions: [{ question: 'Which team?', options: ['Sales', 'Support'], multiple: false }] }
+        const approval = { toolCallId: 'call-approve', approvals: [{ action: 'Create Mara' }] }
+        const asked = setup({ openChiefChat: jest.fn(async () => ({ ...CHIEF_CHAT, pending: { question, approval: null, macOnly: null }, permissions: { sendMessages: true } })) } as never)
+        const { messages } = foremanEngineMessagesSchema.parse(await asked.hub.api(`/api/chat/foreman/engine?sessionId=${GENERAL}`))
+        expect(findPendingHitl(messages)).toMatchObject({ kind: 'question', toolCallId: 'call-chief' })
+        expect(asked.hub.waitingQuestion(GENERAL)).toEqual(question)
+
+        const read = { ...CHIEF_CHAT, cards: [], pending: { question: null, approval, macOnly: null }, permissions: { sendMessages: true } } as Parameters<typeof chiefMessagesOf>[0]
+        const shown = chiefMessagesOf(read)
+        expect(findPendingHitl(shown)).toBeNull()
+        expect(JSON.stringify(shown)).toContain('Create Mara')
+        const waiting = setup({ openChiefChat: jest.fn(async () => read) } as never)
+        await waiting.hub.api(`/api/chat/foreman/engine?sessionId=${GENERAL}`)
+        expect(waiting.hub.waitingApproval(GENERAL)).toBeNull()
+    })
+
+    it('follows and stops only the turn this phone started, through the Chief of Staff\'s own entries', async () => {
+        const readChiefTurn = jest.fn(async () => ({ status: 'running' }))
+        const stopChiefTurn = jest.fn(async () => undefined)
+        const { hub, client } = setup({ readChiefTurn, stopChiefTurn, openChiefChat: jest.fn(async () => CHIEF_CHAT) } as never)
+        await hub.api(`/api/chat/foreman/engine?sessionId=${GENERAL}&runId=x`, { method: 'DELETE' })
+        expect(stopChiefTurn).not.toHaveBeenCalled()
+        hub.turnStarted(GENERAL, 'foreman', 'turn-1')
+        expect(foremanEngineConversationSchema.parse(await hub.api(`/api/chat/foreman/engine?sessionId=${GENERAL}`))?.activeRunId).toBe('turn-1')
+        readChiefTurn.mockResolvedValueOnce({ status: 'running' }).mockResolvedValue({ status: 'cancelled' })
+        await hub.api(`/api/chat/foreman/engine?sessionId=${GENERAL}&runId=turn-1`, { method: 'DELETE' })
+        expect(stopChiefTurn).toHaveBeenCalledWith(GENERAL, 'turn-1', undefined)
+        expect(client.stopSentTurn).not.toHaveBeenCalled()
+    })
+
+    it('hands a removed phone back to sign-in, and shows nothing', async () => {
+        const { hub, onRevoked } = setup({ readChief: jest.fn(async () => Promise.reject(new Refusal(401, 'revoked'))) } as never)
+        await expect(hub.api('/api/chat/foreman/state')).rejects.toMatchObject({ status: 401 })
+        expect(onRevoked).toHaveBeenCalledTimes(1)
     })
 })

@@ -15,7 +15,7 @@ import { useChatBack } from '@/components/layout/useChatBack'
 import { ForemanOrb } from '@/components/orb/ForemanOrb'
 import { AppText } from '@/components/ui/AppText'
 import { PillButton } from '@/components/ui/PillButton'
-import { environment, webHost } from '@/config/environment'
+import { environment, onMac, webHost } from '@/config/environment'
 import { cachedForeman } from '@/data/local-cache'
 import * as Haptics from '@/lib/haptics'
 import { useTheme } from '@/theme/theme'
@@ -80,6 +80,7 @@ function Notice({ title, body, onRetry }: { title: string; body: string; onRetry
 export function ForemanChat({ sessionId }: { sessionId: string | null }) {
     const theme = useTheme()
     const t = useTranslations('mobileChat.foreman')
+    const tMac = useTranslations('mobileAuth.mac.chief')
     const foreman = useMemo<ChatCoworker>(() => ({ ...FOREMAN, role: t('role') }), [t])
     const back = useChatBack()
     const { session, me } = useAuth()
@@ -256,7 +257,9 @@ export function ForemanChat({ sessionId }: { sessionId: string | null }) {
                     )}
                 />
             )}
-            {(surface === 'onboarding' || surface === 'none') && <Notice title={t(`away.${surface}.title`)} body={t(`away.${surface}.body`, { host: webHost })} />}
+            {/* A paired Mac asks its first-run questions itself: the page says to finish there. */}
+            {surface === 'onboarding' && onMac && <Notice title={tMac('intakeTitle')} body={tMac('intakeBody')} />}
+            {(surface === 'onboarding' || surface === 'none') && !(surface === 'onboarding' && onMac) && <Notice title={t(`away.${surface}.title`)} body={t(`away.${surface}.body`, { host: webHost })} />}
             {surface === 'error' && (
                 <Notice
                     title={t('unreachableTitle')}

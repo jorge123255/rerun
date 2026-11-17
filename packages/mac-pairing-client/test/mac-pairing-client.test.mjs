@@ -75,3 +75,38 @@ test('a cancelled pairing request cannot persist its late response', async () =>
     await assert.rejects(pending, /aborted/)
     assert.equal(await client.readMacSession(), null)
 })
+
+test('the Chief of Staff is asked for by the phone\'s workspace, and a receipt for another conversation is not taken', async () => {
+    const storage = createMemoryStorage()
+    await createMacSessionStore(storage).write({ kind: 'rerun-mac-phone-pairing', status: 'approved', credential: 'c'.repeat(43), origin: 'http://127.0.0.1:9', workspaceId: 1, deviceId: 'device' })
+    const general = 'fmc_11111111-1111-4111-8111-111111111111'
+    const thread = 'fmc_22222222-2222-4222-8222-222222222222'
+    const requestId = '4ce8e801-9bbd-4c6e-8221-2e326471724c'
+    const calls = []
+    let answer = {}
+    const client = createMacPairingClient({
+        storage,
+        fetch: async (url, init) => {
+            calls.push({ url: url.slice('http://127.0.0.1:9/api/mac-pairing/v1'.length), method: init.method, auth: init.headers.Authorization, body: init.body && JSON.parse(init.body) })
+            return Response.json(answer)
+        },
+    })
+    answer = { state: 'ready', conversations: [] }
+    await client.readChief()
+    await client.openChiefChat(general)
+    answer = { requestId, chatId: thread }
+    assert.equal(await client.sendToChief({ requestId, text: 'Plan it', thread: true }), thread)
+    assert.deepEqual(calls.map(call => [call.method, call.url]), [['GET', '/workspaces/1/chief'], ['GET', `/workspaces/1/chief/chat?chat=${general}`], ['POST', '/workspaces/1/chief/send']])
+    assert.deepEqual(calls[2].body, { requestId, text: 'Plan it', thread: true })
+    assert(calls.every(call => call.auth === `Bearer ${'c'.repeat(43)}`))
+    // A receipt that names another conversation, another request, or no conversation is not a send.
+    for (const receipt of [{ requestId, chatId: thread }, { requestId: 'other', chatId: general }, { requestId, chatId: 'chat-1' }]) {
+        answer = receipt
+        await assert.rejects(client.sendToChief({ requestId, text: 'Hi', chatId: general }), /invalid_send_receipt/)
+    }
+    answer = { status: 'paused' }
+    await assert.rejects(client.readChiefTurn(general, requestId), /invalid_turn_status/)
+    answer = { requestId: 'other' }
+    await assert.rejects(client.answerChief(general, { requestId, toolCallId: 'call-1', answers: [['Sales']] }), /invalid_send_receipt/)
+    await assert.rejects(client.stopChiefTurn(general, requestId), /invalid_stop_receipt/)
+})

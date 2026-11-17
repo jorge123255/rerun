@@ -124,9 +124,9 @@
             "removed": "Votre Mac n’accepte plus ce téléphone. Ouvrez Connecter l’iPhone sur votre Mac pour vérifier.",
             "unreachable": "Impossible de joindre votre Mac.",
             "answerFirst": "Répondez d’abord à ce que le collègue a demandé ci-dessus.",
-            "approveOff": "Ce téléphone ne peut pas approuver les demandes. Sur votre Mac, ouvrez Connecter l’iPhone et activez Approuver les demandes pour lui."
+            "approveOff": "Ce téléphone ne peut pas approuver les demandes. Sur votre Mac, ouvrez Connecter l’iPhone et activez Approuver les demandes pour lui.",
+            "chiefBusy": "Le Chief of Staff ne peut pas recevoir de message pour l’instant. Il travaille peut-être encore, ou vous attend sur votre Mac."
         },
-        "pickCoworker": "Choisissez un collègue pour ouvrir ses conversations.",
         "approvalOnMac": "En attente de votre approbation sur votre Mac",
         "macOnly": {
             "connector": "Une action d’app vous attend sur votre Mac",
@@ -135,6 +135,16 @@
             "mcp": "Une connexion vous attend sur votre Mac",
             "takeover": "Le navigateur vous attend sur votre Mac",
             "tool-install": "Un outil attend d’être installé sur votre Mac"
+        },
+        "chief": {
+            "cards": {
+                "plan": "Un plan attend votre approbation",
+                "team-changes": "Des changements d’équipe attendent votre approbation",
+                "starter": "Un pack de démarrage attend votre choix"
+            },
+            "openOnMac": "Ouvrez-le sur votre Mac pour l’approuver",
+            "intakeTitle": "Terminez la configuration sur votre Mac",
+            "intakeBody": "Le Chief of Staff a encore quelques questions sur votre entreprise. Répondez-y dans Rerun sur votre Mac, puis revenez ici."
         }
     }
 }

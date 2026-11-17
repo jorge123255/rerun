@@ -66,9 +66,19 @@ What a paired Mac serves: the coworkers of the one workspace the phone was appro
 chats as text, a new conversation, a message, the live text of the reply to a message the phone sent,
 stop, and the question or approval a chat waits on. A question is answered from the phone when the
 phone may send: the Mac records the answer against the question it saved, the way its own form does,
-and takes nothing else in that chat until then. An approval is shown and decided on the Mac. Not served, and hidden or answered "not
-available": the Foreman, the inbox, new coworkers, files and attachments, voice, routines, apps, AI
-providers, search, feedback, push.
+and takes nothing else in that chat until then. An approval is shown and decided on the Mac, unless the phone may approve requests. The Mac's
+Actions inbox is served too.
+
+The Chief of Staff (the Foreman's page here) is served from the Mac: General and its task threads as
+text, a message, a new task thread, the live text of the reply, stop, and its question card, for a
+phone that may send (any approved phone reads). While the Mac's Chief of Staff still asks its first-run
+company questions, the page says to finish setup on the Mac. Its cards that change things (a plan to
+build, team changes, a starter pack) are words with "Open on your Mac to approve", and its approvals
+are words too: nothing on the phone settles them.
+
+Not served, and hidden or answered "not available": new coworkers, files and attachments, voice
+(for the Chief of Staff, the composer and its question card offer no recording), routines (the Chief
+of Staff's included), apps, AI providers, search, feedback, push.
 
 A build with no hub configured (`EXPO_PUBLIC_*` unset) still opens, so it can pair with a Mac.
 

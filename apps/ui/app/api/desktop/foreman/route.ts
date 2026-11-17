@@ -10,8 +10,7 @@ import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { desktopForeman } from '@/lib/desktop/server/foreman/binding'
 import { ownedForemanChat, withForemanChatWrite } from '@/lib/desktop/server/foreman/chat-store'
 import { ForemanError } from '@/lib/desktop/server/foreman/runtime'
-import { cancelCompanyBriefChat } from '@/lib/desktop/server/company-brief/client'
-import { desktopForemanVoice } from '@/lib/desktop/server/foreman-voice/binding'
+import { stopDesktopForemanChat } from '@/lib/desktop/server/foreman/stop'
 import { assertDesktopWorkspaceAdmission } from '@/lib/desktop/server/workspace-admission'
 import { localStarterDecisionSchema } from '@/lib/desktop/server/foreman-starter/local-decision'
 export const runtime = 'nodejs'
@@ -60,7 +59,7 @@ export async function POST(request: Request) {
                 return Response.json(await app.answerStarter(input.chat, input.input, AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])),
                     { headers: { 'cache-control': 'no-store' } })
             }
-            if (input.action === 'stop') { await cancelCompanyBriefChat(runtime, input.chat); await (await desktopForemanVoice(runtime, app.voiceShutdownSignal)).cancelChat(input.chat); await app.stop(input.chat); return Response.json({ ok: true }) }
+            if (input.action === 'stop') { await stopDesktopForemanChat(runtime, app, input.chat); return Response.json({ ok: true }) }
             if (input.action === 'decision') return Response.json(await app.core.decide(input.input))
             if (input.action === 'recover') return Response.json(await app.core.recoverDecision(input.chat, input.requestId))
             if (input.action === 'build') return Response.json(await app.core.buildAction(input.input))

@@ -1,4 +1,4 @@
-import { parseHitlReply } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, parseHitlReply } from '@rerun/contracts'
 import type { MacReplyFrame } from '@rerun/mac-pairing-client'
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
 import { randomUUID } from 'expo-crypto'
@@ -7,8 +7,9 @@ import type { ChatLink } from '@/chat/transport'
 
 import type { MacClient } from './client'
 import type { MacHub } from './hub'
+import { turnOf, type MacTurn } from './turns'
 
-export type MacSendProblem = 'sendOff' | 'approveOff' | 'busy' | 'coworkerOff' | 'removed' | 'unreachable' | 'answerFirst'
+export type MacSendProblem = 'sendOff' | 'approveOff' | 'busy' | 'chiefBusy' | 'coworkerOff' | 'removed' | 'unreachable' | 'answerFirst'
 
 type Decision = { decision: 'approved' } | { decision: 'declined'; note?: string }
 
@@ -35,17 +36,19 @@ export function answerOf(text: string, questionCount: number): { answers?: strin
 }
 
 // What the Mac answers a send it turns down, as the sentence the chat shows.
-export function sendProblemOf(error: unknown): MacSendProblem {
+export function sendProblemOf(error: unknown, chief = false): MacSendProblem {
     const { status, message } = error as { status?: number; message?: string }
     if (status === 403 && message === 'send_not_allowed') return 'sendOff'
     if (status === 403 && message === 'approve_not_allowed') return 'approveOff'
+    // The Chief of Staff takes one message at a time, and none while something waits on the Mac.
+    if (chief && (status === 403 || status === 409)) return 'chiefBusy'
     if (status === 403) return 'coworkerOff'
     if (status === 409) return 'busy'
     if (status === 401) return 'removed'
     return 'unreachable'
 }
 
-type Turn = { agentId: string; chatId: string; requestId: string }
+type Turn = MacTurn
 
 const REPLY_PART = 'reply'
 // Between two looks at a turn the Mac no longer streams (its stream closes after a minute).
@@ -67,8 +70,30 @@ const pause = (ms: number, signal?: AbortSignal) =>
 // the Mac plays the reply again from its start: what is already on screen is skipped, so the text
 // only ever grows. The saved chat, read once the stream ends, is what stays on screen.
 export function replyStream(client: MacClient, hub: MacHub, turn: Turn, { messageId, signal }: { messageId?: string; signal?: AbortSignal }): ReadableStream<UIMessageChunk> {
+    const sent = turnOf(client, turn)
+    // The chat lets go of the stream when the person stops the reply: what the Mac still sends after
+    // that, and the stream's own ending, go nowhere.
+    let released = false
     return new ReadableStream<UIMessageChunk>({
-        async start(controller) {
+        cancel() {
+            released = true
+        },
+        async start(stream) {
+            const controller = {
+                enqueue(chunk: UIMessageChunk) {
+                    if (!released) stream.enqueue(chunk)
+                },
+                close() {
+                    if (released) return
+                    released = true
+                    stream.close()
+                },
+                error(error: unknown) {
+                    if (released) return
+                    released = true
+                    stream.error(error)
+                },
+            }
             let shown = 0
             let replayed = 0
             let open = false
@@ -89,12 +114,12 @@ export function replyStream(client: MacClient, hub: MacHub, turn: Turn, { messag
             controller.enqueue(messageId ? { type: 'start', messageId } : { type: 'start' })
             try {
                 let misses = 0
-                while (!signal?.aborted) {
+                while (!signal?.aborted && !released) {
                     // A stream the Mac cuts, or cannot open, is not the end of the turn: its status says.
-                    await client.streamSentTurn(turn.agentId, turn.chatId, turn.requestId, onFrame, signal).catch(() => {})
+                    await sent.stream(onFrame, signal).catch(() => {})
                     if (signal?.aborted) break
                     try {
-                        const { status } = await client.readSentTurn(turn.agentId, turn.chatId, turn.requestId, signal)
+                        const { status } = await sent.status(signal)
                         if (status !== 'running') break
                         misses = 0
                     } catch (error) {
@@ -120,26 +145,36 @@ export function replyStream(client: MacClient, hub: MacHub, turn: Turn, { messag
 // model and tools, and the phone follows it.
 export function createMacChatTransport(link: ChatLink, client: MacClient, hub: MacHub, describe: (problem: MacSendProblem) => string, lastUserText: (messages: UIMessage[]) => string): ChatTransport<UIMessage> {
     const agentId = link.endpoints.agentId
+    // The Chief of Staff's page: General, or a task thread that its first message starts.
+    const chief = agentId === FOREMAN_AGENT_ID
+    const general = chief && link.endpoints.sendBody(null, '').kind === 'general'
+    // A message the Mac did not confirm is sent again under the id it first had: the Mac matches it
+    // to the receipt it kept, and never starts the same message twice.
+    let unconfirmed: { chatId: string | null; text: string; requestId: string } | null = null
 
     return {
         async sendMessages({ messages, abortSignal }) {
             const text = lastUserText(messages)
-            const requestId = randomUUID()
             let chatId = link.sessionRef.current
+            const requestId = chief && unconfirmed?.chatId === chatId && unconfirmed.text === text ? unconfirmed.requestId : randomUUID()
             const question = chatId ? hub.waitingQuestion(chatId) : null
             const answer = question ? answerOf(text, question.questions.length) : null
             if (question && !answer) throw new Error(describe('answerFirst'))
-            const approval = chatId && !question ? hub.waitingApproval(chatId) : null
+            const approval = chatId && !question && !chief ? hub.waitingApproval(chatId) : null
             const decisions = approval ? decisionsOf(text, approval.approvals) : null
             if (approval && !decisions) throw new Error(describe('answerFirst'))
             try {
-                if (chatId && approval && decisions) await client.decideApproval(agentId, chatId, { requestId, toolCallId: approval.toolCallId, decisions }, abortSignal)
+                if (chief && chatId && question && answer) await client.answerChief(chatId, { requestId, toolCallId: question.toolCallId, ...answer }, abortSignal)
+                else if (chief) chatId = await client.sendToChief({ requestId, text, ...(chatId ? { chatId } : general ? {} : { thread: true }) }, abortSignal)
+                else if (chatId && approval && decisions) await client.decideApproval(agentId, chatId, { requestId, toolCallId: approval.toolCallId, decisions }, abortSignal)
                 else if (chatId && question && answer) await client.answerQuestion(agentId, chatId, { requestId, toolCallId: question.toolCallId, ...answer }, abortSignal)
                 else if (chatId) await client.sendMessage(agentId, chatId, { requestId, text }, abortSignal)
                 else chatId = await client.startConversation(agentId, { requestId, text }, abortSignal)
             } catch (error) {
-                throw new Error(describe(sendProblemOf(error)))
+                if (chief) unconfirmed = { chatId, text, requestId }
+                throw new Error(describe(sendProblemOf(error, chief)))
             }
+            unconfirmed = null
             hub.turnStarted(chatId, agentId, requestId)
             link.runRef.current = requestId
             if (link.sessionRef.current !== chatId) link.onSessionRef.current(chatId)
@@ -155,7 +190,7 @@ export function createMacChatTransport(link: ChatLink, client: MacClient, hub: M
             const requestId = link.runRef.current
             if (!chatId || !requestId) return null
             try {
-                const { status } = await client.readSentTurn(agentId, chatId, requestId, abortSignal)
+                const { status } = await turnOf(client, { agentId, chatId, requestId }).status(abortSignal)
                 if (status !== 'running') return null
             } catch (error) {
                 // No status at all: the Mac could not be reached. A refusal is an answer, the turn is not the phone's to follow.

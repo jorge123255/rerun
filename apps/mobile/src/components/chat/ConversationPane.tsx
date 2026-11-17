@@ -28,6 +28,7 @@ import { useWorkspaceAgents } from '@/data/useWorkspaceAgents'
 import { CHAT_COLUMN_MAX_WIDTH } from '@/components/layout/split'
 import { connectHref } from '@/components/providers/routes'
 import { AppText } from '@/components/ui/AppText'
+import { onMac } from '@/config/environment'
 import { moodOf } from '@/components/ui/CoworkerAvatar'
 import { PillButton } from '@/components/ui/PillButton'
 import { useTheme } from '@/theme/theme'
@@ -316,7 +317,9 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
 
     // A voice message carries the attachments picked before it, their marker after its own, as on the web.
     // A throw keeps the recording for a retry.
-    const voice: VoiceSender | undefined = caller
+    // A paired Mac takes the Chief of Staff's messages and answers as text: no recording is offered there.
+    const chiefOnMac = onMac && coworker.kind === 'foreman'
+    const voice: VoiceSender | undefined = caller && !chiefOnMac
         ? {
               upload: uri => uploadVoiceRecording(caller, endpoints.fileOwner(chat.sessionId), uri),
               transcribe: uri => transcribeRecording(caller, uri),
@@ -438,7 +441,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
                                             coworkerName={coworker.name}
                                             webUrl={webUrl}
                                             upload={canAttach && caller ? attachment => uploadChatFile(caller, coworker.id, attachment.uri, attachment.name) : undefined}
-                                            transcribe={caller ? uri => transcribeRecording(caller, uri) : undefined}
+                                            transcribe={caller && !chiefOnMac ? uri => transcribeRecording(caller, uri) : undefined}
                                             onAnswer={text => send(text)}
                                             onDismiss={() => {
                                                 setDismissedCallId(pending.toolCallId)

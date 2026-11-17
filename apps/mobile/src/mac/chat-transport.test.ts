@@ -198,3 +198,111 @@ describe('a conversation with a coworker on a paired Mac', () => {
         expect(hub.turnEnded).not.toHaveBeenCalled()
     })
 })
+
+describe('the reply stream after the chat let go of it', () => {
+    it('takes no more text, and ends without a word, once it was cancelled', async () => {
+        let push: ((frame: Frame) => void) | null = null
+        let finish: () => void = () => {}
+        const { client, hub } = setup({ attaches: [], statuses: ['done'] })
+        client.streamSentTurn.mockImplementation(async (_agent, _chat, _request, onFrame) => {
+            push = onFrame
+            await new Promise<void>(resolve => (finish = resolve))
+        })
+        const stream = replyStream(client as unknown as MacClient, hub as unknown as MacHub, { agentId: 'ada', chatId: 'chat-1', requestId: 'turn-1' }, {})
+        const reader = stream.getReader()
+        expect((await reader.read()).value).toEqual({ type: 'start' })
+        await new Promise(resolve => setTimeout(resolve, 0))
+        await reader.cancel()
+        // The Mac still sends what it had, and the turn then ends: nothing throws.
+        expect(() => push?.({ delta: 'late' })).not.toThrow()
+        finish()
+        await new Promise(resolve => setTimeout(resolve, 10))
+        expect(client.readSentTurn).toHaveBeenCalledTimes(1)
+    })
+})
+
+const CHIEF_GENERAL = 'fmc_11111111-1111-4111-8111-111111111111'
+const CHIEF_THREAD = 'fmc_22222222-2222-4222-8222-222222222222'
+
+function chiefSetup({ general, chatId = null }: { general: boolean; chatId?: string | null }) {
+    const base = setup({ attaches: [[{ reset: true }, { delta: 'On it' }]], statuses: ['done'] })
+    const client = Object.assign(base.client, {
+        sendToChief: jest.fn(async (message: { chatId?: string; thread?: boolean }) => message.chatId ?? (message.thread ? CHIEF_THREAD : CHIEF_GENERAL)),
+        answerChief: jest.fn(async () => ({ requestId: '11111111-1111-4111-8111-111111111111' })),
+        streamChiefTurn: jest.fn(async (_chat: string, _request: string, onFrame: (frame: Frame) => void) => {
+            onFrame({ reset: true })
+            onFrame({ delta: 'On it' })
+        }),
+        readChiefTurn: jest.fn(async () => ({ status: 'done' })),
+    })
+    const link = { ...base.link, endpoints: { agentId: 'foreman', sendBody: (sessionId: string | null, text: string) => ({ sessionId, kind: general ? 'general' : 'thread', text }) }, sessionRef: { current: chatId } }
+    const transport = createMacChatTransport(link as unknown as ChatLink, client as unknown as MacClient, base.hub as unknown as MacHub, problem => `problem:${problem}`, messages => (messages.at(-1)?.parts[0] as { text: string }).text)
+    return { client, hub: base.hub, link, transport }
+}
+
+describe('the Chief of Staff on a paired Mac', () => {
+    it('sends General\'s first message to General, and follows the reply through its own entries', async () => {
+        const { client, hub, link, transport } = chiefSetup({ general: true })
+        const chunks = await read(await send(transport, 'Plan the week'))
+        expect(client.sendToChief).toHaveBeenCalledWith({ requestId: '11111111-1111-4111-8111-111111111111', text: 'Plan the week' }, undefined)
+        expect(link.onSessionRef.current).toHaveBeenCalledWith(CHIEF_GENERAL)
+        expect(hub.turnStarted).toHaveBeenCalledWith(CHIEF_GENERAL, 'foreman', '11111111-1111-4111-8111-111111111111')
+        expect(textOf(chunks)).toBe('On it')
+        expect(client.streamChiefTurn).toHaveBeenCalledWith(CHIEF_GENERAL, '11111111-1111-4111-8111-111111111111', expect.any(Function), undefined)
+        expect(client.readChiefTurn).toHaveBeenCalledWith(CHIEF_GENERAL, '11111111-1111-4111-8111-111111111111', undefined)
+        expect(client.startConversation).not.toHaveBeenCalled()
+        expect(client.streamSentTurn).not.toHaveBeenCalled()
+    })
+
+    it('starts a task thread from a new page, and writes in the conversation it has open', async () => {
+        const fresh = chiefSetup({ general: false })
+        await read(await send(fresh.transport, 'Plan the launch'))
+        expect(fresh.client.sendToChief).toHaveBeenCalledWith({ requestId: '11111111-1111-4111-8111-111111111111', text: 'Plan the launch', thread: true }, undefined)
+        expect(fresh.link.onSessionRef.current).toHaveBeenCalledWith(CHIEF_THREAD)
+
+        const open = chiefSetup({ general: false, chatId: CHIEF_THREAD })
+        await read(await send(open.transport, 'And then?'))
+        expect(open.client.sendToChief).toHaveBeenCalledWith({ requestId: '11111111-1111-4111-8111-111111111111', text: 'And then?', chatId: CHIEF_THREAD }, undefined)
+    })
+
+    it('answers its question card through the Mac\'s answer path, and sends nothing else while it waits', async () => {
+        const { client, hub, transport } = chiefSetup({ general: true, chatId: CHIEF_GENERAL })
+        hub.waitingQuestion.mockReturnValue({ toolCallId: 'call-chief', questions: [{ question: 'Which team?', options: ['Sales', 'Support'], multiple: false }] })
+        await read(await send(transport, serializeAnswers([{ question: 'Which team?', answers: ['Sales'] }])))
+        expect(client.answerChief).toHaveBeenCalledWith(CHIEF_GENERAL, { requestId: '11111111-1111-4111-8111-111111111111', toolCallId: 'call-chief', answers: [['Sales']] }, undefined)
+        await expect(send(transport, 'Something else')).rejects.toThrow('problem:answerFirst')
+        expect(client.sendToChief).not.toHaveBeenCalled()
+        expect(client.answerQuestion).not.toHaveBeenCalled()
+    })
+
+    it('never decides an approval of the Chief of Staff, whatever this phone may approve for coworkers', async () => {
+        const { client, hub, transport } = chiefSetup({ general: true, chatId: CHIEF_GENERAL })
+        hub.waitingApproval.mockReturnValue({ toolCallId: 'call-approve', approvals: [{ action: 'Create Mara' }] })
+        await read(await send(transport, serializeApprovalDecisions([{ action: 'Create Mara', decision: 'approved' }])))
+        expect(client.decideApproval).not.toHaveBeenCalled()
+        expect(hub.waitingApproval).not.toHaveBeenCalled()
+    })
+
+    it('says why the Mac turned a message down, and sends one it did not confirm again under the same id', async () => {
+        const crypto = jest.requireMock('expo-crypto') as { randomUUID: () => string }
+        const fixed = crypto.randomUUID
+        let next = 0
+        crypto.randomUUID = () => `00000000-0000-4000-8000-00000000000${next++}`
+        const { client, transport } = chiefSetup({ general: true, chatId: CHIEF_GENERAL })
+        client.sendToChief.mockRejectedValueOnce(Object.assign(new Error('send_not_allowed'), { status: 403 }))
+        await expect(send(transport, 'Hi')).rejects.toThrow('problem:sendOff')
+        client.sendToChief.mockRejectedValueOnce(Object.assign(new Error('Wait for the current message'), { status: 409 }))
+        await expect(send(transport, 'Hi')).rejects.toThrow('problem:chiefBusy')
+        client.sendToChief.mockRejectedValueOnce(new TypeError('Network request failed'))
+        await expect(send(transport, 'Hi')).rejects.toThrow('problem:unreachable')
+        await read(await send(transport, 'Hi'))
+        const ids = client.sendToChief.mock.calls.map(call => (call[0] as { requestId: string }).requestId)
+        expect(ids).toHaveLength(4)
+        expect(new Set(ids).size).toBe(1)
+        // Once confirmed, the next message is a new one.
+        await read(await send(transport, 'Hi'))
+        expect((client.sendToChief.mock.calls.at(-1)?.[0] as { requestId: string }).requestId).not.toBe(ids[0])
+        crypto.randomUUID = fixed
+        expect(sendProblemOf(Object.assign(new Error('x'), { status: 409 }))).toBe('busy')
+    })
+})

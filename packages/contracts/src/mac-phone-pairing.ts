@@ -164,5 +164,52 @@ export const macPhoneInboxSchema = z.object({ items: z.array(macPhoneInboxItemSc
 export type MacPhoneInboxItem = z.infer<typeof macPhoneInboxItemSchema>
 export const macPhoneInboxReadSchema = z.object({ ids: z.array(z.string().min(3).max(8200)).min(1).max(500) }).strict()
 
+// The Chief of Staff. GET /workspaces/:workspace/chief: `intake` while it still asks its first-run
+// company questions, which are answered on the Mac (nothing else of it is served until then), and
+// General with the task threads someone wrote in.
+const chiefChatId = z.string().regex(/^fmc_[0-9a-f-]{36}$/)
+export const macPhoneChiefConversationSchema = z.object({ id: chiefChatId, title: z.string().nullable(), kind: z.enum(['general', 'thread']), createdAt: z.string(), updatedAt: z.string() })
+export const macPhoneChiefSchema = z.object({ state: z.enum(['ready', 'intake']), conversations: z.array(macPhoneChiefConversationSchema), permissions: sendPermission.optional() })
+export type MacPhoneChiefConversation = z.infer<typeof macPhoneChiefConversationSchema>
+// A card of the Chief of Staff that changes things once approved: a plan to build, changes to the
+// team, a starter pack. In words only, with nothing that names it to the Mac: it is settled there.
+export const macPhoneChiefCardSchema = z.object({ kind: z.enum(['plan', 'team-changes', 'starter']), title: z.string(), lines: z.array(z.string()) })
+export type MacPhoneChiefCard = z.infer<typeof macPhoneChiefCardSchema>
+// GET /workspaces/:workspace/chief/chat?chat=: one conversation, read as a coworker's chat is.
+// `running` says a reply is being written, whoever started it.
+export const macPhoneChiefChatSchema = z.object({
+    state: z.enum(['ready', 'intake']),
+    chat: macPhoneChiefConversationSchema.optional(),
+    messages: z.array(macPhoneMessageSchema).default([]),
+    running: z.boolean().default(false),
+    pending: macPhonePendingSchema.optional(),
+    cards: z.array(macPhoneChiefCardSchema).default([]),
+    permissions: sendPermission.optional(),
+})
+export type MacPhoneChiefChat = z.infer<typeof macPhoneChiefChatSchema>
+// POST /workspaces/:workspace/chief/send: a message in the conversation named, in a new task thread
+// (`thread`), or in General when neither is given. The Mac sends it through the Chief of Staff's own
+// path, with the model it chose. POST .../chief/answer answers the question a conversation waits on
+// (no `answers` dismisses it), POST .../chief/stop stops the reply to a turn this phone started.
+// All three need the send permission. GET .../chief/turn?chat=&request= and .../chief/stream follow
+// such a turn, as a coworker's is followed.
+export const macPhoneChiefSendSchema = z.object({ requestId: z.string().uuid(), text: z.string().min(1).max(20_000), chatId: chiefChatId.optional(), thread: z.literal(true).optional() }).strict()
+export const macPhoneChiefAnswerSchema = z.object({ chatId: chiefChatId, requestId: z.string().uuid(), toolCallId: z.string().min(1).max(256), answers: z.array(z.array(z.string().max(4000)).max(100)).min(1).max(32).optional() }).strict()
+export const macPhoneChiefStopSchema = z.object({ chatId: chiefChatId, requestId: z.string().uuid() }).strict()
+// POST /workspaces/:workspace/voice/start: a voice conversation with the Chief of Staff, on the Chief of
+// Staff conversation `chatId`. It needs the send permission and the Mac's own "talk from your phone"
+// switch, and is limited to a few a minute per phone. The reply is a short-lived ElevenLabs
+// conversation token for the phone's WebRTC session and the id of that conversation; the phone's
+// audio goes to ElevenLabs and the Mac answers in text through its relay. Refusals: `not_found` (the
+// feature is off on the Mac, or no such conversation), `unavailable` (the relay is not connected or
+// ElevenLabs refused), `send_not_allowed`, `rate_limited`.
+export const macPhoneVoiceStartSchema = z.object({ chatId: z.string().regex(/^fmc_[A-Za-z0-9-]{8,80}$/) }).strict()
+export const macPhoneVoiceSessionSchema = z.object({
+    conversationToken: z.string().min(1).max(8192),
+    conversationId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    expiresAt: z.string(),
+}).strict()
+export type MacPhoneVoiceSession = z.infer<typeof macPhoneVoiceSessionSchema>
+
 // Every refusal is `{ error: code }`. A phone that is not approved, or was removed, gets `unauthorized`.
 export const macPhoneErrorSchema = z.object({ error: z.string() })

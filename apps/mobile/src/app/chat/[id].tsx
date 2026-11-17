@@ -3,8 +3,6 @@ import { Redirect, useLocalSearchParams } from 'expo-router'
 
 import { CoworkerChat } from '@/components/chat/CoworkerChat'
 import { ForemanChat } from '@/components/chat/ForemanChat'
-import { onMac } from '@/config/environment'
-import { MacEmptyPane } from '@/mac/MacEmptyPane'
 
 const NEW = 'new'
 
@@ -15,8 +13,6 @@ export default function Chat() {
     const { id, to } = useLocalSearchParams<{ id: string; to?: string }>()
     if (!ROUTE_ID_PATTERN.test(id) || (to !== undefined && !ROUTE_ID_PATTERN.test(to))) return <Redirect href="/" />
     const sessionId = id === NEW ? null : id
-    // A paired Mac serves its coworkers, not the Foreman: a wide window opens on an empty pane.
-    if ((!to || to === FOREMAN_AGENT_ID) && onMac) return <MacEmptyPane />
     if (!to || to === FOREMAN_AGENT_ID) return <ForemanChat sessionId={sessionId} />
     return <CoworkerChat agentId={to} sessionId={sessionId} />
 }
