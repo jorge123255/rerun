@@ -83,7 +83,7 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                 <span className="truncate">{t('workspaceView.list.search')}</span>
             </button>
         </div>}
-        {inboxSlot && <div ref={inboxSlot} data-testid="desktop-simple-inbox" className="flex px-3 pt-1 empty:hidden" />}
+        {inboxSlot && <div ref={inboxSlot} data-testid="desktop-simple-inbox" className="@container flex px-3 pt-1 empty:hidden" />}
         <div className="flex items-center gap-1 pt-3 pr-3 pb-1 pl-5">
             <h2 className="text-xs font-medium text-muted-foreground">{t('workspaceView.list.label')}</h2>
             <span className="flex-1" />
