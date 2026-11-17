@@ -71,5 +71,7 @@ message is admitted.
 The phone uses the chat’s existing model and coworker settings. A stable send
 ID lets the phone retry a missing acknowledgement without starting a second
 turn. The client follows reply text and refreshes the saved chat at completion.
+`answerQuestion` answers the question a saved chat waits on: it names the card
+the phone was shown and the choices, and the Mac finds its saved question itself.
 Stop can cancel the exact turn sent by that approved device. The client reads
 the saved outcome so a reply that finishes first still shows as completed.

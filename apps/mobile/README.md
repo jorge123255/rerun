@@ -61,8 +61,9 @@ How it is built (`src/mac/`):
 
 What a paired Mac serves: the coworkers of the one workspace the phone was approved for, their saved
 chats as text, a new conversation, a message, the live text of the reply to a message the phone sent,
-stop, and the question or approval a chat waits on. A question is answered from the phone (it is a
-message); an approval is shown and decided on the Mac. Not served, and hidden or answered "not
+stop, and the question or approval a chat waits on. A question is answered from the phone when the
+phone may send: the Mac records the answer against the question it saved, the way its own form does,
+and takes nothing else in that chat until then. An approval is shown and decided on the Mac. Not served, and hidden or answered "not
 available": the Foreman, the inbox, new coworkers, files and attachments, voice, routines, apps, AI
 providers, search, feedback, push.
 
