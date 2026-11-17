@@ -1036,7 +1036,7 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
                             onDuplicate={initialData.board ? id => setTileAction({ kind: 'copy', agentId: id, nonce: ++tileActionNonce.current }) : undefined}
                             onMoveToBox={initialData.board ? (id, spaceId) => setTileAction({ kind: 'move', agentId: id, spaceId, nonce: ++tileActionNonce.current }) : undefined}
                             collapsed={sidebarList.list.collapsed} onToggleBox={sidebarList.toggleBox}
-                            onArrange={drop => {
+                            onArrange={!sidebarList.loaded ? undefined : drop => {
                                 if (drop.kind === 'boxes') sidebarList.orderBoxes(drop.writes)
                                 else if (drop.kind === 'agents') sidebarList.orderAgents(drop.boxId, drop.writes)
                                 // Its rank in the Box it lands in is kept first, then the board moves it there.

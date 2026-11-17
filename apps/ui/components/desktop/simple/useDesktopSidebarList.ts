@@ -23,22 +23,30 @@ export function useDesktopSidebarList({ enabled, boxIds, homes }: {
     // Only the answer to the latest change is taken: an older one would bring back what was just undone.
     const sequence = useRef(0)
     const alive = useRef(true)
+    const failures = useRef(0)
+    const readRef = useRef<() => Promise<void>>(async () => {})
     useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
 
     const read = useCallback(async () => {
         const own = ++sequence.current
         const saved = await loadDesktopSidebarList()
         if (!alive.current || own !== sequence.current) return
-        if (saved) setList(saved)
-        setLoaded(true)
+        if (saved) { setList(saved); setLoaded(true); return }
+        // Not read: the list stays as it is and nothing is written over what could not be seen. Tried again a few times.
+        if (++failures.current <= 5) setTimeout(() => { if (alive.current && own === sequence.current) void readRef.current() }, 3_000)
     }, [])
+    readRef.current = read
     useEffect(() => {
         if (!enabled || started.current) return
         started.current = true
         void read()
     }, [enabled, read])
 
+    const loadedRef = useRef(false)
+    loadedRef.current = loaded
     const change = useCallback((next: DesktopSidebarListChange) => {
+        // Until the saved list is known, a change would be written over it.
+        if (!loadedRef.current) return
         const own = ++sequence.current
         setList(current => applyDesktopSidebarListChange(current, next))
         void saveDesktopSidebarList(next).then(saved => {

@@ -100,3 +100,14 @@ test('a coworker dragged to another Box keeps the rank it was given there until 
     expect(puts.map(put => put.kind)).toEqual(['agents', 'forget'])
     expect(saved.agents).toEqual({})
 })
+
+test('while the saved list could not be read nothing is written over it', async () => {
+    saved = { collapsed: [support], boxes: { [support]: 1 }, agents: {} }
+    vi.mocked(fetch).mockImplementationOnce(async () => Response.json({ error: 'no' }, { status: 500 }))
+    await render({ enabled: true, boxIds: [sales, support], homes })
+    expect(api.loaded).toBe(false)
+    await act(async () => { api.toggleBox(sales); api.orderBoxes([{ id: sales, order: 1 }]) })
+    await settle()
+    expect(puts).toEqual([])
+    expect(saved.collapsed).toEqual([support])
+})
