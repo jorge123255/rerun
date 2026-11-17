@@ -1,4 +1,4 @@
-import { runStepSchema, toolCallSchema } from '@rerun/contracts'
+import { nativeSubagentOutcome, runStepSchema, toolCallSchema } from '@rerun/contracts'
 import { z } from 'zod'
 import { desktopToolPresentation } from './tool-presentation'
 
@@ -7,12 +7,17 @@ export const desktopRunStepSchema = runStepSchema.pick({
 })
 export const desktopRunToolSchema = toolCallSchema.pick({
     id: true, stepNumber: true, toolName: true, isError: true, resultJson: true, durationMs: true,
-})
+}).extend({ childOutcome: z.enum(['completed', 'failed', 'cancelled']).optional() })
 export const desktopRunDetailsSchema = z.object({ steps: z.array(desktopRunStepSchema), tools: z.array(desktopRunToolSchema) })
 export type DesktopRunDetailsView = z.infer<typeof desktopRunDetailsSchema>
 export type DesktopRunToolView = z.infer<typeof desktopRunToolSchema>
 
 export function recordedToolOutcome(tool: DesktopRunToolView) {
+    if (tool.toolName === 'native_subagent') {
+        if (tool.childOutcome === 'cancelled') return 'outcomeCancelled'
+        if (tool.isError || tool.childOutcome === 'failed') return 'outcomeFailed'
+        return tool.childOutcome === 'completed' ? 'outcomeSucceeded' : 'outcomeNotRecorded'
+    }
     return tool.isError !== 0 ? 'outcomeFailed' : tool.resultJson !== null ? 'outcomeSucceeded' : 'outcomeNotRecorded'
 }
 
@@ -24,8 +29,9 @@ export function desktopRunDetailsView(steps: unknown, tools: unknown): DesktopRu
         if (tool.resultJson === null) continue
         let output: unknown
         try { output = JSON.parse(tool.resultJson) } catch { output = tool.resultJson }
+        if (tool.toolName === 'native_subagent') tool.childOutcome = nativeSubagentOutcome(output)
         const shown = desktopToolPresentation(tool.toolName, undefined, output)
-        tool.resultJson = JSON.stringify(shown.errorText ?? shown.output ?? (tool.isError ? 'Tool failed.' : 'Tool completed.'))
+        tool.resultJson = JSON.stringify(shown.errorText ?? shown.output ?? (tool.isError ? 'Tool failed.' : tool.toolName === 'native_subagent' ? 'Outcome not recorded.' : 'Tool completed.'))
     }
     return view
 }

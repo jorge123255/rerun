@@ -20,6 +20,8 @@ import { EMPTY_ACTIVITY_FILTERS, desktopActivityQuery, desktopActivityViewSchema
 const TONE: Record<DesktopActivityOutcome, string> = {
     'allowed-by-permission': 'bg-muted text-muted-foreground',
     'allowed-once-by-person': 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+    started: 'bg-muted text-muted-foreground',
+    cancelled: 'bg-muted text-muted-foreground',
     completed: 'bg-muted text-muted-foreground',
     'asked-person': 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
     'declined-by-person': 'bg-orange-500/15 text-orange-700 dark:text-orange-300',

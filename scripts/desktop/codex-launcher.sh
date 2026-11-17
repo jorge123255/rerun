@@ -94,11 +94,13 @@ for arg in "$@"; do
     fi
     previous=$arg
 done
+# Codex 0.166 can select a multi-agent backend from the model catalog even when both
+# feature flags are off. The independent agents.enabled gate closes that path too.
 exec /usr/bin/env -i HOME="$mac_home" CODEX_HOME="$profile/state" TMPDIR="$profile/tmp" PATH=/usr/bin:/bin LANG=en_US.UTF-8 "$exec_server_env" \
     /usr/bin/sandbox-exec -D "PROFILE=$profile" -D "BINARY=$bin_dir/codex" -D "OUTPUT=$output" -D "SCHEMA=$schema" \
     -D "HOST=$bin_dir/codex-code-mode-host" -D "HOST_ALLOWED=$code_host" -D "KEYCHAIN=$keychain" -D "KEYDIR=$keydir" -D "ACCOUNT=${RERUN_CODEX_ACCOUNT_OP:-0}" -f "$bin_dir/rerun-codex.sb" \
     "$bin_dir/codex" -c 'cli_auth_credentials_store="keyring"' -c 'sandbox_mode="read-only"' -c 'approval_policy="never"' \
-    -c "web_search=\"$web\"" -c 'project_doc_max_bytes=0' -c 'mcp_servers={}' -c 'skills.bundled.enabled=false' \
+    -c 'agents.enabled=false' -c "web_search=\"$web\"" -c 'project_doc_max_bytes=0' -c 'mcp_servers={}' -c 'skills.bundled.enabled=false' \
     "$shell_feature" shell_tool "$shell_feature" unified_exec --disable hooks --disable plugins --disable apps \
     "$image_feature" image_generation --disable in_app_browser --disable multi_agent --disable multi_agent_v2 \
     --disable browser_use --disable computer_use --disable in_app_local_automation --disable in_app_voice \

@@ -44,6 +44,7 @@ import { agentProcessEnv } from './process-env.js'
 import { BRIDGE_SERVER_NAME, CLI_PROVIDERS, type LoadedAgent } from './types.js'
 import { apiCreditsMessage } from '../runtime/provider-errors.js'
 import { hubCallerHeaders } from '../runtime/hub.js'
+import { desktopClaudeSubagents } from '../desktop/claude-plan/subagents.js'
 import { desktopClaudeRuntime } from '../desktop/claude-plan/runtime.js'
 import { desktopCodexRuntime, signedInFlag } from '../desktop/codex-runtime.js'
 import type { DesktopNativeWorker } from '../desktop/native-worker.js'
@@ -275,7 +276,7 @@ export function codexMcpConfig(tools?: ToolSet, mcpServers: McpServer[] = [], sc
 // one-shot call (compaction, curator, vision) has none here and keeps passing its own to
 // generateText, where the provider folds it into the user turn. `claudeTools` reopens named Claude
 // built-ins for that call alone; a run has only CLAUDE_RUN_TOOLS.
-export type CliModelOptions = { effort?: string; system?: string; claudeTools?: readonly string[]; screenshots?: ScreenshotLookup; nativeWorker?: DesktopNativeWorker; desktopVision?: boolean }
+export type CliModelOptions = { effort?: string; system?: string; claudeTools?: readonly string[]; screenshots?: ScreenshotLookup; nativeWorker?: DesktopNativeWorker; nativeSubagentSignal?: AbortSignal; desktopVision?: boolean }
 
 // The subscription pays for the CLI's own web search, where Rerun's web_search would bill Brave to
 // Rerun. Its WebFetch stays closed: it hands back a summary of the page, web_fetch the page itself.
@@ -336,6 +337,9 @@ function claudeProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers: RunMcpS
             ...(allowedTools.length ? { mcpServers: servers, allowedTools } : {}),
             ...(capture ? { ...capture.settings, hooks: withCardTagNudge(capture.settings.hooks) } : {}),
             ...(desktopRuntime ? { ...desktopRuntime.settings, canUseTool: async (name, input) => allowedTools.includes(name) ? { behavior: 'allow' as const, updatedInput: input } : { behavior: 'deny' as const, message: 'This tool is not enabled for this coworker.' } } : {}),
+            ...(desktopRuntime && capture && options.nativeSubagentSignal && {
+                ...desktopClaudeSubagents(allowedTools, options.nativeSubagentSignal, withCardTagNudge(capture?.settings.hooks)),
+            }),
         },
     })
 }
@@ -432,6 +436,8 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
             configOverrides: {
                 model_reasoning_summary: 'auto',
                 ...(desktop ? {
+                    'agents.enabled': false,
+                    'features.multi_agent_v2': false,
                     project_doc_max_bytes: 0,
                     web_search: native.webSearch ? 'live' : 'disabled',
                     'features.code_mode.enabled': native.codeMode,
@@ -626,7 +632,7 @@ export type ResolvedModel = { model: LanguageModel; close: () => Promise<void>; 
 
 const noClose = async (): Promise<void> => {}
 
-export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker, imageRun?: DesktopCodexImageRun, reasoningEffort?: string, sessionId?: string, streamRetry: StreamRetryHooks = {}): ResolvedModel {
+export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools?: ToolSet, mcpServers?: RunMcpServer[], system?: string, screenshots?: ScreenshotLookup, nativeWorker?: DesktopNativeWorker, imageRun?: DesktopCodexImageRun, reasoningEffort?: string, sessionId?: string, streamRetry: StreamRetryHooks = {}, nativeSubagentSignal?: AbortSignal): ResolvedModel {
     const { provider, model } = pairFor(agent, override)
     // Outermost, so it judges the step by what the run is about to receive. A step is sent again
     // only where sending it again starts from nothing: one HTTP request, one fresh Claude process
@@ -667,8 +673,9 @@ export function resolveModel(agent: LoadedAgent, override?: ModelOverride, tools
     }
     if (provider === 'claude') {
         const capture = claudeContextCapture(agent.resolved.connection?.id)
-        const desktopRuntime = desktopApp() ? desktopClaudeRuntime(agent.resolved.connection?.id, connectionEnv(agent).CLAUDE_CODE_OAUTH_TOKEN ?? '', CLAUDE_HARNESS_ENV) : undefined
-        const claude = claudeProvider(agent, tools, mcpServers, capture, { system, screenshots, claudeTools: agent.config.tools.web ? CLAUDE_RUN_TOOLS : [], effort: reasoningEffort }, desktopRuntime).languageModel(model)
+        const childSignal = desktopApp() && !agent.config.ephemeral && agent.config.tools.desktopToolGrants?.claudeSubagents === true ? nativeSubagentSignal : undefined
+        const desktopRuntime = desktopApp() ? desktopClaudeRuntime(agent.resolved.connection?.id, connectionEnv(agent).CLAUDE_CODE_OAUTH_TOKEN ?? '', CLAUDE_HARNESS_ENV, !!childSignal) : undefined
+        const claude = claudeProvider(agent, tools, mcpServers, capture, { system, screenshots, nativeSubagentSignal: childSignal, claudeTools: agent.config.tools.web ? CLAUDE_RUN_TOOLS : [], effort: reasoningEffort }, desktopRuntime).languageModel(model)
         return { model: wrapLanguageModel({ model: claude, middleware: [...(desktopRuntime ? [retry()] : []), claudeScreenshotMiddleware, replies.middleware, cardTags, guard] }), close: desktopRuntime?.close ?? noClose, contextUsage: capture.read, quickReplies: replies.read }
     }
     // Asking for the reasoning and reading it back are both off the OpenAI chat format, so they are
