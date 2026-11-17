@@ -25,28 +25,30 @@ const agent = (id: string, name: string, patch: Partial<DesktopAgentView> = {}):
 test('lists coworkers most recently active first, each keeping its line at rest with a dot for where it stands', async () => {
     const onOpen = vi.fn(), onForeman = vi.fn(), onSearch = vi.fn(), onNew = vi.fn()
     const host = mount(<DesktopSimpleSidebar workspaceMenu={<span>menu</span>} selectedId="bo" foremanOpen={false}
-        agents={[agent('ann', 'Ann'), agent('bo', 'Bo'), agent('cy', 'Cy', { enabled: false }), agent('di', 'Di'), agent('ed', 'Ed', { description: '' })]}
-        statuses={{ ann: 'working', bo: 'waiting_human', cy: 'working', di: 'unreachable', ed: 'idle' }}
+        agents={[agent('ann', 'Ann'), agent('bo', 'Bo'), agent('cy', 'Cy', { enabled: false }), agent('di', 'Di'), agent('ed', 'Ed', { description: '' }), agent('fay', 'Fay', { enabled: false })]}
+        statuses={{ ann: 'working', bo: 'waiting_human', cy: 'working', di: 'unreachable', ed: 'idle', fay: 'idle' }}
         previews={{ ann: { title: 'Q4 prospects', updatedAt: '2026-11-13T10:00:00.000Z' }, bo: { title: 'Approve the invoice', updatedAt: '2026-11-13T12:00:00.000Z' }, di: { title: 'Weekly report', updatedAt: '2026-11-12T10:00:00.000Z', lastMessage: { text: 'Send it on Monday', mine: true } } }}
-        unseenIds={['bo', 'ann', 'di']} onOpenCoworker={onOpen} onOpenForeman={onForeman} onSearch={onSearch} onNewCoworker={onNew} />)
+        unseenIds={['bo', 'ann', 'di', 'fay']} onOpenCoworker={onOpen} onOpenForeman={onForeman} onSearch={onSearch} onNewCoworker={onNew} />)
     const tiles = [...host.querySelectorAll<HTMLButtonElement>('[data-simple-tile-id]')]
-    expect(tiles.map(tile => tile.dataset.simpleTileId)).toEqual(['bo', 'ann', 'di', 'cy', 'ed'])
+    expect(tiles.map(tile => tile.dataset.simpleTileId)).toEqual(['bo', 'ann', 'di', 'cy', 'ed', 'fay'])
     const lines = tiles.map(tile => tile.querySelector('[data-tile-line]'))
     // Each line reads as it does at rest, whatever the coworker is doing (upstream #278).
-    expect(lines.map(line => line?.textContent)).toEqual(['Approve the invoice', 'Q4 prospects', 'You: Send it on Monday', 'Finds leads', ' '])
+    expect(lines.map(line => line?.textContent)).toEqual(['Approve the invoice', 'Q4 prospects', 'You: Send it on Monday', 'Finds leads', ' ', 'Finds leads'])
     expect(lines.every(line => line?.className.includes('text-muted-foreground') && !line.className.includes('orange'))).toBe(true)
     // The dot alone tells where each stands: waiting, working, a run nobody opened, paused, nothing at rest.
     const dots = tiles.map(tile => tile.querySelector<HTMLElement>('[data-tile-dot]'))
-    expect(dots.map(dot => dot?.dataset.tileDot ?? null)).toEqual(['waiting', 'working', 'unseen', 'paused', null])
-    expect(dots.map(dot => dot?.getAttribute('aria-label') ?? null)).toEqual(['Waiting for you', 'Working', null, 'Paused', null])
+    expect(dots.map(dot => dot?.dataset.tileDot ?? null)).toEqual(['waiting', 'working', 'unseen', 'paused', null, 'unseen'])
+    expect(dots.map(dot => dot?.getAttribute('aria-label') ?? null)).toEqual(['Waiting for you', 'Working', null, 'Paused', null, null])
     expect(dots[0]!.querySelector('.bg-orange-400')).not.toBeNull()
     // Working is green and pulses; a read that failed (Di) is never shown as an error or as work.
     expect(dots[1]!.querySelector('.bg-emerald-500')).not.toBeNull()
     expect(dots[1]!.querySelector('.animate-ping')).not.toBeNull()
     expect(dots[2]!.className).toContain('bg-brand')
     expect(dots[3]!.querySelector('.bg-muted-foreground\\/40')).not.toBeNull()
+    // A result nobody opened shows in front of the grey dot of a paused coworker (upstream #283); work and waiting keep theirs.
+    expect(dots[5]!.className).toContain('bg-brand')
     // The buddy keeps its look at rest: asleep only when paused.
-    expect(tiles.map(tile => tile.querySelector('[data-mood]')?.getAttribute('data-mood'))).toEqual(['idle', 'idle', 'idle', 'asleep', 'idle'])
+    expect(tiles.map(tile => tile.querySelector('[data-mood]')?.getAttribute('data-mood'))).toEqual(['idle', 'idle', 'idle', 'asleep', 'idle', 'asleep'])
     expect(tiles[0].getAttribute('aria-current')).toBe('true')
     expect(tiles[1].getAttribute('aria-current')).toBeNull()
     await act(async () => { tiles[1].click() })
@@ -171,4 +173,16 @@ test('New Box and a Box\'s menu open the board\'s dialogs, and are absent where 
         agents={[made('bo', 'Bo', '1')]} statuses={{}} previews={{}} boxes={BOXES} boxOf={id => HOME[id] ?? null} />)
     expect(bare.querySelector('button[aria-label="New Box"]')).toBeNull()
     expect(bare.querySelector('button[aria-label="Actions for Support"]')).toBeNull()
+})
+
+test('with several Boxes and no coworker the Boxes are listed; with one Box or none the first coworker is offered', () => {
+    const empty = (boxes: typeof BOXES) => mount(<DesktopSimpleSidebar workspaceMenu={null} selectedId={null} foremanOpen={false} onOpenCoworker={vi.fn()} onNewCoworker={vi.fn()}
+        agents={[]} statuses={{}} previews={{}} boxes={boxes} boxOf={() => null} />)
+    const several = empty(BOXES)
+    expect(several.textContent).not.toContain('No coworkers yet')
+    expect([...several.querySelectorAll('[data-simple-box-empty]')].map(row => row.textContent)).toEqual(['No coworkers', 'No coworkers', 'No coworkers'])
+    for (const host of [empty(BOXES.slice(0, 1)), empty([])]) {
+        expect(host.textContent).toContain('No coworkers yet')
+        expect(host.querySelector('section[data-simple-box-id]')).toBeNull()
+    }
 })

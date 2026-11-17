@@ -99,10 +99,11 @@ export function DesktopCoworkerTile({ agent, status, latest, selected, unseen, d
     </div>
 }
 
-// Where the coworker stands, in a dot: at rest it shows only a run nobody has opened yet.
+// Where the coworker stands, in a dot. A run nobody has opened yet shows while it does nothing: at
+// rest, and in front of the grey of one paused (upstream #283).
 function StatusDot({ status, unseen }: { status: DotStatus | null; unseen: boolean }) {
     const { t } = useDesktopLocale()
-    const dot = status ? DOT[status] : null
+    const dot = status && !(unseen && status === 'paused') ? DOT[status] : null
     if (!dot) return unseen ? <span data-tile-dot="unseen" className="size-2 shrink-0 rounded-full bg-brand" /> : null
     const label = t(`workspaceView.${dot.label}`)
     return <TooltipLabeled label={label}>

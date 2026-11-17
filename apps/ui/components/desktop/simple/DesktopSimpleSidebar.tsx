@@ -105,7 +105,8 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                     <span className="block truncate text-xs text-muted-foreground">{t('workspaceView.foreman.line')}</span>
                 </span>
             </button>}
-            {grouped ? agents.length === 0 ? empty : <>
+            {/* With several Boxes and no coworker the Boxes are still listed: one just created is not hidden (upstream #283). */}
+            {grouped ? agents.length === 0 && grouped.sections.length <= 1 ? empty : <>
                 <DesktopSidebarBoxList sections={grouped.sections} order={order} collapsed={collapsed ?? []} disabled={disabled}
                     waitingIn={members => members.some(agent => agent.enabled !== false && statuses[agent.id] === 'waiting_human')}
                     onToggle={boxId => onToggleBox?.(boxId)} onDialog={onBoxDialog} renderTile={tile} onDrop={onArrange} canMoveBetweenBoxes={!!onMoveToBox} />
