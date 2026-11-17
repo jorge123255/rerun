@@ -49,6 +49,9 @@ const RESOURCES = new Map([
     ['GET inbox', { to: 'inbox' }],
     // Marking a row read changes the Mac's own inbox: a phone that only reads changes nothing.
     ['POST inbox/read', { to: 'inbox', needs: 'sendMessages' }],
+    // A voice conversation with the Chief of Staff speaks for the phone's owner: it takes the right to
+    // send. Each one starts an ElevenLabs session billed to the owner, so a phone gets a few a minute.
+    ['POST voice/start', { to: 'voice/start', needs: 'sendMessages', limit: 1_000, rate: { count: 3, perMs: 60_000 } }],
 ])
 const RESOURCE_PATH = /^\/workspaces\/([^/]+)\/([a-z-]+(?:\/[a-z-]+)?)$/
 const REFUSALS = { sendMessages: 'send_not_allowed', approveRequests: 'approve_not_allowed' }
@@ -132,7 +135,19 @@ export function createPairingTransport({
     getSettings, getStore, saveStore, getRuntime, dataRoot, offers, exclusive,
 }) {
     const claims = new Map()
+    const recent = new Map()
     let closing = false
+    // At most `rate.count` requests to one resource per phone in any `rate.perMs`.
+    function withinRate(deviceId, spec) {
+        if (!spec.rate) return true
+        const at = now(), key = `${deviceId} ${spec.to}`
+        const kept = (recent.get(key) ?? []).filter(time => at - time < spec.rate.perMs)
+        if (kept.length >= spec.rate.count) { recent.set(key, kept); return false }
+        kept.push(at)
+        recent.set(key, kept)
+        if (recent.size > 1000) for (const [name, times] of recent) if (!times.some(time => at - time < spec.rate.perMs)) recent.delete(name)
+        return true
+    }
     const certificateFingerprint = tls?.certificateFingerprint
     const inScope = device => device.certificateFingerprint === certificateFingerprint
     function activeClaim(deviceId) {
@@ -257,6 +272,7 @@ export function createPairingTransport({
             }
             const body = await readBody(request, spec.limit ?? BODY_LIMIT)
             if (!body) return fail(response, 'invalid_request', 400)
+            if (!withinRate(device.deviceId, spec)) return fail(response, 'rate_limited', 429)
             return await exclusive(async () => { if (await recheck()) release(await callWorkspace(current, { resource: spec.to, method: request.method, body })) })
         } catch (error) {
             if (error.code === ERRORS.not_found) fail(response, ERRORS.not_found, 404)
