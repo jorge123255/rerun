@@ -4,7 +4,6 @@ import { AttentionBuddy, type InboxEntry } from '@rerun/ui/inbox'
 import { Button, Skeleton, useScrollFade } from '@rerun/ui/primitives'
 import { shortRelativeTime } from '@rerun/ui/time'
 import { AnimatePresence, motion } from 'motion/react'
-import { useLocale, useTranslations } from 'next-intl'
 import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react'
 
 import { MessageResponse } from '@/components/ai-elements/message'
@@ -12,6 +11,7 @@ import { ActionApprovalBlock } from '@/components/chat/ActionApprovalBlock'
 import { HitlReceipt } from '@/components/chat/HitlReceipt'
 import { QuestionForm } from '@/components/chat/QuestionForm'
 import { SecretRequestBlock } from '@/components/chat/SecretRequestBlock'
+import { usePeekTranslations } from '@/components/notifications/peek-translations'
 import type { InboxPeek, PeekAnswerOutcome } from '@/hooks/useInboxPeek'
 import { HITL_CANCELLED, parseHitlReply, pendingApprovals, pendingQuestions, pendingSecrets, serializeApprovalDecisions } from '@/lib/chat-hitl'
 import type { PendingRequestPeek } from '@/lib/chat/pending-request-peek'
@@ -41,8 +41,7 @@ type Phase = { step: 'asking' } | { step: 'sending' } | { step: 'sent'; text: st
 
 /** A question, an approval or a credential request, read and answered from the inbox without opening the conversation. */
 export function InboxPeekCard({ entry, peek, onAnswer, onClose, onOpenConversation, anchor = 'bottom' }: InboxPeekCardProps) {
-    const t = useTranslations('notifications.inbox.peek')
-    const locale = useLocale()
+    const t = usePeekTranslations()
     const [phase, setPhase] = useState<Phase>({ step: 'asking' })
     const [notice, setNotice] = useState<'busy' | 'failed' | null>(null)
     // A widget latches once submitted: a failed send gives a fresh one back.
@@ -68,7 +67,7 @@ export function InboxPeekCard({ entry, peek, onAnswer, onClose, onOpenConversati
         setPhase({ step: 'asking' })
     }
 
-    const subtitle = [entry.title, entry.updatedAt && shortRelativeTime(entry.updatedAt, locale)].filter(Boolean).join(' · ')
+    const subtitle = [entry.title, entry.updatedAt && shortRelativeTime(entry.updatedAt)].filter(Boolean).join(' · ')
     const pending = peek.state === 'ready' ? peek.peek.pending : null
     const answerable = pending !== null && isAnswerable(pending)
     const sent = phase.step === 'sent'
@@ -159,13 +158,12 @@ function isAnswerable(pending: Pending): boolean {
 
 // The card's header carries the close button; the credential block keeps its own, which only puts the card away.
 function PeekWidget({ pending, agentId, sessionId, onSubmit, onClose }: { pending: Pending; agentId: string; sessionId: string; onSubmit: (text: string) => void; onClose: () => void }) {
-    if (pending.kind === 'question') return <QuestionForm inline target={{ kind: 'agent', agentId }} questions={pendingQuestions(pending.input)} onSend={onSubmit} />
+    if (pending.kind === 'question') return <QuestionForm inline agentId={agentId} questions={pendingQuestions(pending.input)} onSend={onSubmit} onCancel={onClose} />
     if (pending.kind === 'approval') return <ActionApprovalBlock inline approvals={pendingApprovals(pending.input)} onSubmit={decisions => onSubmit(serializeApprovalDecisions(decisions))} />
     return (
         <SecretRequestBlock
             inline
             agentId={agentId}
-            sessionId={sessionId}
             secrets={pendingSecrets(pending.input)}
             reason={typeof pending.input.reason === 'string' ? pending.input.reason : undefined}
             onDone={onSubmit}
@@ -177,7 +175,7 @@ function PeekWidget({ pending, agentId, sessionId, onSubmit, onClose }: { pendin
 
 // The agent's turn before the ask folds to two lines until asked for.
 function ThreadContext({ before, ask }: { before: string | null; ask: string }) {
-    const t = useTranslations('notifications.inbox.peek')
+    const t = usePeekTranslations()
     const [expanded, setExpanded] = useState(false)
     return (
         <div className="flex flex-col gap-2 rounded-lg bg-muted/40 p-2.5">
