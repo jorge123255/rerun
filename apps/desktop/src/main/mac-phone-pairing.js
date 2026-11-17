@@ -90,7 +90,7 @@ async function refresh() {
     if (renderedNetworks !== choices) {
         renderedNetworks = choices
         const missing = status.lanAddress && !addresses.includes(status.lanAddress)
-        network.replaceChildren(new Option(copy.thisMac, ''), ...addresses.map(address => new Option(translate('networkAddress', { address }), address)))
+        network.replaceChildren(new Option(copy.thisMac, ''), ...addresses.map(address => new Option(translate(/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(address) ? 'tailscaleAddress' : 'networkAddress', { address }), address)))
         if (missing) network.append(new Option(translate('unavailableAddress', { address: status.lanAddress }), status.lanAddress))
     }
     network.value = status.lanAddress ?? ''

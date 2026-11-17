@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { createMacPhonePairingService, PHONE_SESSION_KEY } from '../src/main/mac-phone-pairing/index.mjs'
-import { isPrivateAddress, localPairingAddresses } from '../src/main/mac-phone-pairing/lan-identity.mjs'
+import { isPrivateAddress, isTailscaleAddress, localPairingAddresses } from '../src/main/mac-phone-pairing/lan-identity.mjs'
 import { seedLegacyCatalog } from '../src/main/workspaces/catalog.mjs'
 import { createMacPairingClient, createMemoryStorage } from '../../../packages/mac-pairing-client/src/index.mjs'
 import { pinnedFetch } from './mac-phone-pairing-client-fixture.mjs'
@@ -116,10 +116,17 @@ test('the listener only ever binds loopback or a private address of this Mac', a
     const { service } = await start(t)
     await assert.rejects(() => service.setLanAddress('192.168.1.20'), error => error.code === 'disabled')
     await service.setPhoneAccessEnabled(true)
-    for (const address of ['0.0.0.0', '8.8.8.8', '169.254.10.10', '100.100.1.1', 'example.com', '::', '192.168.1.20.evil.example']) {
+    for (const address of ['0.0.0.0', '8.8.8.8', '169.254.10.10', '100.63.255.255', '100.128.0.1', 'example.com', '::', '192.168.1.20.evil.example']) {
         assert.equal(isPrivateAddress(address), false)
         await assert.rejects(() => service.setLanAddress(address), error => error.code === 'lan_address_unavailable')
     }
+    // A Tailscale address (100.64.0.0/10) counts as private, and one this Mac does not hold is refused like any other.
+    for (const address of ['100.64.0.1', '100.100.1.1', '100.127.255.254']) {
+        assert.equal(isPrivateAddress(address), true)
+        assert.equal(isTailscaleAddress(address), true)
+        if (!localPairingAddresses().includes(address)) await assert.rejects(() => service.setLanAddress(address), error => error.code === 'lan_address_unavailable')
+    }
+    assert.equal(isTailscaleAddress('192.168.1.20'), false)
     // A private address this Mac does not hold is refused too.
     const foreign = ['10.253.254.1', '192.168.253.254'].find(address => !localPairingAddresses().includes(address))
     await assert.rejects(() => service.setLanAddress(foreign), error => error.code === 'lan_address_unavailable')
@@ -138,6 +145,19 @@ test('the phone refuses an offer that names an address outside the local network
     ]) {
         await assert.rejects(() => client.connectToThisMac({ ...offer, origin, certificateFingerprint }), error => error.message === 'invalid_origin')
     }
+    // Just outside Tailscale's range is the open internet as far as the phone is concerned.
+    for (const origin of ['https://100.63.255.255:4000', 'https://100.128.0.1:4000']) {
+        await assert.rejects(() => client.connectToThisMac({ ...offer, origin, certificateFingerprint: pin }), error => error.message === 'invalid_origin')
+    }
+})
+
+test('the phone accepts a pinned offer on a Tailscale address', async () => {
+    const seen = []
+    const client = createMacPairingClient({ storage: createMemoryStorage(), fetch: () => assert.fail('a pinned offer never uses plain fetch'),
+        pinnedFetch: async (url, init) => { seen.push([String(url), init?.certificateFingerprint ?? init?.fingerprint ?? null]); throw new Error('stop here') } })
+    const offer = { version: 1, kind: 'rerun-mac-phone-pairing', offerId: 'offer', workspaceId: 1, macId: 'mac', fingerprint: 'f'.repeat(64), secret: 'S'.repeat(43) }
+    await assert.rejects(() => client.connectToThisMac({ ...offer, origin: 'https://100.78.1.2:4000', certificateFingerprint: 'a'.repeat(64) }), error => error.message !== 'invalid_origin')
+    assert.equal(seen.length > 0 && seen[0][0].startsWith('https://100.78.1.2:4000/'), true)
 })
 
 test('a saved chat carries the question and the approval it waits on to an approved phone', async t => {

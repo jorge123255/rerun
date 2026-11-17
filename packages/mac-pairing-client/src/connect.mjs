@@ -6,7 +6,7 @@ function pairingOrigin(origin, certificateFingerprint) {
     const parsed = new URL(origin)
     if (parsed.origin !== origin || !parsed.port) throw new Error('invalid_origin')
     if (parsed.protocol === 'http:' && parsed.hostname === '127.0.0.1' && !certificateFingerprint) return origin
-    const privateAddress = /^(?:10\.\d+|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d+\.\d+$/.test(parsed.hostname)
+    const privateAddress = /^(?:10\.\d+|172\.(?:1[6-9]|2\d|3[01])|192\.168|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7]))\.\d+\.\d+$/.test(parsed.hostname)
     if (parsed.protocol === 'https:' && privateAddress && typeof certificateFingerprint === 'string'
         && /^[0-9a-f]{64}$/.test(certificateFingerprint)) return origin
     throw new Error('invalid_origin')
