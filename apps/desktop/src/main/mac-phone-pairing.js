@@ -148,25 +148,29 @@ async function refresh() {
     approvedList.replaceChildren(...paired.map(device => {
         const item = row(device, copy.revoke, revoke)
         if (device.network !== 'lan') return item
-        const label = document.createElement('label')
-        label.className = 'toggle'
-        const toggle = document.createElement('input')
-        toggle.type = 'checkbox'
-        toggle.checked = device.sendMessages
-        toggle.setAttribute('aria-label', translate('sendLabel', { name: device.name || 'iPhone' }))
-        toggle.addEventListener('change', async () => {
-            toggle.disabled = true
-            try {
-                await window.desktopApp.phonePairing.setSendMessages(device.deviceId, toggle.checked)
-                showError('')
-            } catch {
-                toggle.checked = device.sendMessages
-                showError('sendFailed')
-            } finally { toggle.disabled = false }
-            await refresh().catch(() => showError('unavailable'))
-        })
-        label.append(toggle, copy.send)
-        item.insertBefore(label, item.lastElementChild)
+        const grant = (granted, name, text, change) => {
+            const label = document.createElement('label')
+            label.className = 'toggle'
+            const toggle = document.createElement('input')
+            toggle.type = 'checkbox'
+            toggle.checked = granted
+            toggle.setAttribute('aria-label', translate(name, { name: device.name || 'iPhone' }))
+            toggle.addEventListener('change', async () => {
+                toggle.disabled = true
+                try {
+                    await change(device.deviceId, toggle.checked)
+                    showError('')
+                } catch {
+                    toggle.checked = granted
+                    showError('sendFailed')
+                } finally { toggle.disabled = false }
+                await refresh().catch(() => showError('unavailable'))
+            })
+            label.append(toggle, text)
+            item.insertBefore(label, item.lastElementChild)
+        }
+        grant(device.sendMessages, 'sendLabel', copy.send, window.desktopApp.phonePairing.setSendMessages)
+        grant(device.approveRequests, 'decideLabel', copy.decide, window.desktopApp.phonePairing.setApproveRequests)
         return item
     }))
 }

@@ -1,11 +1,12 @@
 import { z } from 'zod'
+import { desktopApprovalPayloadSchema } from '@/lib/desktop/approvals'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopHistory, startDesktopChat, startDesktopPhoneConversation } from '@/lib/desktop/server/engine'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
-import { readDesktopApproval } from '@/lib/desktop/server/approvals'
-import { phonePendingCards } from '@/lib/desktop/server/phone-pending'
+import { answerDesktopApproval, readDesktopApproval } from '@/lib/desktop/server/approvals'
+import { readPhonePending } from '@/lib/desktop/server/phone-chat-pending'
 import { phoneReplyStream } from '@/lib/desktop/server/phone-reply'
 import { answerDesktopQuestion, readDesktopQuestion } from '@/lib/desktop/server/questions'
 import { withDesktopSecretSessionTransition } from '@/lib/desktop/server/secret-requests/lifecycle'
@@ -22,6 +23,12 @@ const options = { headers: { 'cache-control': 'no-store' } }
 const uuid = z.string().uuid()
 const newConversationInput = z.object({ chatId: uuid, runId: uuid, text: z.string().max(20_000).refine(text => !!text.trim()) }).strict()
 const turnInput = z.object({ runId: uuid, text: z.string().max(20_000).refine(text => !!text.trim()) }).strict()
+// The decisions on the approval a chat waits on, one for each action its card shows. The Mac finds its
+// saved approval itself and records them through the path its own card uses, receipts and checks included.
+const approvalInput = z.object({ runId: uuid, approval: z.object({
+    toolCallId: z.string().min(1).max(256),
+    decisions: desktopApprovalPayloadSchema.shape.decisions,
+}).strict() }).strict()
 // The answer to the question a chat waits on. The phone names the card it was shown, never the saved
 // question: the Mac finds that itself, and records the answer the way its own form does.
 const answerInput = z.object({ runId: uuid, answer: z.object({
@@ -88,12 +95,7 @@ export async function GET(request: Request): Promise<Response> {
             return text ? [{ id: message.id, role: message.role, createdAt: message.metadata?.createdAt,
                 content: { type: 'text', text } }] : []
         })
-        // A request the chat waits on. A failed read hides the card and keeps the chat readable.
-        const [question, approval] = await Promise.all([
-            readDesktopQuestion(runtime, chatId).then(view => view.question, () => null),
-            readDesktopApproval(runtime, chatId).then(view => view.approval, () => null),
-        ])
-        return Response.json({ chat: { id: savedId, agentId, title, createdAt, updatedAt, kind, acceptsMessages: agent.enabled }, messages, pending: phonePendingCards(question, approval) }, options)
+        return Response.json({ chat: { id: savedId, agentId, title, createdAt, updatedAt, kind, acceptsMessages: agent.enabled }, messages, pending: await readPhonePending(runtime, db, chat) }, options)
     })
 }
 
@@ -112,6 +114,28 @@ export async function POST(request: Request): Promise<Response> {
             void response.body?.cancel().catch(() => {})
             if (sessionId !== newId || response.headers.get('x-run-id') !== runId) throw new DesktopHttpError(502, 'Could not confirm this conversation.')
             return Response.json({ runId, chatId: sessionId }, { ...options, status: 202 })
+        }
+        const decided = approvalInput.safeParse(input)
+        if (decided.success) {
+            const { runId, approval } = decided.data
+            const pending = (await readDesktopApproval(runtime, chatId)).approval
+            if (!pending) {
+                // Sent twice: the first one was taken, and its run says so.
+                const db = await openDesktopDatabase(runtime.dataRoot)
+                const agent = await findDesktopAgent(db, agentId)
+                const chat = await findDesktopSession(db, chatId)
+                if (!agent || chat?.agentId !== agentId) throw new DesktopHttpError(404, 'Not found')
+                await ownedRun(runtime, agent.engineAgentId, chat.engineSessionId, runId).catch(() => { throw new DesktopHttpError(409, 'This approval is no longer waiting for decisions.') })
+                return Response.json({ runId }, { ...options, status: 202 })
+            }
+            // One decision for each action the card shows, on the card the phone was shown.
+            if (pending.toolCallId !== approval.toolCallId || approval.decisions.length !== pending.approvals.length) {
+                throw new DesktopHttpError(409, 'This approval is no longer waiting for decisions.')
+            }
+            const response = await answerDesktopApproval(runtime, chatId, { approvalId: pending.id, requestId: runId, decisions: approval.decisions })
+            void response.body?.cancel().catch(() => {})
+            if (response.headers.get('x-run-id') !== runId) throw new DesktopHttpError(502, 'Could not confirm these decisions.')
+            return Response.json({ runId }, { ...options, status: 202 })
         }
         const answered = answerInput.safeParse(input)
         if (answered.success) {

@@ -70,6 +70,7 @@ function publicDevice(device) {
         lastSeenAt: device.lastSeenAt,
         network: device.certificateFingerprint ? 'lan' : 'loopback',
         sendMessages: device.sendMessages === true,
+        approveRequests: device.approveRequests === true,
     }
 }
 
@@ -90,6 +91,7 @@ function validateStore(value, installId) {
             || (device.credentialIssued !== undefined && typeof device.credentialIssued !== 'boolean')
             || (device.certificateFingerprint !== undefined && !HASH.test(device.certificateFingerprint))
             || (device.sendMessages !== undefined && (typeof device.sendMessages !== 'boolean' || (device.sendMessages && !device.certificateFingerprint)))
+            || (device.approveRequests !== undefined && (typeof device.approveRequests !== 'boolean' || (device.approveRequests && !device.certificateFingerprint)))
             || !Object.values(DEVICE_STATUS).includes(device.status)
             || !Number.isFinite(Date.parse(device.createdAt))) {
             throw new Error('Phone pairing records need recovery.')

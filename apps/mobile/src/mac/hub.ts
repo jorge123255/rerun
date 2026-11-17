@@ -1,5 +1,5 @@
-import type { AgentConversationsOverview, AgentModels, AgentView, BoardAgent, Box, Conversation, ConversationMessage, Inbox, Me, SessionStatus } from '@rerun/contracts'
-import { macPhoneChatReadSchema, macPhoneChatsSchema, macPhoneCoworkersSchema, type MacPhoneChat, type MacPhoneChatRead, type MacPhoneCoworker } from '@rerun/mac-contracts/mac-phone-pairing'
+import type { AgentConversationsOverview, AgentModels, AgentView, BoardAgent, Box, Conversation, ConversationMessage, Inbox, InboxItem, Me, SessionStatus } from '@rerun/contracts'
+import { macPhoneChatReadSchema, macPhoneChatsSchema, macPhoneCoworkersSchema, macPhoneInboxSchema, type MacPhoneChat, type MacPhoneInboxItem, type MacPhoneChatRead, type MacPhoneCoworker } from '@rerun/mac-contracts/mac-phone-pairing'
 
 import type { MacClient } from './client'
 import type { MacLink } from './session'
@@ -25,6 +25,8 @@ export type MacHub = {
     lastTurn: (chatId: string) => { agentId: string; requestId: string } | null
     // The question a chat waits on, as last read: the Mac takes its answer as an answer, not as a message.
     waitingQuestion: (chatId: string) => NonNullable<NonNullable<MacPhoneChatRead['pending']>['question']> | null
+    // The approval a chat waits on, when this phone may decide it.
+    waitingApproval: (chatId: string) => NonNullable<NonNullable<MacPhoneChatRead['pending']>['approval']> | null
 }
 
 // The one Box a Mac's coworkers sit in on the Home.
@@ -81,31 +83,47 @@ export function conversationOf(chat: MacPhoneChat, status: SessionStatus): Conve
     }
 }
 
-// The Mac sends a saved chat as text, and the question or approval it waits on in words. A question
-// is put back where the app looks for its card, a tool call left open at the end of the last reply:
-// answering it is sending a message, which the phone may or may not be allowed to do. An approval
-// lets a coworker act, and is decided on the Mac: the phone shows what is asked, as text, with no
-// button to approve it.
-export function messagesOf(read: MacPhoneChatRead, approvalTitle = 'Waiting for your approval on your Mac'): ConversationMessage[] {
+// What the hub words for the person, in the app's language.
+export type MacWords = { approvalOnMac: () => string; macOnly: (kind: MacOnlyKind) => string }
+export type MacOnlyKind = NonNullable<NonNullable<MacPhoneChatRead['pending']>['macOnly']>['kind']
+
+const ENGLISH: MacWords = { approvalOnMac: () => 'Waiting for your approval on your Mac', macOnly: () => 'Waiting for you on your Mac' }
+
+// The Mac sends a saved chat as text, and what it waits on in words. A question is put back where the
+// app looks for its card, a tool call left open at the end of the last reply. So is an approval, when
+// the person allowed this phone to approve requests on the Mac: the card shows the action and its
+// detail as the Mac's does, and nothing is decided without a tap. Otherwise the approval is shown as
+// text, like the requests only the Mac settles (a held app action, a secret, a sign-in).
+export function messagesOf(read: MacPhoneChatRead, words: MacWords = ENGLISH): ConversationMessage[] {
     const messages: ConversationMessage[] = read.messages.map(message => ({
         id: message.id,
         role: message.role,
         parts: [{ type: 'text', text: message.content.text }],
         ...(message.createdAt ? { metadata: { createdAt: message.createdAt } } : {}),
     }))
-    const { question, approval } = read.pending ?? { question: null, approval: null }
+    const { question, approval, macOnly } = read.pending ?? { question: null, approval: null }
     const cards: ConversationMessage['parts'] = []
-    if (approval) cards.push({ type: 'text', text: [`**${approvalTitle}**`, ...approval.approvals.map(item => `- ${item.action}${item.detail ? `\n  ${item.detail}` : ''}`)].join('\n\n') })
+    if (approval && read.permissions?.approveRequests) cards.push({ type: 'tool-request_approval', toolCallId: approval.toolCallId, state: 'input-available', input: { approvals: approval.approvals } })
+    else if (approval) cards.push({ type: 'text', text: [`**${words.approvalOnMac()}**`, ...approval.approvals.map(item => `- ${item.action}${item.detail ? `\n  ${item.detail}` : ''}`)].join('\n\n') })
+    if (macOnly) cards.push({ type: 'text', text: `**${words.macOnly(macOnly.kind)}**${macOnly.summary ? `\n\n${macOnly.summary}` : ''}` })
     if (question) cards.push({ type: 'tool-ask_user', toolCallId: question.toolCallId, state: 'input-available', input: { questions: question.questions } })
     if (cards.length === 0) return messages
     const last = messages.at(-1)
     if (last?.role === 'assistant') return [...messages.slice(0, -1), { ...last, parts: [...last.parts, ...cards] }]
-    return [...messages, { id: `pending-${(question ?? approval)!.toolCallId}`, role: 'assistant', parts: cards }]
+    return [...messages, { id: `pending-${(question ?? approval)?.toolCallId ?? 'mac'}`, role: 'assistant', parts: cards }]
+}
+
+const INBOX_STATUS = { question: 'awaiting_question', approval: 'awaiting_approval', 'on-mac': 'waiting_human', done: 'done' } as const
+
+// A row of the Mac's Actions inbox, as the app's inbox lists one.
+export function inboxItemOf(item: MacPhoneInboxItem): InboxItem {
+    return { id: item.id, sessionId: item.sessionId, sessionIds: item.sessionIds, agentId: item.agentId, agentName: item.agentName, status: INBOX_STATUS[item.state], title: item.title, message: item.message, updatedAt: item.updatedAt, count: item.count }
 }
 
 export function waitingOf(read: MacPhoneChatRead): SessionStatus | null {
     if (read.pending?.question) return 'awaiting_question'
-    return read.pending?.approval ? 'awaiting_approval' : null
+    if (read.pending?.approval) return 'awaiting_approval'
+    return read.pending?.macOnly ? 'waiting_human' : null
 }
 
 // How long a stopped turn is given to end on the Mac before the chat is read anyway.
@@ -116,7 +134,7 @@ type Route = { method: string; pattern: RegExp; answer: (ids: string[], request:
 
 const id = '([\\w-]+)'
 
-export function createMacHub({ client, link, fail, onRevoked, approvalTitle }: { client: MacClient; link: Pick<MacLink, 'deviceId' | 'workspaceId'>; fail: Fail; onRevoked: () => void; approvalTitle?: () => string }): MacHub {
+export function createMacHub({ client, link, fail, onRevoked, words }: { client: MacClient; link: Pick<MacLink, 'deviceId' | 'workspaceId'>; fail: Fail; onRevoked: () => void; words?: MacWords }): MacHub {
     const agentOfChat = new Map<string, string>()
     const waiting = new Map<string, SessionStatus | null>()
     const running = new Map<string, string>()
@@ -124,6 +142,7 @@ export function createMacHub({ client, link, fail, onRevoked, approvalTitle }: {
     const reads = new Set<Promise<unknown>>()
     const stops = new Map<string, Promise<void>>()
     const questions = new Map<string, NonNullable<NonNullable<MacPhoneChatRead['pending']>['question']>>()
+    const approvals = new Map<string, NonNullable<NonNullable<MacPhoneChatRead['pending']>['approval']>>()
 
     // The Mac refuses with `{ error: code }` and a status. A phone the person removed on the Mac is
     // sent back to the sign-in screen; anything else is the screen's to show.
@@ -172,6 +191,8 @@ export function createMacHub({ client, link, fail, onRevoked, approvalTitle }: {
         waiting.set(chatId, waitingOf(read))
         if (read.pending?.question) questions.set(chatId, read.pending.question)
         else questions.delete(chatId)
+        if (read.pending?.approval && read.permissions?.approveRequests) approvals.set(chatId, read.pending.approval)
+        else approvals.delete(chatId)
         return read
     }
 
@@ -240,6 +261,24 @@ export function createMacHub({ client, link, fail, onRevoked, approvalTitle }: {
         await stopped
     }
 
+    // The app marks rows read by their conversations, the Mac by the rows themselves: the rows last
+    // listed are kept to tell which ones were meant.
+    let listed: MacPhoneInboxItem[] = []
+
+    async function inbox(signal?: AbortSignal): Promise<Inbox> {
+        listed = macPhoneInboxSchema.parse(await ask(() => client.readInbox(signal))).items
+        return { items: listed.map(inboxItemOf), running: running.size }
+    }
+
+    async function markInboxRead(body: unknown, signal?: AbortSignal): Promise<void> {
+        const asked = body as { all?: boolean; sessionIds?: string[] }
+        const sessions = new Set(asked.sessionIds ?? [])
+        const ids = listed.filter(item => asked.all === true || item.sessionIds.some(id => sessions.has(id))).map(item => item.id)
+        if (ids.length === 0) return
+        await ask(() => client.markInboxRead(ids, signal))
+        listed = listed.filter(item => !ids.includes(item.id))
+    }
+
     const models: AgentModels = { groups: [], pinned: null, resolved: null, boxDefault: null }
     const box: Box = { id: MAC_BOX_ID, name: 'Mac', createdAt: null, managed: false, access: 'use' }
     const nothing = () => undefined
@@ -250,14 +289,14 @@ export function createMacHub({ client, link, fail, onRevoked, approvalTitle }: {
         { method: 'GET', pattern: /^\/api\/v1\/workspaces$/, answer: () => [macMe(link).workspace] },
         { method: 'GET', pattern: /^\/api\/v1\/members$/, answer: () => [] },
         { method: 'GET', pattern: /^\/api\/v1\/boxes$/, answer: () => [box] },
-        { method: 'GET', pattern: /^\/api\/v1\/inbox$/, answer: (): Inbox => ({ items: [], running: running.size }) },
-        { method: 'POST', pattern: /^\/api\/v1\/inbox\/read$/, answer: nothing },
+        { method: 'GET', pattern: /^\/api\/v1\/inbox$/, answer: (_, { signal }) => inbox(signal) },
+        { method: 'POST', pattern: /^\/api\/v1\/inbox\/read$/, answer: (_, { body, signal }) => markInboxRead(body, signal) },
         { method: 'GET', pattern: /^\/api\/v1\/agents$/, answer: async (_, { signal }) => (await coworkers(signal)).map(coworker => boardAgentOf(coworker, link.workspaceId)) },
         { method: 'GET', pattern: /^\/api\/v1\/agents\/conversations$/, answer: (_, { signal }) => overview(signal) },
         { method: 'GET', pattern: new RegExp(`^/api/v1/agents/${id}$`), answer: ([agentId], { signal }) => agentView(agentId, signal) },
         { method: 'GET', pattern: new RegExp(`^/api/v1/agents/${id}/models$`), answer: () => models },
         { method: 'GET', pattern: new RegExp(`^/api/v1/agents/${id}/conversations$`), answer: ([agentId], { signal }) => conversationsOf(agentId, signal) },
-        { method: 'GET', pattern: new RegExp(`^/api/v1/conversations/${id}/messages$`), answer: async ([chatId], { signal }) => messagesOf(await tracked(readChat(chatId, signal)), approvalTitle?.()) },
+        { method: 'GET', pattern: new RegExp(`^/api/v1/conversations/${id}/messages$`), answer: async ([chatId], { signal }) => messagesOf(await tracked(readChat(chatId, signal)), words) },
         { method: 'GET', pattern: new RegExp(`^/api/v1/conversations/${id}/active-run$`), answer: ([chatId], { signal }) => activeRun(chatId, signal) },
         { method: 'POST', pattern: new RegExp(`^/api/v1/conversations/${id}/stop$`), answer: ([chatId], { signal }) => stop(chatId, signal) },
         { method: 'POST', pattern: new RegExp(`^/api/v1/conversations/${id}/acknowledge$`), answer: nothing },
@@ -284,11 +323,13 @@ export function createMacHub({ client, link, fail, onRevoked, approvalTitle }: {
             // Sending answers whatever the chat waited on.
             waiting.set(chatId, null)
             questions.delete(chatId)
+            approvals.delete(chatId)
         },
         turnEnded(chatId, requestId) {
             if (running.get(chatId) === requestId) running.delete(chatId)
         },
         lastTurn: chatId => turns.get(chatId) ?? null,
         waitingQuestion: chatId => questions.get(chatId) ?? null,
+        waitingApproval: chatId => approvals.get(chatId) ?? null,
     }
 }

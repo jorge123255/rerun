@@ -2,9 +2,9 @@ import type { UIMessage, UIMessageChunk } from 'ai'
 
 import type { ChatLink } from '@/chat/transport'
 
-import { HITL_CANCELLED, serializeAnswers } from '@rerun/contracts'
+import { HITL_CANCELLED, serializeAnswers, serializeApprovalDecisions } from '@rerun/contracts'
 
-import { answerOf, createMacChatTransport, replyStream, sendProblemOf } from './chat-transport'
+import { answerOf, createMacChatTransport, decisionsOf, replyStream, sendProblemOf } from './chat-transport'
 import type { MacClient } from './client'
 import type { MacHub } from './hub'
 
@@ -28,13 +28,14 @@ function setup({ attaches, statuses }: { attaches: Frame[][]; statuses: string[]
     const client = {
         sendMessage: jest.fn(async () => ({ requestId: '11111111-1111-4111-8111-111111111111' })),
         answerQuestion: jest.fn(async () => ({ requestId: '11111111-1111-4111-8111-111111111111' })),
+        decideApproval: jest.fn(async () => ({ requestId: '11111111-1111-4111-8111-111111111111' })),
         startConversation: jest.fn(async () => 'chat-new'),
         streamSentTurn: jest.fn(async (_agent: string, _chat: string, _request: string, onFrame: (frame: Frame) => void) => {
             for (const frame of attaches.shift() ?? []) onFrame(frame)
         }),
         readSentTurn: jest.fn(async () => ({ status: statuses.shift() ?? 'done' })),
     }
-    const hub = { turnStarted: jest.fn(), turnEnded: jest.fn(), rememberChat: jest.fn(), lastTurn: jest.fn(), api: jest.fn(), waitingQuestion: jest.fn((): unknown => null) }
+    const hub = { turnStarted: jest.fn(), turnEnded: jest.fn(), rememberChat: jest.fn(), lastTurn: jest.fn(), api: jest.fn(), waitingQuestion: jest.fn((): unknown => null), waitingApproval: jest.fn((): unknown => null) }
     const link = { endpoints: { agentId: 'ada' }, sessionRef: { current: null as string | null }, runRef: { current: null as string | null }, callerRef: { current: null }, onSessionRef: { current: jest.fn() }, resumeOntoRef: { current: null as string | null }, reconnectFailedRef: { current: false } }
     const transport = createMacChatTransport(link as unknown as ChatLink, client as unknown as MacClient, hub as unknown as MacHub, problem => `problem:${problem}`, messages => (messages.at(-1)?.parts[0] as { text: string }).text)
     return { client, hub, link, transport }
@@ -115,6 +116,31 @@ describe('a conversation with a coworker on a paired Mac', () => {
         expect(client.sendMessage).not.toHaveBeenCalled()
         expect(client.answerQuestion).toHaveBeenCalledTimes(1)
         expect(answerOf(serializeAnswers([{ question: 'Which fruit?', answers: [] }]), 1)).toEqual({ answers: [[]] })
+    })
+
+    it('sends the decisions on a waiting approval as decisions, one for each action', async () => {
+        const { client, hub, link, transport } = setup({ attaches: [[]], statuses: ['done'] })
+        link.sessionRef.current = 'chat-1'
+        const approvals = [{ action: 'Email invoice 1042', detail: 'Total 120.00' }, { action: 'Archive the thread' }]
+        hub.waitingApproval.mockReturnValue({ toolCallId: 'call-9', approvals })
+        await read(await send(transport, serializeApprovalDecisions([{ ...approvals[0], decision: 'approved' }, { ...approvals[1], decision: 'declined', note: 'Keep it' }])))
+        expect(client.decideApproval).toHaveBeenCalledWith('ada', 'chat-1', { requestId: '11111111-1111-4111-8111-111111111111', toolCallId: 'call-9', decisions: [{ decision: 'approved' }, { decision: 'declined', note: 'Keep it' }] }, undefined)
+        expect(client.sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('never passes anything else off as a decision', async () => {
+        const { client, hub, link, transport } = setup({ attaches: [], statuses: [] })
+        link.sessionRef.current = 'chat-1'
+        const approvals = [{ action: 'Email invoice 1042' }, { action: 'Archive the thread' }]
+        hub.waitingApproval.mockReturnValue({ toolCallId: 'call-9', approvals })
+        for (const text of ['approve', 'yes, do it', serializeApprovalDecisions([{ action: 'Email invoice 1042', decision: 'approved' }]), serializeApprovalDecisions([{ action: 'Delete everything', decision: 'approved' }, { action: 'Archive the thread', decision: 'approved' }])]) {
+            await expect(send(transport, text)).rejects.toThrow('problem:answerFirst')
+        }
+        expect(client.decideApproval).not.toHaveBeenCalled()
+        expect(client.sendMessage).not.toHaveBeenCalled()
+        expect(decisionsOf(serializeApprovalDecisions([{ action: 'Email invoice 1042', decision: 'declined' }]), [{ action: 'Email invoice 1042' }])).toEqual([{ decision: 'declined' }])
+        client.decideApproval.mockRejectedValueOnce(Object.assign(new Error('approve_not_allowed'), { status: 403 }))
+        await expect(send(transport, serializeApprovalDecisions(approvals.map(item => ({ ...item, decision: 'approved' as const }))))).rejects.toThrow('problem:approveOff')
     })
 
     it('says why the Mac turned a message down', async () => {

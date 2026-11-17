@@ -46,8 +46,23 @@ describe('the hub paths a paired Mac answers', () => {
         const boxes = boxSchema.array().parse(await hub.api('/api/v1/boxes'))
         expect(agents.every(agent => agent.spaceId === boxes[0].id)).toBe(true)
         expect(meSchema.parse(await hub.api('/api/v1/me')).workspace).toMatchObject({ id: 7, subscribed: true, role: 'member' })
-        expect(inboxSchema.parse(await hub.api('/api/v1/inbox')).items).toEqual([])
         expect(agentViewSchema.parse(await hub.api('/api/v1/agents/ada')).agent.name).toBe('Ada')
+    })
+
+    it('lists the Mac\'s inbox, and marks read the rows the app names by their conversations', async () => {
+        const row = (id: string, state: string, sessionIds: string[]) => ({ id, state, agentId: 'ada', agentName: 'Ada', sessionId: sessionIds[0], sessionIds, title: 'T', message: null, updatedAt: '2026-11-17T10:00:00.000Z', count: sessionIds.length })
+        const readInbox = jest.fn(async () => ({ items: [row('p:q1', 'question', ['s1']), row('p:x1', 'on-mac', ['s2']), row('d:g1', 'done', ['s9', 's8']), row('d:g2', 'done', ['s7'])] }))
+        const markInboxRead = jest.fn(async () => ({ marked: 1 }))
+        const { hub } = setup({ readInbox, markInboxRead } as never)
+        const inbox = inboxSchema.parse(await hub.api('/api/v1/inbox'))
+        expect(inbox.items.map(item => [item.id, item.status, item.count])).toEqual([['p:q1', 'awaiting_question', 1], ['p:x1', 'waiting_human', 1], ['d:g1', 'done', 2], ['d:g2', 'done', 1]])
+
+        await hub.api('/api/v1/inbox/read', { method: 'POST', body: { sessionIds: ['s8', 'unknown'] } })
+        expect(markInboxRead).toHaveBeenLastCalledWith(['d:g1'], undefined)
+        await hub.api('/api/v1/inbox/read', { method: 'POST', body: { sessionIds: ['nothing-listed'] } })
+        expect(markInboxRead).toHaveBeenCalledTimes(1)
+        await hub.api('/api/v1/inbox/read', { method: 'POST', body: { all: true } })
+        expect(markInboxRead).toHaveBeenLastCalledWith(['p:q1', 'p:x1', 'd:g2'], undefined)
     })
 
     it('reads a chat by its id alone, finding its coworker', async () => {
@@ -72,6 +87,17 @@ describe('the hub paths a paired Mac answers', () => {
         expect(hub.waitingQuestion('chat-1')).toEqual(pending.question)
         hub.turnStarted('chat-1', 'ada', 'turn-1')
         expect(hub.waitingQuestion('chat-1')).toBeNull()
+        expect(hub.waitingApproval('chat-1')).toBeNull()
+    })
+
+    it('remembers an approval only for a phone that may decide it', async () => {
+        const pending = { question: null, approval: { toolCallId: 'call-2', approvals: [{ action: 'Send the report' }] } }
+        const readOnly = setup({ openSavedChat: jest.fn(async () => ({ ...READ, pending, permissions: { sendMessages: true } })) })
+        await readOnly.hub.api('/api/v1/conversations/chat-1/messages')
+        expect(readOnly.hub.waitingApproval('chat-1')).toBeNull()
+        const allowed = setup({ openSavedChat: jest.fn(async () => ({ ...READ, pending, permissions: { sendMessages: false, approveRequests: true } })) })
+        await allowed.hub.api('/api/v1/conversations/chat-1/messages')
+        expect(allowed.hub.waitingApproval('chat-1')).toEqual(pending.approval)
     })
 
     it('follows and stops only the turn this phone started', async () => {
@@ -142,13 +168,29 @@ describe('messagesOf', () => {
         expect(found?.input).toEqual({ questions: pending.question.questions })
     })
 
-    it('shows a waiting approval as words, with nothing to approve it from the phone', () => {
-        const pending = { question: null, approval: { toolCallId: 'call-2', approvals: [{ action: 'Send the report', detail: 'To the whole team' }, { action: 'Rename it' }] } }
-        const messages = messagesOf({ ...READ, messages: READ.messages.slice(0, 1), pending }, 'Decide on your Mac')
-        expect(messages).toHaveLength(2)
-        expect(messages[1]).toMatchObject({ role: 'assistant', parts: [{ type: 'text', text: '**Decide on your Mac**\n\n- Send the report\n  To the whole team\n\n- Rename it' }] })
+    const words = { approvalOnMac: () => 'Decide on your Mac', macOnly: (kind: string) => `On your Mac: ${kind}` }
+    const approval = { toolCallId: 'call-2', approvals: [{ action: 'Send the report', detail: 'To the whole team' }, { action: 'Rename it' }] }
+
+    it('shows a waiting approval as words on a phone that may not approve requests', () => {
+        for (const permissions of [undefined, { sendMessages: true }, { sendMessages: true, approveRequests: false }]) {
+            const messages = messagesOf({ ...READ, messages: READ.messages.slice(0, 1), pending: { question: null, approval }, permissions }, words)
+            expect(messages[1]).toMatchObject({ role: 'assistant', parts: [{ type: 'text', text: '**Decide on your Mac**\n\n- Send the report\n  To the whole team\n\n- Rename it' }] })
+            expect(findPendingHitl(messages)).toBeNull()
+        }
+        expect(waitingOf({ ...READ, pending: { question: null, approval } })).toBe('awaiting_approval')
+    })
+
+    it('gives a phone that may approve requests the card, with the action and its detail', () => {
+        const messages = messagesOf({ ...READ, pending: { question: null, approval }, permissions: { sendMessages: false, approveRequests: true } }, words)
+        expect(findPendingHitl(messages)).toMatchObject({ kind: 'approval', toolCallId: 'call-2', input: { approvals: approval.approvals } })
+    })
+
+    it('names a request only the Mac settles, and offers nothing to decide', () => {
+        const pending = { question: null, approval: null, macOnly: { kind: 'secret' as const, summary: 'Stripe API key' } }
+        const messages = messagesOf({ ...READ, pending, permissions: { sendMessages: true, approveRequests: true } }, words)
+        expect(messages.at(-1)?.parts.at(-1)).toEqual({ type: 'text', text: '**On your Mac: secret**\n\nStripe API key' })
         expect(findPendingHitl(messages)).toBeNull()
-        expect(waitingOf({ ...READ, pending })).toBe('awaiting_approval')
+        expect(waitingOf({ ...READ, pending })).toBe('waiting_human')
     })
 
     it('adds nothing to a chat that waits on nobody, or to a Mac older than the cards', () => {

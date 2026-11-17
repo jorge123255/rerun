@@ -16,6 +16,7 @@ import { pinnedFetch } from './mac-phone-pairing-client-fixture.mjs'
 const INSTALL_ID = '2f1c8a16-6d4a-4c3a-9b2e-0c1d9a7e4b11'
 const SESSION_COOKIE = 'desktop-test-cookie'
 const CHAT = { id: 'chat-saved-1', agentId: 'coworker-ada', title: 'Saved briefing', createdAt: '2026-11-12T18:00:00.000Z', updatedAt: '2026-11-12T18:05:00.000Z', kind: 'thread' }
+const INBOX = { items: [{ id: 'p:q1', state: 'question', agentId: 'coworker-ada', agentName: 'Ada', sessionId: 'chat-saved-1', sessionIds: ['chat-saved-1'], title: 'Saved briefing', message: 'Which color?', updatedAt: '2026-11-12T18:05:00.000Z', count: 1 }], partial: false }
 const PENDING = {
     question: { toolCallId: 'call-question', questions: [{ question: 'Which color?', options: ['Red', 'Blue'], multiple: false }] },
     approval: { toolCallId: 'call-approval', approvals: [{ action: 'Send the report', detail: 'To the whole team' }] },
@@ -35,6 +36,8 @@ async function workspaceFixture(t) {
         const url = new URL(request.url, 'http://127.0.0.1')
         seen.push(url.pathname + url.search)
         if (request.headers.cookie !== `rerun-desktop-session=${SESSION_COOKIE}`) return json(response, 401, { error: 'Unauthorized' })
+        if (url.pathname === '/api/desktop/phone-pairing/inbox' && request.method === 'GET') return json(response, 200, INBOX)
+        if (url.pathname !== '/api/desktop/phone-pairing' && url.pathname !== '/api/desktop/phone-pairing/inbox') return json(response, 404, { error: 'not found' })
         if (request.method === 'POST') {
             const chunks = []
             request.on('data', chunk => chunks.push(chunk))
@@ -167,7 +170,7 @@ test('a saved chat carries the question and the approval it waits on to an appro
     const chat = await client.openSavedChat('coworker-ada', CHAT.id)
     assert.deepEqual(chat.pending, PENDING)
     // A phone paired on this Mac only, with no certificate to pin, reads but never sends.
-    assert.deepEqual(chat.permissions, { sendMessages: false })
+    assert.deepEqual(chat.permissions, { sendMessages: false, approveRequests: false })
 })
 
 test('only a phone allowed to send can answer the question a chat waits on, and only as an answer', async t => {
@@ -209,4 +212,96 @@ test('only a phone allowed to send can answer the question a chat waits on, and 
     // An answer never opens a conversation.
     assert.equal((await post({ chat: '', send: { requestId, answer: { toolCallId: 'c' } } })).status, 400)
     assert.equal(workspace.posts.length, 2)
+})
+
+test('only a phone allowed to approve requests can decide an approval, whatever else it may do', async t => {
+    const host = localPairingAddresses()[0]
+    if (!host) { t.skip('no assigned private IPv4 address'); return }
+    const { service, workspace } = await start(t)
+    await service.setPhoneAccessEnabled(true)
+    await service.setLanAddress(host)
+    const client = createMacPairingClient({ storage: createMemoryStorage(), pinnedFetch, deviceName: 'Test iPhone' })
+    const pending = await client.connectToThisMac(await service.createOffer(1))
+    await service.approveDevice(pending.deviceId)
+    assert.equal((await client.waitForApproval()).status, 'approved')
+    const requestId = '4ce8e801-9bbd-4c6e-8221-2e326471724c'
+    const decision = { requestId, toolCallId: 'call-approval', decisions: [{ decision: 'approved' }] }
+
+    // Off by default, and the right to send does not give it.
+    assert.equal((await service.status()).devices[0].approveRequests, false)
+    await assert.rejects(() => client.decideApproval('coworker-ada', CHAT.id, decision), error => error.message === 'approve_not_allowed' && error.status === 403)
+    await service.setSendMessages(pending.deviceId, true)
+    await assert.rejects(() => client.decideApproval('coworker-ada', CHAT.id, decision), error => error.message === 'approve_not_allowed' && error.status === 403)
+    assert.deepEqual((await client.openSavedChat('coworker-ada', CHAT.id)).permissions, { sendMessages: true, approveRequests: false })
+    assert.deepEqual(workspace.posts, [])
+
+    await service.setApproveRequests(pending.deviceId, true)
+    assert.deepEqual((await client.openSavedChat('coworker-ada', CHAT.id)).permissions, { sendMessages: true, approveRequests: true })
+    assert.deepEqual(await client.decideApproval('coworker-ada', CHAT.id, decision), { requestId })
+    assert.deepEqual(workspace.posts[0].approval, { toolCallId: 'call-approval', decisions: [{ decision: 'approved' }] })
+    assert.equal('text' in workspace.posts[0], false)
+
+    // Approving alone does not give the right to send, and a decision never opens a conversation.
+    await service.setSendMessages(pending.deviceId, false)
+    await assert.rejects(() => client.sendMessage('coworker-ada', CHAT.id, { requestId, text: 'Hello' }), error => error.message === 'send_not_allowed')
+    assert.deepEqual(await client.decideApproval('coworker-ada', CHAT.id, { ...decision, decisions: [{ decision: 'declined', note: 'Not today' }] }), { requestId })
+    const { credential, origin, certificateFingerprint } = await client.readMacSession()
+    const post = (path, send) => pinnedFetch(`${origin}/api/mac-pairing/v1/workspaces/1/coworkers/coworker-ada/chats${path}`, certificateFingerprint, {
+        method: 'POST', headers: { Authorization: `Bearer ${credential}`, 'Content-Type': 'application/json' }, body: JSON.stringify(send),
+    })
+    for (const approval of [{ toolCallId: 'c', decisions: [] }, { toolCallId: 'c', decisions: [{ decision: 'maybe' }] }, { toolCallId: 'c', decisions: [{ decision: 'approved', note: 'x' }] },
+        { toolCallId: 'c', decisions: [{ decision: 'approved' }], approvalId: 'saved' }, { toolCallId: '', decisions: [{ decision: 'approved' }] }, 'approved']) {
+        assert.equal((await post('/' + CHAT.id, { requestId, approval })).status, 400)
+    }
+    assert.equal((await post('', { requestId, approval: decision })).status, 400)
+    assert.equal(workspace.posts.length, 2)
+
+    // The grant survives a restart of the listener, and is gone once the phone is removed.
+    await service.stop()
+    await service.restore()
+    assert.equal((await service.status()).devices[0].approveRequests, true)
+    await service.revokeDevice(pending.deviceId)
+    assert.equal((await service.devices())[0].approveRequests, false)
+    await assert.rejects(() => client.decideApproval('coworker-ada', CHAT.id, decision), error => error.message === 'revoked')
+})
+
+test('the inbox is read by any approved phone and changed only by one that may send', async t => {
+    const host = localPairingAddresses()[0]
+    if (!host) { t.skip('no assigned private IPv4 address'); return }
+    const { service, workspace } = await start(t)
+    await service.setPhoneAccessEnabled(true)
+    const { origin } = await service.setLanAddress(host)
+    const offer = await service.createOffer(1)
+    const inbox = origin + '/api/mac-pairing/v1/workspaces/1/inbox'
+    const ask = (url, init = {}) => pinnedFetch(url, offer.certificateFingerprint, { method: 'GET', ...init })
+
+    // Nobody without a token, and nothing that is not on the list.
+    assert.equal((await ask(inbox)).status, 401)
+    assert.equal((await ask(inbox + '/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"ids":["p:q1"]}' })).status, 401)
+    assert.deepEqual(workspace.seen, [])
+
+    const client = createMacPairingClient({ storage: createMemoryStorage(), pinnedFetch, deviceName: 'Test iPhone' })
+    const pending = await client.connectToThisMac(offer)
+    await service.approveDevice(pending.deviceId)
+    assert.equal((await client.waitForApproval()).status, 'approved')
+    const { credential } = await client.readMacSession()
+    const auth = { Authorization: `Bearer ${credential}` }
+
+    assert.deepEqual(await client.readInbox(), INBOX)
+    await assert.rejects(() => client.markInboxRead(['p:q1']), error => error.message === 'send_not_allowed' && error.status === 403)
+    assert.deepEqual(workspace.posts, [])
+
+    await service.setSendMessages(pending.deviceId, true)
+    await client.markInboxRead(['p:q1'])
+    assert.deepEqual(workspace.posts, [{ ids: ['p:q1'] }])
+
+    for (const [method, path] of [['DELETE', '/inbox'], ['GET', '/inbox/read'], ['GET', '/attention'], ['GET', '/settings'], ['POST', '/inbox/read/extra'], ['GET', '/../inbox']]) {
+        assert.equal((await ask(origin + '/api/mac-pairing/v1/workspaces/1' + path, { method, headers: auth })).status, 404)
+    }
+    // Another workspace's inbox does not exist for this phone.
+    assert.equal((await ask(origin + '/api/mac-pairing/v1/workspaces/2/inbox', { headers: auth })).status, 404)
+
+    await service.revokeDevice(pending.deviceId)
+    await assert.rejects(() => client.readInbox(), error => error.message === 'revoked')
+    assert.equal(workspace.posts.length, 1)
 })

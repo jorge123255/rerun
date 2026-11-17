@@ -194,6 +194,13 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
             if (result?.requestId !== requestId) throw new Error('invalid_send_receipt')
             return result
         },
+        // Decides the approval a saved chat waits on: one decision for each action its card shows.
+        // Needs the phone's "Approve requests" permission on the Mac.
+        async decideApproval(agentId, sessionId, { requestId, toolCallId, decisions }, signal) {
+            const result = await chatRequest(agentId, sessionId, '', { method: 'POST', body: { requestId, approval: { toolCallId, decisions } }, signal })
+            if (result?.requestId !== requestId) throw new Error('invalid_send_receipt')
+            return result
+        },
         async readSentTurn(agentId, sessionId, requestId, signal) {
             const result = await chatRequest(agentId, sessionId, '/turns/' + encodeURIComponent(requestId), { signal })
             if (!['running', 'done', 'error', 'cancelled'].includes(result?.status)) throw new Error('invalid_turn_status')
@@ -210,6 +217,16 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
             const origin = pairingOrigin(session.origin, pin)
             const url = origin + API_PREFIX + chatPath(session, agentId, sessionId) + '/turns/' + encodeURIComponent(requestId) + '/stream'
             return pinnedStream(url, pin, 'Bearer ' + session.credential, onFrame, signal)
+        },
+        // The Mac's Actions inbox: what waits on the person and what finished since they last looked.
+        async readInbox(signal) {
+            const session = await sessionOrThrow()
+            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/inbox`, { credential: session.credential, fetchImpl, pinnedFetch, signal })
+        },
+        // Marks rows read by the ids the inbox gave them. Needs the send permission.
+        async markInboxRead(ids, signal) {
+            const session = await sessionOrThrow()
+            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/inbox/read`, { method: 'POST', body: { ids }, credential: session.credential, fetchImpl, pinnedFetch, signal })
         },
         readMacSession: () => sessions.read(),
         clearMacSession: () => sessions.clear(),

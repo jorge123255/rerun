@@ -123,9 +123,18 @@
             "coworkerOff": "Este compañero está desactivado en tu Mac.",
             "removed": "Tu Mac ya no acepta este teléfono. Abre Conectar iPhone en tu Mac para comprobarlo.",
             "unreachable": "No se pudo conectar con tu Mac.",
-            "answerFirst": "Responde primero a la pregunta de arriba."
+            "answerFirst": "Responde primero a lo que pidió el compañero arriba.",
+            "approveOff": "Este teléfono no puede aprobar solicitudes. En tu Mac, abre Conectar iPhone y activa Aprobar solicitudes para él."
         },
         "pickCoworker": "Elige un compañero para abrir sus conversaciones.",
-        "approvalOnMac": "Esperando tu aprobación en tu Mac"
+        "approvalOnMac": "Esperando tu aprobación en tu Mac",
+        "macOnly": {
+            "connector": "Una acción de una app te espera en tu Mac",
+            "secret": "Se pide un secreto en tu Mac",
+            "service": "Una app espera ser conectada en tu Mac",
+            "mcp": "Un inicio de sesión te espera en tu Mac",
+            "takeover": "El navegador te espera en tu Mac",
+            "tool-install": "Una herramienta espera ser instalada en tu Mac"
+        }
     }
 }

@@ -134,9 +134,18 @@
             "coworkerOff": "This coworker is switched off on your Mac.",
             "removed": "Your Mac no longer accepts this phone. Open Connect iPhone on your Mac to check.",
             "unreachable": "Could not reach your Mac.",
-            "answerFirst": "Answer the question above first."
+            "answerFirst": "Answer what the coworker asked above first.",
+            "approveOff": "This phone may not approve requests. On your Mac, open Connect iPhone and turn on Approve requests for it."
         },
         "pickCoworker": "Pick a coworker to open its conversations.",
-        "approvalOnMac": "Waiting for your approval on your Mac"
+        "approvalOnMac": "Waiting for your approval on your Mac",
+        "macOnly": {
+            "connector": "An app action is waiting for you on your Mac",
+            "secret": "A secret is asked for on your Mac",
+            "service": "An app is waiting to be connected on your Mac",
+            "mcp": "A sign-in is waiting on your Mac",
+            "takeover": "The browser is waiting for you on your Mac",
+            "tool-install": "A tool is waiting to be installed on your Mac"
+        }
     }
 }
