@@ -25,6 +25,7 @@ import { Message, MessageContent, Suggestion, Suggestions } from '@rerun/ui/chat
 import { FloatingPill } from '@/components/agent/sheet/floating'
 import { setDesktopDetailsWanted, useDesktopDetailsWanted } from '@/lib/desktop/simple-details'
 import { useHoldAppBoot } from '@/stores/app-boot.store'
+import { DESKTOP_DETAILS_ROOM, DesktopDetailsColumn } from './simple/DesktopDetailsColumn'
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton, type ConversationHandle } from '@/components/ai-elements/conversation'
 import { bringBlockIn, useArriveByTop } from '@/hooks/useArriveByTop'
 import { DesktopArrive, useDesktopLiveGate } from './panel-motion/DesktopArrive'
@@ -1582,7 +1583,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     } : null
     const placeholder = generalView ? t('message', { name: agent.name }) : sessionId && currentTitle !== 'New conversation' ? t('reply', { title: currentTitle }) : t('sendMessage')
     return (
-        <div ref={conversationRoot} className={cn('relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background', beside && cardOpen && 'pr-[26rem]')} onKeyDown={event => {
+        <div ref={conversationRoot} className={cn('relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background', beside && cardOpen && DESKTOP_DETAILS_ROOM)} onKeyDown={event => {
             if (cardOpen && (cardCovers || (event.target as HTMLElement).closest('[aria-label="Coworker details"]')) && event.key === 'Escape' && !event.defaultPrevented && !(event.target as HTMLElement).closest('[role="dialog"], [role="alertdialog"]')) {
                 event.preventDefault()
                 event.stopPropagation()
@@ -1616,7 +1617,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                 {onClosePanel && <Button type="button" aria-label={t('closePanel')} variant="ghost" size="icon-sm" className="justify-self-end" onClick={() => overviewCloseControl.requestClose(onClosePanel)}><XIcon className="size-4" /></Button>}
             </header>
             {cardCovers && !overviewCovered && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => overviewCloseControl.requestClose(dismissCard)} />}
-            <section aria-label="Coworker details" hidden={!cardOpen} data-card-beside={beside || undefined} className={!cardOpen ? "hidden" : overview ? beside ? 'absolute inset-y-0 right-0 z-40 flex min-h-0 w-[26rem] flex-col overflow-auto border-l border-border bg-background' : 'absolute inset-x-3 top-14 bottom-3 z-40 flex min-h-0 flex-col overflow-auto rounded-2xl border border-border bg-background shadow-xl' : "absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl"}>
+            <DesktopDetailsColumn label="Coworker details" open={cardOpen} beside={beside} bare={!overview}>
                 {overview && cardOpen && active && <DesktopConversationOverview
                     authority={overview} agent={agent} active={active && !draft.quitting}
                     working={generating} settingsDisabledReason={generating || !!sessionId && engineRunning.id !== sessionId ? 'Wait for this coworker’s current run to finish.' : null}
@@ -1645,7 +1646,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     <DesktopCoworkerSettings agent={agent} authority={overview} disabled={generating || !!sessionId && engineRunning.id !== sessionId} dialogControl={dialogControl('settings')} />
                 </div>
                 </div>
-            </section>
+            </DesktopDetailsColumn>
             {/* A coworker screen covers the chat only when it opens over it. Beside the chat, in its own column, the chat stays in use. */}
             <div inert={chatCovered} className={cn('contents', chatCovered && 'invisible')}>
             {tabStrip ?? <div className="flex shrink-0 items-center gap-1 px-3 pt-2 pb-1">
