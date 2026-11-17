@@ -6,7 +6,12 @@ import type { DesktopApproval, DesktopQuestion } from '@rerun/contracts'
 export type PhonePendingCards = {
     question: { toolCallId: string; questions: { question: string; header?: string; options: string[]; multiple: boolean }[] } | null
     approval: { toolCallId: string; approvals: { action: string; detail?: string }[] } | null
+    // A request only this Mac can settle (a held app action, a secret, a sign-in, a browser, a tool to
+    // install): the phone says so and what it is about, and offers nothing to decide.
+    macOnly?: { kind: PhoneMacOnlyKind; summary: string } | null
 }
+
+export type PhoneMacOnlyKind = 'connector' | 'secret' | 'service' | 'mcp' | 'takeover' | 'tool-install'
 
 export function phonePendingCards(question: Pick<DesktopQuestion, 'toolCallId' | 'questions'> | null, approval: Pick<DesktopApproval, 'toolCallId' | 'approvals'> | null): PhonePendingCards {
     return {

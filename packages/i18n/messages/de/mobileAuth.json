@@ -123,9 +123,18 @@
             "coworkerOff": "Dieser Kollege ist auf deinem Mac ausgeschaltet.",
             "removed": "Dein Mac akzeptiert dieses Telefon nicht mehr. Öffne iPhone verbinden auf deinem Mac, um das zu prüfen.",
             "unreachable": "Dein Mac ist nicht erreichbar.",
-            "answerFirst": "Beantworte zuerst die Frage oben."
+            "answerFirst": "Beantworte zuerst, was der Kollege oben gefragt hat.",
+            "approveOff": "Dieses Telefon darf keine Anfragen bestätigen. Öffne auf deinem Mac iPhone verbinden und schalte Anfragen bestätigen dafür ein."
         },
         "pickCoworker": "Wähle einen Kollegen, um seine Unterhaltungen zu öffnen.",
-        "approvalOnMac": "Wartet auf deine Bestätigung auf deinem Mac"
+        "approvalOnMac": "Wartet auf deine Bestätigung auf deinem Mac",
+        "macOnly": {
+            "connector": "Eine App-Aktion wartet auf deinem Mac auf dich",
+            "secret": "Auf deinem Mac wird nach einem Geheimnis gefragt",
+            "service": "Eine App wartet auf deinem Mac darauf, verbunden zu werden",
+            "mcp": "Eine Anmeldung wartet auf deinem Mac",
+            "takeover": "Der Browser wartet auf deinem Mac auf dich",
+            "tool-install": "Ein Werkzeug wartet auf deinem Mac auf die Installation"
+        }
     }
 }

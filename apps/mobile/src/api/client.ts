@@ -63,6 +63,6 @@ export const appBuild = Number(Application.nativeBuildVersion ?? 0)
 export const clientHeader = formatClientHeader({ platform: clientPlatform, version: Application.nativeApplicationVersion ?? '0.0.0', build: appBuild })
 
 // Paired with a Mac, the same calls are answered by the Mac's phone listener (see src/mac/hub.ts).
-export const macHub = macLink ? createMacHub({ client: macClient, link: macLink, fail: (status, message, body) => new ApiError(status, message, body), onRevoked: () => void leaveMac(), approvalTitle: () => translatorFor('mobileAuth')('mac.approvalOnMac') }) : null
+export const macHub = macLink ? createMacHub({ client: macClient, link: macLink, fail: (status, message, body) => new ApiError(status, message, body), onRevoked: () => void leaveMac(), words: { approvalOnMac: () => translatorFor('mobileAuth')('mac.approvalOnMac'), macOnly: kind => translatorFor('mobileAuth')(`mac.macOnly.${kind}`) } }) : null
 
 export const api: ReturnType<typeof createApiClient> = macHub ? macHub.api : createApiClient({ baseUrl: environment.apiUrl, clientHeader })

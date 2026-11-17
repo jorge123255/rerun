@@ -60,7 +60,9 @@ export const macPairingStatusSchema = z.discriminatedUnion('status', [
 ])
 export type MacPairingStatus = z.infer<typeof macPairingStatusSchema>
 
-const sendPermission = z.object({ sendMessages: z.boolean() })
+// What the person allowed this phone on the Mac, each its own switch there. `approveRequests` is
+// absent from a Mac older than it.
+const sendPermission = z.object({ sendMessages: z.boolean(), approveRequests: z.boolean().optional() })
 
 // GET /workspaces/:workspace/coworkers
 export const macPhoneCoworkerSchema = z.object({ id: savedId, name: z.string(), status: z.enum(['enabled', 'disabled']) })
@@ -97,6 +99,9 @@ export const macPhonePendingSchema = z.object({
         toolCallId: z.string(),
         approvals: z.array(z.object({ action: z.string(), detail: z.string().optional() })),
     }).nullable(),
+    // A request only the Mac settles: a held app action, a secret, an app to connect, a sign-in, the
+    // browser, a tool to install. The phone names it and offers nothing to decide.
+    macOnly: z.object({ kind: z.enum(['connector', 'secret', 'service', 'mcp', 'takeover', 'tool-install']), summary: z.string().max(280) }).nullable().optional(),
 })
 export type MacPhonePending = z.infer<typeof macPhonePendingSchema>
 
@@ -112,6 +117,19 @@ export type MacPhoneChatRead = z.infer<typeof macPhoneChatReadSchema>
 // POST .../chats (a new conversation) and POST .../chats/:chat (one more message). `requestId` is
 // chosen by the phone: sending it again never starts a second turn.
 export const macPhoneSendSchema = z.object({ requestId: z.string().uuid(), text: z.string().min(1).max(20_000) }).strict()
+// POST .../chats/:chat with the decisions on the approval the chat waits on, instead of a message:
+// one for each action the card shows, in order. It needs the phone's own "Approve requests"
+// permission, which the right to send does not give. The Mac records them through its own card's path.
+export const macPhoneDecisionSchema = z.object({
+    requestId: z.string().uuid(),
+    approval: z.object({
+        toolCallId: z.string().min(1).max(256),
+        decisions: z.array(z.discriminatedUnion('decision', [
+            z.object({ decision: z.literal('approved') }).strict(),
+            z.object({ decision: z.literal('declined'), note: z.string().max(20_000).optional() }).strict(),
+        ])).min(1).max(20),
+    }).strict(),
+}).strict()
 // POST .../chats/:chat with the answer to the question the chat waits on, instead of a message.
 // `toolCallId` is the card the phone was shown; `answers` holds the choices for each of its
 // questions, in order, and is left out to dismiss the question. It needs the send permission.

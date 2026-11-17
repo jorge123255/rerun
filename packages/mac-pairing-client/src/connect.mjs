@@ -194,6 +194,13 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
             if (result?.requestId !== requestId) throw new Error('invalid_send_receipt')
             return result
         },
+        // Decides the approval a saved chat waits on: one decision for each action its card shows.
+        // Needs the phone's "Approve requests" permission on the Mac.
+        async decideApproval(agentId, sessionId, { requestId, toolCallId, decisions }, signal) {
+            const result = await chatRequest(agentId, sessionId, '', { method: 'POST', body: { requestId, approval: { toolCallId, decisions } }, signal })
+            if (result?.requestId !== requestId) throw new Error('invalid_send_receipt')
+            return result
+        },
         async readSentTurn(agentId, sessionId, requestId, signal) {
             const result = await chatRequest(agentId, sessionId, '/turns/' + encodeURIComponent(requestId), { signal })
             if (!['running', 'done', 'error', 'cancelled'].includes(result?.status)) throw new Error('invalid_turn_status')

@@ -8,7 +8,20 @@ import type { ChatLink } from '@/chat/transport'
 import type { MacClient } from './client'
 import type { MacHub } from './hub'
 
-export type MacSendProblem = 'sendOff' | 'busy' | 'coworkerOff' | 'removed' | 'unreachable' | 'answerFirst'
+export type MacSendProblem = 'sendOff' | 'approveOff' | 'busy' | 'coworkerOff' | 'removed' | 'unreachable' | 'answerFirst'
+
+type Decision = { decision: 'approved' } | { decision: 'declined'; note?: string }
+
+// The approval card sends its decisions written out as a message, the hub's protocol. The Mac records
+// decisions against the approval it saved: they are read back out of that text, one for each action
+// the card shows and in its order. Null for anything else, which is never passed off as a decision.
+export function decisionsOf(text: string, actions: readonly { action: string }[]): Decision[] | null {
+    const reply = parseHitlReply(text)
+    if (reply?.kind !== 'approval' || reply.decisions.length !== actions.length) return null
+    const flat = (value: string) => value.replace(/\s+/g, ' ').trim()
+    if (!reply.decisions.every((item, index) => flat(item.action) === flat(actions[index].action))) return null
+    return reply.decisions.map(item => (item.decision === 'approved' ? { decision: 'approved' } : { decision: 'declined', ...(item.note ? { note: item.note } : {}) }))
+}
 
 // What the question card sends is the answer written out as a message, the hub's protocol. The Mac
 // records an answer against the question it saved, so the choices are read back out of that text:
@@ -25,6 +38,7 @@ export function answerOf(text: string, questionCount: number): { answers?: strin
 export function sendProblemOf(error: unknown): MacSendProblem {
     const { status, message } = error as { status?: number; message?: string }
     if (status === 403 && message === 'send_not_allowed') return 'sendOff'
+    if (status === 403 && message === 'approve_not_allowed') return 'approveOff'
     if (status === 403) return 'coworkerOff'
     if (status === 409) return 'busy'
     if (status === 401) return 'removed'
@@ -115,8 +129,12 @@ export function createMacChatTransport(link: ChatLink, client: MacClient, hub: M
             const question = chatId ? hub.waitingQuestion(chatId) : null
             const answer = question ? answerOf(text, question.questions.length) : null
             if (question && !answer) throw new Error(describe('answerFirst'))
+            const approval = chatId && !question ? hub.waitingApproval(chatId) : null
+            const decisions = approval ? decisionsOf(text, approval.approvals) : null
+            if (approval && !decisions) throw new Error(describe('answerFirst'))
             try {
-                if (chatId && question && answer) await client.answerQuestion(agentId, chatId, { requestId, toolCallId: question.toolCallId, ...answer }, abortSignal)
+                if (chatId && approval && decisions) await client.decideApproval(agentId, chatId, { requestId, toolCallId: approval.toolCallId, decisions }, abortSignal)
+                else if (chatId && question && answer) await client.answerQuestion(agentId, chatId, { requestId, toolCallId: question.toolCallId, ...answer }, abortSignal)
                 else if (chatId) await client.sendMessage(agentId, chatId, { requestId, text }, abortSignal)
                 else chatId = await client.startConversation(agentId, { requestId, text }, abortSignal)
             } catch (error) {

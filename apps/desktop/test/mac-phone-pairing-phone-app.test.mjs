@@ -167,7 +167,7 @@ test('a saved chat carries the question and the approval it waits on to an appro
     const chat = await client.openSavedChat('coworker-ada', CHAT.id)
     assert.deepEqual(chat.pending, PENDING)
     // A phone paired on this Mac only, with no certificate to pin, reads but never sends.
-    assert.deepEqual(chat.permissions, { sendMessages: false })
+    assert.deepEqual(chat.permissions, { sendMessages: false, approveRequests: false })
 })
 
 test('only a phone allowed to send can answer the question a chat waits on, and only as an answer', async t => {
@@ -209,4 +209,55 @@ test('only a phone allowed to send can answer the question a chat waits on, and 
     // An answer never opens a conversation.
     assert.equal((await post({ chat: '', send: { requestId, answer: { toolCallId: 'c' } } })).status, 400)
     assert.equal(workspace.posts.length, 2)
+})
+
+test('only a phone allowed to approve requests can decide an approval, whatever else it may do', async t => {
+    const host = localPairingAddresses()[0]
+    if (!host) { t.skip('no assigned private IPv4 address'); return }
+    const { service, workspace } = await start(t)
+    await service.setPhoneAccessEnabled(true)
+    await service.setLanAddress(host)
+    const client = createMacPairingClient({ storage: createMemoryStorage(), pinnedFetch, deviceName: 'Test iPhone' })
+    const pending = await client.connectToThisMac(await service.createOffer(1))
+    await service.approveDevice(pending.deviceId)
+    assert.equal((await client.waitForApproval()).status, 'approved')
+    const requestId = '4ce8e801-9bbd-4c6e-8221-2e326471724c'
+    const decision = { requestId, toolCallId: 'call-approval', decisions: [{ decision: 'approved' }] }
+
+    // Off by default, and the right to send does not give it.
+    assert.equal((await service.status()).devices[0].approveRequests, false)
+    await assert.rejects(() => client.decideApproval('coworker-ada', CHAT.id, decision), error => error.message === 'approve_not_allowed' && error.status === 403)
+    await service.setSendMessages(pending.deviceId, true)
+    await assert.rejects(() => client.decideApproval('coworker-ada', CHAT.id, decision), error => error.message === 'approve_not_allowed' && error.status === 403)
+    assert.deepEqual((await client.openSavedChat('coworker-ada', CHAT.id)).permissions, { sendMessages: true, approveRequests: false })
+    assert.deepEqual(workspace.posts, [])
+
+    await service.setApproveRequests(pending.deviceId, true)
+    assert.deepEqual((await client.openSavedChat('coworker-ada', CHAT.id)).permissions, { sendMessages: true, approveRequests: true })
+    assert.deepEqual(await client.decideApproval('coworker-ada', CHAT.id, decision), { requestId })
+    assert.deepEqual(workspace.posts[0].approval, { toolCallId: 'call-approval', decisions: [{ decision: 'approved' }] })
+    assert.equal('text' in workspace.posts[0], false)
+
+    // Approving alone does not give the right to send, and a decision never opens a conversation.
+    await service.setSendMessages(pending.deviceId, false)
+    await assert.rejects(() => client.sendMessage('coworker-ada', CHAT.id, { requestId, text: 'Hello' }), error => error.message === 'send_not_allowed')
+    assert.deepEqual(await client.decideApproval('coworker-ada', CHAT.id, { ...decision, decisions: [{ decision: 'declined', note: 'Not today' }] }), { requestId })
+    const { credential, origin, certificateFingerprint } = await client.readMacSession()
+    const post = (path, send) => pinnedFetch(`${origin}/api/mac-pairing/v1/workspaces/1/coworkers/coworker-ada/chats${path}`, certificateFingerprint, {
+        method: 'POST', headers: { Authorization: `Bearer ${credential}`, 'Content-Type': 'application/json' }, body: JSON.stringify(send),
+    })
+    for (const approval of [{ toolCallId: 'c', decisions: [] }, { toolCallId: 'c', decisions: [{ decision: 'maybe' }] }, { toolCallId: 'c', decisions: [{ decision: 'approved', note: 'x' }] },
+        { toolCallId: 'c', decisions: [{ decision: 'approved' }], approvalId: 'saved' }, { toolCallId: '', decisions: [{ decision: 'approved' }] }, 'approved']) {
+        assert.equal((await post('/' + CHAT.id, { requestId, approval })).status, 400)
+    }
+    assert.equal((await post('', { requestId, approval: decision })).status, 400)
+    assert.equal(workspace.posts.length, 2)
+
+    // The grant survives a restart of the listener, and is gone once the phone is removed.
+    await service.stop()
+    await service.restore()
+    assert.equal((await service.status()).devices[0].approveRequests, true)
+    await service.revokeDevice(pending.deviceId)
+    assert.equal((await service.devices())[0].approveRequests, false)
+    await assert.rejects(() => client.decideApproval('coworker-ada', CHAT.id, decision), error => error.message === 'revoked')
 })

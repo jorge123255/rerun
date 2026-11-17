@@ -42,6 +42,17 @@ function fail(response, code, status = 401) {
     send(response, status, { error: code })
 }
 
+function validDecisions(approval) {
+    if (!approval || typeof approval !== 'object' || Array.isArray(approval) || Object.keys(approval).length !== 2) return false
+    if (typeof approval.toolCallId !== 'string' || !approval.toolCallId || approval.toolCallId.length > 256) return false
+    return Array.isArray(approval.decisions) && approval.decisions.length >= 1 && approval.decisions.length <= 20 && approval.decisions.every(item => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return false
+        const keys = Object.keys(item)
+        if (item.decision === 'approved') return keys.length === 1
+        return item.decision === 'declined' && keys.every(key => key === 'decision' || key === 'note') && (item.note === undefined || (typeof item.note === 'string' && item.note.length <= 20_000))
+    })
+}
+
 function validAnswer(answer) {
     if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return false
     const keys = Object.keys(answer)
@@ -251,24 +262,30 @@ export function createPairingTransport({
         try {
             await workspaceFor(device, workspaceId, current)
             if (sending || stopping) {
-                if (!tls || device.sendMessages !== true) return fail(response, 'send_not_allowed', 403)
                 const body = sending ? await readBody(request, MESSAGE_BODY_LIMIT) : null
+                const wantsApproval = Boolean(body && body.approval !== undefined)
+                const allowed = candidate => Boolean(tls) && (wantsApproval ? candidate.approveRequests === true : candidate.sendMessages === true)
+                const refusal = wantsApproval ? 'approve_not_allowed' : 'send_not_allowed'
+                if (!allowed(device)) return fail(response, refusal, 403)
                 // A turn is a message, or the answer to the question the chat waits on. Answering is sending:
                 // it takes the same permission, and never opens a conversation.
                 const answering = sending && !creating && body && body.text === undefined && validAnswer(body.answer)
+                // A decision on the approval the chat waits on. It lets a coworker act, so it is a grant of
+                // its own on this phone, and never rides on the right to send.
+                const deciding = sending && !creating && body && body.text === undefined && body.answer === undefined && validDecisions(body.approval)
                 if (sending && (!body || Object.keys(body).length !== 2 || typeof body.requestId !== 'string' || !UUID.test(body.requestId)
-                    || (!answering && (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000)))) return fail(response, 'invalid_message', 400)
+                    || (!answering && !deciding && (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000)))) return fail(response, 'invalid_message', 400)
                 return await exclusive(async () => {
                     const authorized = await authenticate(presented)
                     if (!authorized || authorized.deviceId !== device.deviceId) return fail(response, ERRORS.unauthorized)
-                    if (authorized.sendMessages !== true) return fail(response, 'send_not_allowed', 403)
+                    if (!allowed(authorized)) return fail(response, refusal, 403)
                     await workspaceFor(authorized, workspaceId, current)
                     const turnRequestId = stopping ? requestId : body.requestId
                     const newChatId = creating ? phoneUuid(['rerun-mac-phone-chat-v1', authorized.deviceId, agentId, turnRequestId.toLowerCase()]) : undefined
                     const runId = phoneRunId(authorized, agentId, chatId ?? newChatId, turnRequestId)
                     const failure = stopping
                         ? await stopWorkspaceTurn(current, { agentId, chatId, runId })
-                        : await sendWorkspaceMessage(current, { agentId, chatId, runId, newChatId, ...(answering ? { answer: body.answer } : { text: body.text }) })
+                        : await sendWorkspaceMessage(current, { agentId, chatId, runId, newChatId, ...(answering ? { answer: body.answer } : deciding ? { approval: body.approval } : { text: body.text }) })
                     return failure ? fail(response, failure.code, failure.status) : send(response, stopping ? 200 : 202, { requestId: turnRequestId, ...(newChatId && { chatId: newChatId }) })
                 })
             }
@@ -290,7 +307,10 @@ export function createPairingTransport({
                 if (!authorized || authorized.deviceId !== device.deviceId) return fail(response, ERRORS.unauthorized)
                 await workspaceFor(authorized, workspaceId, current)
                 return send(response, 200, agentId && !requestId ? {
-                    ...payload, permissions: { sendMessages: Boolean(tls && authorized.sendMessages === true && (chatId ? payload.chat?.acceptsMessages : payload.acceptsMessages)) },
+                    ...payload, permissions: {
+                        sendMessages: Boolean(tls && authorized.sendMessages === true && (chatId ? payload.chat?.acceptsMessages : payload.acceptsMessages)),
+                        approveRequests: Boolean(tls && authorized.approveRequests === true),
+                    },
                 } : payload)
             })
         } catch (error) {
@@ -365,6 +385,8 @@ export function createPairingTransport({
                 await workspaceFor(device, device.workspaceId, current)
             }
             device.status = DEVICE_STATUS.revoked
+            // A phone that is paired again starts without the right to decide approval requests.
+            device.approveRequests = false
             device.revokedAt = new Date(now()).toISOString()
             claims.delete(device.deviceId)
             await saveStore(store)

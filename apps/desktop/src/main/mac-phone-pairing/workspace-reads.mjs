@@ -31,12 +31,12 @@ export async function readWorkspaceReply(runtime, target, signal) {
     throw new Error('Local reply is unavailable')
 }
 
-export async function sendWorkspaceMessage(runtime, { agentId, chatId, runId, text, answer, newChatId }) {
+export async function sendWorkspaceMessage(runtime, { agentId, chatId, runId, text, answer, approval, newChatId }) {
     const { address, headers } = workspaceRequest(runtime, { agentId, chatId })
     const response = await fetch(address, {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(8500),
         headers: { ...headers, Origin: runtime.app.origin, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...(answer ? { answer } : { text }), runId, ...(newChatId && { chatId: newChatId }) }),
+        body: JSON.stringify({ ...(answer ? { answer } : approval ? { approval } : { text }), runId, ...(newChatId && { chatId: newChatId }) }),
     })
     if (response.status === 404) throw hiddenWorkspaceError()
     if (response.status === 202) {

@@ -179,6 +179,20 @@ export function createMacPhonePairingService({
             await saveStore(record)
             return publicDevice(device)
         }),
+        // Deciding a coworker's approval request is its own grant, apart from sending: off until the
+        // person turns it on for this phone, under the same conditions.
+        setApproveRequests: (deviceId, enabled) => exclusive(async () => {
+            const record = await store()
+            const device = record.devices.find(entry => entry.deviceId === deviceId)
+            if (!device || device.status !== DEVICE_STATUS.approved || !device.certificateFingerprint) throw refusal(ERRORS.not_found)
+            if (enabled && (device.credentialIssued === false || !transport?.inScope(device)
+                || !transport.address() || getRuntime()?.workspaceId !== device.workspaceId)) {
+                throw refusal(ERRORS.workspace_not_active)
+            }
+            device.approveRequests = enabled === true
+            await saveStore(record)
+            return publicDevice(device)
+        }),
         revokeDevice: deviceId => exclusive(() => (transport ?? newTransport(0)).revoke(deviceId)),
     }
 }
