@@ -301,7 +301,8 @@ export function DesktopChatHistory({ agentId, count, selectedId, sessions = [], 
                     <MessageCircle aria-hidden className="size-4 text-muted-foreground" />
                 </Button>
             </PopoverTrigger>
-            <PopoverContent align="end" collisionPadding={12}
+            {/* The button opens the row, so its list opens from the left (upstream #277). */}
+            <PopoverContent align="start" collisionPadding={12}
                 onInteractOutside={event => {
                     if (rename?.target?.surface === 'history' || document.querySelector('[role="alertdialog"][data-state="open"]')) event.preventDefault()
                 }}
