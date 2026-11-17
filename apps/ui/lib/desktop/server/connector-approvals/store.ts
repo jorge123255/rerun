@@ -47,7 +47,7 @@ function digestOf(value: unknown): string {
     return createHash('sha256').update(JSON.stringify(ordered(value))).digest('hex')
 }
 
-export type ConnectorCall = { owner: string; sessionId: string; tool: string; kind: DesktopApprovalKind; arguments: Record<string, unknown>; /** A press in the coworker's browser instead of a connector call. */ press?: DesktopBrowserPress }
+export type ConnectorCall = { owner: string; sessionId: string; tool: string; kind: DesktopApprovalKind; arguments: Record<string, unknown>; /** Arguments the answer is bound to but the card does not show: a fingerprint means nothing to a person. */ unseen?: readonly string[]; /** A press in the coworker's browser instead of a connector call. */ press?: DesktopBrowserPress }
 
 /** What the card shows for a held press: the control's own label and the page's host, and nothing else from the page. */
 export function pressPreview(press: DesktopBrowserPress): string {
@@ -117,7 +117,7 @@ export async function decideConnectorCall(db: Client, call: ConnectorCall, now =
             const pending = Number((await tx.execute({ sql: "SELECT COUNT(*) AS n FROM desktop_connector_approval_requests WHERE session_id=? AND status='pending'", args: [call.sessionId] })).rows[0]?.n ?? 0)
             if (pending >= MAX_PENDING) { answer = 'Too many actions are already waiting for the person’s answer in this chat. End your turn and let them answer those first.'; trail = said('refused-policy', 'policy:too-many-waiting') }
             else {
-                const text = press ? pressPreview(press) : connectorPreview(call.arguments)
+                const text = press ? pressPreview(press) : connectorPreview(call.unseen?.length ? Object.fromEntries(Object.entries(call.arguments).filter(([key]) => !call.unseen!.includes(key))) : call.arguments)
                 // An answer given for a control that is no longer the one being pressed is void: it was for another label or site.
                 if (press) await tx.execute({ sql: "UPDATE desktop_connector_approval_requests SET status='void' WHERE session_id=? AND tool=? AND status='allowed'", args: [call.sessionId, call.tool] })
                 await tx.execute({

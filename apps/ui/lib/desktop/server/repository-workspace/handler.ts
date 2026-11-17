@@ -30,7 +30,8 @@ export type RepositoryHandlerPorts = {
 
 /** Asks the person before something leaves the Mac. Null means they allowed exactly this; a string is what the coworker is told instead. */
 async function ask(db: Client, owner: string, sessionId: string, tool: 'repo_publish' | 'repo_comment', kind: 'repository' | 'send', shown: Record<string, unknown>): Promise<string | null> {
-    return (await decideConnectorCall(db, { owner, sessionId, tool, kind, arguments: shown })).answer
+    // The fingerprint of the changes binds the answer to them; the card shows the files instead.
+    return (await decideConnectorCall(db, { owner, sessionId, tool, kind, arguments: shown, unseen: ['changes'] })).answer
 }
 
 /**

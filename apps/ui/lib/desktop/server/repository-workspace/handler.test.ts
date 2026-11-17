@@ -57,6 +57,8 @@ it('publishes only after the person allows exactly what was shown, and asks agai
     expect(cards).toHaveLength(1)
     expect(JSON.stringify(cards[0])).toContain('rerun/tuner-developer/add-notes')
     expect(JSON.stringify(cards[0])).toContain('NOTES.md')
+    // The fingerprint binds the answer but is not shown to the person.
+    expect(JSON.stringify(cards[0])).not.toMatch(/changes|[a-f0-9]{64}/)
     // Asking again while the card waits does not publish either.
     expect(await call(ports, 'repo_publish', publish)).toMatchObject({ ok: false, asked: true })
     // This act never gets a standing answer.
