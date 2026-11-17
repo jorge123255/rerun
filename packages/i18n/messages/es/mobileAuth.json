@@ -122,7 +122,8 @@
             "busy": "Este compañero sigue trabajando. Inténtalo de nuevo en un momento.",
             "coworkerOff": "Este compañero está desactivado en tu Mac.",
             "removed": "Tu Mac ya no acepta este teléfono. Abre Conectar iPhone en tu Mac para comprobarlo.",
-            "unreachable": "No se pudo conectar con tu Mac."
+            "unreachable": "No se pudo conectar con tu Mac.",
+            "answerFirst": "Responde primero a la pregunta de arriba."
         },
         "pickCoworker": "Elige un compañero para abrir sus conversaciones.",
         "approvalOnMac": "Esperando tu aprobación en tu Mac"

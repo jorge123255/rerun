@@ -69,6 +69,9 @@ describe('the hub paths a paired Mac answers', () => {
         await hub.api('/api/v1/conversations/chat-1/messages')
         const after = conversationSchema.array().parse(await hub.api('/api/v1/agents/ada/conversations'))
         expect(after.find(row => row.id === 'chat-1')?.status).toBe('awaiting_question')
+        expect(hub.waitingQuestion('chat-1')).toEqual(pending.question)
+        hub.turnStarted('chat-1', 'ada', 'turn-1')
+        expect(hub.waitingQuestion('chat-1')).toBeNull()
     })
 
     it('follows and stops only the turn this phone started', async () => {

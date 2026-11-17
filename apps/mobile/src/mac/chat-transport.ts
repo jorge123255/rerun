@@ -1,3 +1,4 @@
+import { parseHitlReply } from '@rerun/contracts'
 import type { MacReplyFrame } from '@rerun/mac-pairing-client'
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
 import { randomUUID } from 'expo-crypto'
@@ -7,7 +8,18 @@ import type { ChatLink } from '@/chat/transport'
 import type { MacClient } from './client'
 import type { MacHub } from './hub'
 
-export type MacSendProblem = 'sendOff' | 'busy' | 'coworkerOff' | 'removed' | 'unreachable'
+export type MacSendProblem = 'sendOff' | 'busy' | 'coworkerOff' | 'removed' | 'unreachable' | 'answerFirst'
+
+// What the question card sends is the answer written out as a message, the hub's protocol. The Mac
+// records an answer against the question it saved, so the choices are read back out of that text:
+// one list per question, in the card's order, or nothing at all when the person dismissed it. Null
+// for anything else typed while a question waits, which the Mac would turn down.
+export function answerOf(text: string, questionCount: number): { answers?: string[][] } | null {
+    const reply = parseHitlReply(text)
+    if (reply?.kind === 'cancelled' && reply.of === 'question') return {}
+    if (reply?.kind !== 'question' || reply.answers.length !== questionCount) return null
+    return { answers: reply.answers.map(item => item.answers) }
+}
 
 // What the Mac answers a send it turns down, as the sentence the chat shows.
 export function sendProblemOf(error: unknown): MacSendProblem {
@@ -23,7 +35,13 @@ type Turn = { agentId: string; chatId: string; requestId: string }
 
 const REPLY_PART = 'reply'
 // Between two looks at a turn the Mac no longer streams (its stream closes after a minute).
-const POLL_MS = 1500
+const POLL_MS = process.env.NODE_ENV === 'test' ? 1 : 1500
+// A Mac busy running the model can be slow to say how a turn stands, or miss once: the reply is only
+// given up after this many answers in a row went missing.
+const MAX_MISSES = 6
+
+// The Mac said no, in so many words: asking again will not change it.
+const isRefusal = (error: unknown) => [401, 403, 404].includes((error as { status?: number }).status ?? 0)
 
 const pause = (ms: number, signal?: AbortSignal) =>
     new Promise<void>(resolve => {
@@ -56,12 +74,19 @@ export function replyStream(client: MacClient, hub: MacHub, turn: Turn, { messag
             }
             controller.enqueue(messageId ? { type: 'start', messageId } : { type: 'start' })
             try {
+                let misses = 0
                 while (!signal?.aborted) {
                     // A stream the Mac cuts, or cannot open, is not the end of the turn: its status says.
                     await client.streamSentTurn(turn.agentId, turn.chatId, turn.requestId, onFrame, signal).catch(() => {})
                     if (signal?.aborted) break
-                    const { status } = await client.readSentTurn(turn.agentId, turn.chatId, turn.requestId, signal)
-                    if (status !== 'running') break
+                    try {
+                        const { status } = await client.readSentTurn(turn.agentId, turn.chatId, turn.requestId, signal)
+                        if (status !== 'running') break
+                        misses = 0
+                    } catch (error) {
+                        if (signal?.aborted) break
+                        if (isRefusal(error) || ++misses >= MAX_MISSES) throw error
+                    }
                     await pause(POLL_MS, signal)
                 }
                 // Let go of by the person, the turn may still run on the Mac: the hub says when it is over.
@@ -87,8 +112,12 @@ export function createMacChatTransport(link: ChatLink, client: MacClient, hub: M
             const text = lastUserText(messages)
             const requestId = randomUUID()
             let chatId = link.sessionRef.current
+            const question = chatId ? hub.waitingQuestion(chatId) : null
+            const answer = question ? answerOf(text, question.questions.length) : null
+            if (question && !answer) throw new Error(describe('answerFirst'))
             try {
-                if (chatId) await client.sendMessage(agentId, chatId, { requestId, text }, abortSignal)
+                if (chatId && question && answer) await client.answerQuestion(agentId, chatId, { requestId, toolCallId: question.toolCallId, ...answer }, abortSignal)
+                else if (chatId) await client.sendMessage(agentId, chatId, { requestId, text }, abortSignal)
                 else chatId = await client.startConversation(agentId, { requestId, text }, abortSignal)
             } catch (error) {
                 throw new Error(describe(sendProblemOf(error)))

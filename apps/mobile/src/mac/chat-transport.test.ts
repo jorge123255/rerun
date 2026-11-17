@@ -2,7 +2,9 @@ import type { UIMessage, UIMessageChunk } from 'ai'
 
 import type { ChatLink } from '@/chat/transport'
 
-import { createMacChatTransport, replyStream, sendProblemOf } from './chat-transport'
+import { HITL_CANCELLED, serializeAnswers } from '@rerun/contracts'
+
+import { answerOf, createMacChatTransport, replyStream, sendProblemOf } from './chat-transport'
 import type { MacClient } from './client'
 import type { MacHub } from './hub'
 
@@ -25,13 +27,14 @@ const textOf = (chunks: UIMessageChunk[]) => chunks.flatMap(chunk => (chunk.type
 function setup({ attaches, statuses }: { attaches: Frame[][]; statuses: string[] }) {
     const client = {
         sendMessage: jest.fn(async () => ({ requestId: '11111111-1111-4111-8111-111111111111' })),
+        answerQuestion: jest.fn(async () => ({ requestId: '11111111-1111-4111-8111-111111111111' })),
         startConversation: jest.fn(async () => 'chat-new'),
         streamSentTurn: jest.fn(async (_agent: string, _chat: string, _request: string, onFrame: (frame: Frame) => void) => {
             for (const frame of attaches.shift() ?? []) onFrame(frame)
         }),
         readSentTurn: jest.fn(async () => ({ status: statuses.shift() ?? 'done' })),
     }
-    const hub = { turnStarted: jest.fn(), turnEnded: jest.fn(), rememberChat: jest.fn(), lastTurn: jest.fn(), api: jest.fn() }
+    const hub = { turnStarted: jest.fn(), turnEnded: jest.fn(), rememberChat: jest.fn(), lastTurn: jest.fn(), api: jest.fn(), waitingQuestion: jest.fn((): unknown => null) }
     const link = { endpoints: { agentId: 'ada' }, sessionRef: { current: null as string | null }, runRef: { current: null as string | null }, callerRef: { current: null }, onSessionRef: { current: jest.fn() }, resumeOntoRef: { current: null as string | null }, reconnectFailedRef: { current: false } }
     const transport = createMacChatTransport(link as unknown as ChatLink, client as unknown as MacClient, hub as unknown as MacHub, problem => `problem:${problem}`, messages => (messages.at(-1)?.parts[0] as { text: string }).text)
     return { client, hub, link, transport }
@@ -67,6 +70,51 @@ describe('a conversation with a coworker on a paired Mac', () => {
         const chunks = await read(await send(transport, 'Count'))
         expect(textOf(chunks)).toBe('One two three')
         expect(client.streamSentTurn).toHaveBeenCalledTimes(2)
+    })
+
+    it('keeps following a reply when the Mac is slow to say how the turn stands', async () => {
+        const busy = () => Object.assign(new Error('unavailable'), { status: 502 })
+        const { client, transport } = setup({ attaches: [[{ reset: true }, { delta: 'Slow ' }], [{ reset: true }, { delta: 'Slow but' }], [{ reset: true }, { delta: 'Slow but sure' }]], statuses: [] })
+        client.readSentTurn.mockRejectedValueOnce(busy()).mockRejectedValueOnce(new TypeError('Network request failed')).mockResolvedValueOnce({ status: 'done' })
+        const chunks = await read(await send(transport, 'Hi'))
+        expect(textOf(chunks)).toBe('Slow but sure')
+        expect(chunks.at(-1)).toEqual({ type: 'finish' })
+    })
+
+    it('gives a reply up when the Mac refuses, or stays silent for too long', async () => {
+        const refused = setup({ attaches: [], statuses: [] })
+        refused.client.readSentTurn.mockRejectedValue(Object.assign(new Error('revoked'), { status: 401 }))
+        await expect(read(await send(refused.transport, 'Hi'))).rejects.toThrow('revoked')
+        expect(refused.client.readSentTurn).toHaveBeenCalledTimes(1)
+
+        const silent = setup({ attaches: [], statuses: [] })
+        silent.client.readSentTurn.mockRejectedValue(Object.assign(new Error('unavailable'), { status: 502 }))
+        await expect(read(await send(silent.transport, 'Hi'))).rejects.toThrow('unavailable')
+        expect(silent.client.readSentTurn).toHaveBeenCalledTimes(6)
+    })
+
+    it('answers a waiting question as an answer, naming the card and the choices', async () => {
+        const { client, hub, link, transport } = setup({ attaches: [[]], statuses: ['done'] })
+        link.sessionRef.current = 'chat-1'
+        hub.waitingQuestion.mockReturnValue({ toolCallId: 'call-1', questions: [{ question: 'Which fruit?', options: ['Apple', 'Pear'], multiple: false }, { question: 'Which days?', options: ['Mon', 'Tue', 'Wed'], multiple: true }] })
+        await read(await send(transport, serializeAnswers([{ question: 'Which fruit?', answers: ['Pear'] }, { question: 'Which days?', answers: ['Mon', 'Wed'] }])))
+        expect(client.answerQuestion).toHaveBeenCalledWith('ada', 'chat-1', { requestId: '11111111-1111-4111-8111-111111111111', toolCallId: 'call-1', answers: [['Pear'], ['Mon', 'Wed']] }, undefined)
+        expect(client.sendMessage).not.toHaveBeenCalled()
+        expect(hub.turnStarted).toHaveBeenCalledWith('chat-1', 'ada', '11111111-1111-4111-8111-111111111111')
+    })
+
+    it('dismisses a waiting question without choices, and sends nothing else while it waits', async () => {
+        const { client, hub, link, transport } = setup({ attaches: [[]], statuses: ['done'] })
+        link.sessionRef.current = 'chat-1'
+        hub.waitingQuestion.mockReturnValue({ toolCallId: 'call-1', questions: [{ question: 'Which fruit?', options: [], multiple: false }] })
+        await read(await send(transport, HITL_CANCELLED.question))
+        expect(client.answerQuestion).toHaveBeenCalledWith('ada', 'chat-1', { requestId: '11111111-1111-4111-8111-111111111111', toolCallId: 'call-1' }, undefined)
+
+        await expect(send(transport, 'Never mind, do something else')).rejects.toThrow('problem:answerFirst')
+        await expect(send(transport, serializeAnswers([{ question: 'A', answers: ['1'] }, { question: 'B', answers: ['2'] }]))).rejects.toThrow('problem:answerFirst')
+        expect(client.sendMessage).not.toHaveBeenCalled()
+        expect(client.answerQuestion).toHaveBeenCalledTimes(1)
+        expect(answerOf(serializeAnswers([{ question: 'Which fruit?', answers: [] }]), 1)).toEqual({ answers: [[]] })
     })
 
     it('says why the Mac turned a message down', async () => {

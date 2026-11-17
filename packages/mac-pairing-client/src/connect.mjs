@@ -187,6 +187,13 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
             if (result?.requestId !== requestId) throw new Error('invalid_send_receipt')
             return result
         },
+        // Answers the question a saved chat waits on. `toolCallId` names the card the phone was shown;
+        // `answers` holds the choices for each of its questions, and is left out to dismiss it.
+        async answerQuestion(agentId, sessionId, { requestId, toolCallId, answers }, signal) {
+            const result = await chatRequest(agentId, sessionId, '', { method: 'POST', body: { requestId, answer: { toolCallId, ...(answers && { answers }) } }, signal })
+            if (result?.requestId !== requestId) throw new Error('invalid_send_receipt')
+            return result
+        },
         async readSentTurn(agentId, sessionId, requestId, signal) {
             const result = await chatRequest(agentId, sessionId, '/turns/' + encodeURIComponent(requestId), { signal })
             if (!['running', 'done', 'error', 'cancelled'].includes(result?.status)) throw new Error('invalid_turn_status')

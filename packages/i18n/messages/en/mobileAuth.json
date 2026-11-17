@@ -133,7 +133,8 @@
             "busy": "This coworker is still working. Try again in a moment.",
             "coworkerOff": "This coworker is switched off on your Mac.",
             "removed": "Your Mac no longer accepts this phone. Open Connect iPhone on your Mac to check.",
-            "unreachable": "Could not reach your Mac."
+            "unreachable": "Could not reach your Mac.",
+            "answerFirst": "Answer the question above first."
         },
         "pickCoworker": "Pick a coworker to open its conversations.",
         "approvalOnMac": "Waiting for your approval on your Mac"

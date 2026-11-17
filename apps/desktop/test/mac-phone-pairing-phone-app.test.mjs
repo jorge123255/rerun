@@ -11,6 +11,7 @@ import { createMacPhonePairingService, PHONE_SESSION_KEY } from '../src/main/mac
 import { isPrivateAddress, localPairingAddresses } from '../src/main/mac-phone-pairing/lan-identity.mjs'
 import { seedLegacyCatalog } from '../src/main/workspaces/catalog.mjs'
 import { createMacPairingClient, createMemoryStorage } from '../../../packages/mac-pairing-client/src/index.mjs'
+import { pinnedFetch } from './mac-phone-pairing-client-fixture.mjs'
 
 const INSTALL_ID = '2f1c8a16-6d4a-4c3a-9b2e-0c1d9a7e4b11'
 const SESSION_COOKIE = 'desktop-test-cookie'
@@ -29,17 +30,27 @@ function json(response, status, body) {
 // Stands in for the Mac app's own /api/desktop/phone-pairing route, which only the pairing service calls.
 async function workspaceFixture(t) {
     const seen = []
+    const posts = []
     const server = createServer((request, response) => {
         const url = new URL(request.url, 'http://127.0.0.1')
         seen.push(url.pathname + url.search)
         if (request.headers.cookie !== `rerun-desktop-session=${SESSION_COOKIE}`) return json(response, 401, { error: 'Unauthorized' })
+        if (request.method === 'POST') {
+            const chunks = []
+            request.on('data', chunk => chunks.push(chunk))
+            return request.on('end', () => {
+                const input = JSON.parse(Buffer.concat(chunks))
+                posts.push(input)
+                json(response, 202, { runId: input.runId })
+            })
+        }
         if (!url.searchParams.get('agentId')) return json(response, 200, { coworkers: [{ id: 'coworker-ada', name: 'Ada', status: 'enabled' }] })
         if (!url.searchParams.get('chatId')) return json(response, 200, { chats: [CHAT], acceptsMessages: true })
         return json(response, 200, { chat: { ...CHAT, acceptsMessages: true }, messages: [], pending: PENDING })
     })
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
     t.after(() => new Promise(resolve => server.close(resolve)))
-    return { origin: `http://127.0.0.1:${server.address().port}`, seen }
+    return { origin: `http://127.0.0.1:${server.address().port}`, seen, posts }
 }
 
 async function start(t) {
@@ -137,4 +148,45 @@ test('a saved chat carries the question and the approval it waits on to an appro
     assert.deepEqual(chat.pending, PENDING)
     // A phone paired on this Mac only, with no certificate to pin, reads but never sends.
     assert.deepEqual(chat.permissions, { sendMessages: false })
+})
+
+test('only a phone allowed to send can answer the question a chat waits on, and only as an answer', async t => {
+    const host = localPairingAddresses()[0]
+    if (!host) { t.skip('no assigned private IPv4 address'); return }
+    const { service, workspace } = await start(t)
+    await service.setPhoneAccessEnabled(true)
+    await service.setLanAddress(host)
+    const client = createMacPairingClient({ storage: createMemoryStorage(), pinnedFetch, deviceName: 'Test iPhone' })
+    const pending = await client.connectToThisMac(await service.createOffer(1))
+    await service.approveDevice(pending.deviceId)
+    assert.equal((await client.waitForApproval()).status, 'approved')
+    const requestId = '4ce8e801-9bbd-4c6e-8221-2e326471724c'
+    const answer = { requestId, toolCallId: 'call-question', answers: [['Blue']] }
+
+    await assert.rejects(() => client.answerQuestion('coworker-ada', CHAT.id, answer), error => error.message === 'send_not_allowed' && error.status === 403)
+    assert.deepEqual(workspace.posts, [])
+
+    await service.setSendMessages(pending.deviceId, true)
+    assert.deepEqual(await client.answerQuestion('coworker-ada', CHAT.id, answer), { requestId })
+    // The Mac's own route gets the card and the choices, a run id of the Mac's making, and no free text.
+    assert.equal(workspace.posts.length, 1)
+    assert.deepEqual(workspace.posts[0].answer, { toolCallId: 'call-question', answers: [['Blue']] })
+    assert.equal('text' in workspace.posts[0], false)
+    assert.match(workspace.posts[0].runId, /^[0-9a-f-]{36}$/)
+    assert.notEqual(workspace.posts[0].runId, requestId)
+
+    assert.deepEqual(await client.answerQuestion('coworker-ada', CHAT.id, { requestId, toolCallId: 'call-question' }), { requestId })
+    assert.deepEqual(workspace.posts[1].answer, { toolCallId: 'call-question' })
+
+    const { credential, origin, certificateFingerprint } = await client.readMacSession()
+    const post = body => pinnedFetch(`${origin}/api/mac-pairing/v1/workspaces/1/coworkers/coworker-ada/chats${body.chat ?? '/' + CHAT.id}`, certificateFingerprint, {
+        method: 'POST', headers: { Authorization: `Bearer ${credential}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body.send),
+    })
+    for (const send of [
+        { requestId, answer: { toolCallId: '' } }, { requestId, answer: { toolCallId: 'c', answers: [] } }, { requestId, answer: { toolCallId: 'c', answers: [[1]] } },
+        { requestId, answer: { toolCallId: 'c', questionId: 'saved-question' } }, { requestId, answer: 'Blue' }, { requestId, text: 'Blue', answer: { toolCallId: 'c' } },
+    ]) assert.equal((await post({ send })).status, 400)
+    // An answer never opens a conversation.
+    assert.equal((await post({ chat: '', send: { requestId, answer: { toolCallId: 'c' } } })).status, 400)
+    assert.equal(workspace.posts.length, 2)
 })

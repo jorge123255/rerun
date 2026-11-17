@@ -23,6 +23,8 @@ export type MacHub = {
     turnStarted: (chatId: string, agentId: string, requestId: string) => void
     turnEnded: (chatId: string, requestId: string) => void
     lastTurn: (chatId: string) => { agentId: string; requestId: string } | null
+    // The question a chat waits on, as last read: the Mac takes its answer as an answer, not as a message.
+    waitingQuestion: (chatId: string) => NonNullable<NonNullable<MacPhoneChatRead['pending']>['question']> | null
 }
 
 // The one Box a Mac's coworkers sit in on the Home.
@@ -121,6 +123,7 @@ export function createMacHub({ client, link, fail, onRevoked, approvalTitle }: {
     const turns = new Map<string, { agentId: string; requestId: string }>()
     const reads = new Set<Promise<unknown>>()
     const stops = new Map<string, Promise<void>>()
+    const questions = new Map<string, NonNullable<NonNullable<MacPhoneChatRead['pending']>['question']>>()
 
     // The Mac refuses with `{ error: code }` and a status. A phone the person removed on the Mac is
     // sent back to the sign-in screen; anything else is the screen's to show.
@@ -167,6 +170,8 @@ export function createMacHub({ client, link, fail, onRevoked, approvalTitle }: {
         const agentId = await agentOf(chatId, signal)
         const read = macPhoneChatReadSchema.parse(await ask(() => client.openSavedChat(agentId, chatId, signal)))
         waiting.set(chatId, waitingOf(read))
+        if (read.pending?.question) questions.set(chatId, read.pending.question)
+        else questions.delete(chatId)
         return read
     }
 
@@ -278,10 +283,12 @@ export function createMacHub({ client, link, fail, onRevoked, approvalTitle }: {
             running.set(chatId, requestId)
             // Sending answers whatever the chat waited on.
             waiting.set(chatId, null)
+            questions.delete(chatId)
         },
         turnEnded(chatId, requestId) {
             if (running.get(chatId) === requestId) running.delete(chatId)
         },
         lastTurn: chatId => turns.get(chatId) ?? null,
+        waitingQuestion: chatId => questions.get(chatId) ?? null,
     }
 }

@@ -112,6 +112,13 @@ export type MacPhoneChatRead = z.infer<typeof macPhoneChatReadSchema>
 // POST .../chats (a new conversation) and POST .../chats/:chat (one more message). `requestId` is
 // chosen by the phone: sending it again never starts a second turn.
 export const macPhoneSendSchema = z.object({ requestId: z.string().uuid(), text: z.string().min(1).max(20_000) }).strict()
+// POST .../chats/:chat with the answer to the question the chat waits on, instead of a message.
+// `toolCallId` is the card the phone was shown; `answers` holds the choices for each of its
+// questions, in order, and is left out to dismiss the question. It needs the send permission.
+export const macPhoneAnswerSchema = z.object({
+    requestId: z.string().uuid(),
+    answer: z.object({ toolCallId: z.string().min(1).max(256), answers: z.array(z.array(z.string().max(4000)).max(100)).min(1).max(32).optional() }).strict(),
+}).strict()
 export const macPhoneSendReceiptSchema = z.object({ requestId: z.string().uuid(), chatId: savedId.optional() })
 
 // GET .../chats/:chat/turns/:requestId, and the lines of .../turns/:requestId/stream.
