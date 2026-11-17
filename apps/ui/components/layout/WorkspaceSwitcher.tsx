@@ -362,6 +362,7 @@ export function WorkspaceSwitcher() {
     return (
         <div className="absolute top-4 left-4 z-40 flex items-center gap-2">
             <DropdownMenu
+                modal={false}
                 onOpenChange={open => {
                     if (!open) return
                     void refreshBrainProposals()
