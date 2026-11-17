@@ -61,11 +61,9 @@ describe('stack, build and roles', () => {
         expect(detectProjectBuild(data('acme/x', { files: ['README.md'] }))).toBeNull()
     })
 
-    it('suggests two to four roles from the closed list for every kind', () => {
-        expect(defaultProjectRoles('ios-app')).toEqual(['developer', 'qa-tester', 'release-manager'])
+    it('starts every kind of project with a developer and a code reviewer', () => {
         for (const kind of ['ios-app', 'android-app', 'web-app', 'backend-service', 'library', 'cli', 'infrastructure', 'other'] as const) {
-            expect(defaultProjectRoles(kind).length).toBeGreaterThanOrEqual(2)
-            expect(defaultProjectRoles(kind).length).toBeLessThanOrEqual(4)
+            expect(defaultProjectRoles(kind)).toEqual(['developer', 'code-reviewer'])
         }
     })
 })
