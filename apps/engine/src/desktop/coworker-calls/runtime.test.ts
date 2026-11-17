@@ -155,7 +155,7 @@ describe('desktop coworker call runtime', () => {
         targets = [{ ...bob, enabled: false, callable: false }]
         expect((await runtime.execute(call({ toolCallId: 'tool-off' }))).text).toBe('Coworker "Bob" is switched off and cannot be called.')
         targets = [{ ...bob, callable: false }]
-        expect((await runtime.execute(call({ toolCallId: 'tool-grant' }))).text).toBe('Coworker "Bob" is not allowed for this coworker.')
+        expect((await runtime.execute(call({ toolCallId: 'tool-grant' }))).text).toBe('Coworker "Bob" is not allowed for this coworker. The person chooses who it may ask, in its Tools under Call coworkers, or by asking the Chief of Staff to set the team up.')
         targets = [bob]
         expect((await runtime.execute(call({ toolCallId: 'tool-mention', agentRef: '@Bob' }))).text).toContain('was not found')
         expect(sessions).toBe(0)
