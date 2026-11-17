@@ -196,6 +196,20 @@ export type MacPhoneChiefChat = z.infer<typeof macPhoneChiefChatSchema>
 export const macPhoneChiefSendSchema = z.object({ requestId: z.string().uuid(), text: z.string().min(1).max(20_000), chatId: chiefChatId.optional(), thread: z.literal(true).optional() }).strict()
 export const macPhoneChiefAnswerSchema = z.object({ chatId: chiefChatId, requestId: z.string().uuid(), toolCallId: z.string().min(1).max(256), answers: z.array(z.array(z.string().max(4000)).max(100)).min(1).max(32).optional() }).strict()
 export const macPhoneChiefStopSchema = z.object({ chatId: chiefChatId, requestId: z.string().uuid() }).strict()
+// POST /workspaces/:workspace/voice/start: a voice conversation with the Chief of Staff, on the Chief of
+// Staff conversation `chatId`. It needs the send permission and the Mac's own "talk from your phone"
+// switch, and is limited to a few a minute per phone. The reply is a short-lived ElevenLabs
+// conversation token for the phone's WebRTC session and the id of that conversation; the phone's
+// audio goes to ElevenLabs and the Mac answers in text through its relay. Refusals: `not_found` (the
+// feature is off on the Mac, or no such conversation), `unavailable` (the relay is not connected or
+// ElevenLabs refused), `send_not_allowed`, `rate_limited`.
+export const macPhoneVoiceStartSchema = z.object({ chatId: z.string().regex(/^fmc_[A-Za-z0-9-]{8,80}$/) }).strict()
+export const macPhoneVoiceSessionSchema = z.object({
+    conversationToken: z.string().min(1).max(8192),
+    conversationId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    expiresAt: z.string(),
+}).strict()
+export type MacPhoneVoiceSession = z.infer<typeof macPhoneVoiceSessionSchema>
 
 // Every refusal is `{ error: code }`. A phone that is not approved, or was removed, gets `unauthorized`.
 export const macPhoneErrorSchema = z.object({ error: z.string() })

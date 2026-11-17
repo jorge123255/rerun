@@ -1,0 +1,22 @@
+{
+    "name": "rerun-cloud-voice-relay",
+    "version": "0.1.0",
+    "private": true,
+    "license": "AGPL-3.0-only",
+    "type": "module",
+    "description": "Relays Speech Engine text between ElevenLabs and one Rerun Mac. Deployed by its owner on their own Cloudflare account.",
+    "scripts": {
+        "test": "node --test test/*.test.ts",
+        "check": "tsc -p tsconfig.json",
+        "dev": "wrangler dev",
+        "deploy": "wrangler deploy"
+    },
+    "devDependencies": {
+        "@types/node": "^22.15.0",
+        "typescript": "^5.9.3",
+        "wrangler": "^4.0.0"
+    },
+    "engines": {
+        "node": ">=22.18"
+    }
+}
