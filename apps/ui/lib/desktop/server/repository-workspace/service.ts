@@ -351,3 +351,8 @@ export function slimGithub(value: unknown, depth = 0): unknown {
     }
     return kept
 }
+
+/** A deleted coworker's copy of its repository is removed with it. Never fails the deletion. */
+export async function removeRepositoryCopy(dataRoot: string, coworkerId: string): Promise<void> {
+    await rm(join(dataRoot, 'repositories', 'work', safeName(coworkerId)), { recursive: true, force: true }).catch(() => {})
+}

@@ -1,3 +1,4 @@
+import { removeRepositoryCopy } from '@/lib/desktop/server/repository-workspace/service'
 import { z } from 'zod'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { deleteDesktopCoworker } from '@/lib/desktop/server/coworker-delete'
@@ -30,6 +31,8 @@ export function DELETE(request: Request, { params }: Context) {
         const agentId = (await params).agentId
         const db = await openDesktopDatabase(runtime.dataRoot)
         const deleted = await withDesktopSecretOwnerTransition(runtime, agentId, () => withDesktopMcpOwnerTransition(runtime, agentId, () => deleteDesktopCoworker(db, engineOf(runtime), agentId, parsed.data.confirmationName)))
+        // Its working copy of a repository, if it had one, goes with it.
+        await removeRepositoryCopy(runtime.dataRoot, agentId)
         return Response.json(deleted, { headers: { 'cache-control': 'no-store' } })
     })
 }
