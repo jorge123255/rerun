@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
 const { fixtureGit, hostGithubGet } = await import('./git')
-const { createRepositoryWorkspace, slimGithub } = await import('./service')
+const { createRepositoryWorkspace, slimGithub, workflowRunsOnPullRequests } = await import('./service')
 import type { Command } from './git'
 
 // A real git repository on disk stands in for GitHub: nothing here touches the network or a sign-in.
@@ -35,7 +35,9 @@ test('a coworker gets a copy on its own branch with a brief, reads, searches and
     const made = await space.prepare(dev, repository, { topic: 'Fix the Port!' })
     expect(made).toMatchObject({ state: 'ready', kept: false, branch: 'rerun/tuner-developer/fix-the-port', defaultBranch: 'main' })
     expect(made.brief).toContain('Top folder: .github/, logo.bin, README.md, src/')
-    expect(made.brief).toContain('GitHub checks (workflows): ci.yml')
+    // The seed's workflow names no trigger, so nothing checks a pull request, and the coworker is told not to wait.
+    expect(made.brief).toContain('GitHub checks: none runs on a pull request (the workflow files here, ci.yml')
+    expect(made.brief).toContain('do not wait for a result')
     expect(made.brief).toContain('A live TV proxy.')
     expect(await space.list(dev, repository, {})).toEqual({ path: '.', entries: ['.github/', 'src/', 'logo.bin', 'README.md'] })
     expect(await space.read(dev, repository, { path: 'src/main.js', from: 2, lines: 2 })).toEqual({ path: 'src/main.js', totalLines: 6, from: 2, to: 3, text: 'function start() {\n  return port', more: 'Read on from line 4.' })
@@ -154,4 +156,27 @@ test('the app reads a GitHub page with the Mac\'s own command line: GitHub\'s st
     for (const path of ['/user', '/repos/acme/../../user', '/repos/acme/tuner?x={owner}', 'https://evil.example/repos/a/b']) expect(await hostGithubGet(path, never, answer(0, '{}'))).toBeNull()
     expect(asked.length).toBe(before)
     expect(await hostGithubGet('/repos/acme/tuner', never, null)).toBeNull()
+})
+
+test('a workflow counts as a pull request check only when its own triggers say so', () => {
+    const yes = [
+        'on: pull_request\n', 'on: [push, pull_request]\n', 'name: ci\non:\n  pull_request:\n    branches: [main]\n  push:\njobs:\n', "'on':\n  - push\n  - pull_request\n",
+        'on:\n  pull_request_target:\n', 'true:\n  pull_request:\n',
+    ]
+    const no = [
+        // The owner's own tuner workflow: by hand or on a version tag.
+        "name: Build and push\n# Triggers: pull_request is not one of them\non:\n  workflow_dispatch:\n    inputs:\n      version:\n        description: 'x'\n  push:\n    tags:\n      - 'v*.*.*'\njobs:\n  build:\n    steps:\n      - run: echo pull_request\n",
+        'on: push\n', 'on:\n  schedule:\n    - cron: "0 0 * * *"\n', 'name: no triggers\n', 'on:\n  workflow_dispatch:\n    inputs:\n      pull_request:\n        description: a number\n',
+    ]
+    for (const body of yes) expect(workflowRunsOnPullRequests(body), body).toBe(true)
+    for (const body of no) expect(workflowRunsOnPullRequests(body), body).toBe(false)
+})
+
+test('the brief names the checks that run on a pull request', async () => {
+    const seed = join(dir, 'seed')
+    await writeFile(join(seed, '.github', 'workflows', 'test.yml'), 'name: test\non:\n  pull_request:\njobs: {}\n')
+    sh(seed, 'add', '-A'); sh(seed, 'commit', '--quiet', '-m', 'checks'); sh(seed, 'push', '--quiet', remote, 'main')
+    const made = await workspace().prepare(dev, repository, { topic: 'checks' })
+    expect(made.brief).toContain('GitHub checks on a pull request: test.yml.')
+    expect(made.brief).not.toContain('ci.yml')
 })
