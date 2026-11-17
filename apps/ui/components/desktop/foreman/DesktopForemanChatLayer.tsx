@@ -93,7 +93,7 @@ export function DesktopForemanChatLayer({
     writing,
     restored,
     question,
-    emptyWelcome, emptyContent, underCrumb,
+    emptyWelcome, emptyContent, underCrumb, framed = false,
     planSnapshot,
     decisionStatus,
     build,
@@ -132,6 +132,8 @@ export function DesktopForemanChatLayer({
     emptyWelcome?: boolean
     /** A thread's crumb sits under the tabs: the first message starts lower, as upstream ForemanChatLayer does. */
     underCrumb?: boolean
+    /** Under a header of its own (the Simple view's middle) rather than one laid over it: the column a coworker's chat has (upstream #316). */
+    framed?: boolean
     emptyContent?: ReactNode
     planSnapshot: DesktopTrustedPlanSnapshot | null
     decisionStatus: DesktopPlanDecisionStatus
@@ -199,7 +201,7 @@ export function DesktopForemanChatLayer({
             </AnimatePresence>
             {/* Match ForemanChatLayer: resize follows the latest message until the reader scrolls up. */}
             <Conversation className="min-h-0" aria-label={t('foreman.conversation')}>
-                <ConversationContent scrollClassName="overflow-y-auto md:[container-type:size]" className={cn('mx-auto w-full max-w-xl justify-end gap-4 px-3 pb-5 md:min-h-full', underCrumb ? 'pt-[8.5rem]' : 'pt-24')}>
+                <ConversationContent scrollClassName="overflow-y-auto md:[container-type:size]" className={cn('mx-auto w-full justify-end gap-4 px-3 pb-5 md:min-h-full', framed ? 'max-w-[48rem] pt-4' : cn('max-w-xl', underCrumb ? 'pt-[8.5rem]' : 'pt-24'))}>
                     {empty && restored && !streaming && emptyContent}
                     {findScope && <ForemanTranscriptFind key={findScope} transcript={transcript} hidden={findHidden} onClose={onCloseFind} />}
                     {!restored && empty && (

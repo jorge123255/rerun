@@ -21,6 +21,7 @@ import { DesktopForemanTeamWelcome } from './DesktopForemanTeamWelcome'
 import { DesktopForemanHeader } from './DesktopForemanHeader'
 import { DesktopForemanMove, desktopForemanAnchorOf } from './DesktopForemanMove'
 import { DesktopForemanRoutines } from './DesktopForemanRoutines'
+import { DesktopForemanNameMark, DesktopForemanTopBar, type DesktopForemanFramedBar } from './DesktopForemanTopBar'
 import { DesktopWorkspaceRoutines } from './routines/DesktopWorkspaceRoutines'
 import { createDesktopWorkspaceRoutinesClient } from '@/lib/desktop/workspace-routines/client'
 import { useMemo } from 'react'
@@ -89,6 +90,8 @@ export type DesktopForemanColumnProps = {
     headerActions?: ReactNode
     /** The thread on screen, on its own row under the tabs. */
     headerCrumb?: ReactNode
+    /** What the header shows in the Simple view's middle, where the column takes a coworker's frame. */
+    framedBar?: DesktopForemanFramedBar
     /** General's saved tasks and the way into one, drawn as branches in the transcript. */
     threads?: readonly DesktopForemanGeneralThread[]
     onOpenThread?: (thread: DesktopForemanGeneralThread) => void
@@ -149,7 +152,7 @@ export function DesktopForemanColumn({
     agentNameOf,
     orbState = 'idle',
     headerActions,
-    headerCrumb, threads, onOpenThread,
+    headerCrumb, framedBar, threads, onOpenThread,
     runNotice,
     renderBoardOverlay,
     className, onClose, openOnMount, refreshKey, composerTrailing, sendDisabled, focusRequest, firstSend, controlledOpen, hidden, fill, centerOpen, findEnabled, dockFeed, voiceSlot, voiceMic, voiceRecording, intake, intakeFinished, separateConversation, starter, onStarterAnswer, onReviewTemplate, onOpenChange, onLayout,
@@ -190,7 +193,12 @@ export function DesktopForemanColumn({
     const composerScope = useRef({ chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft, mentions: ui.draftCoworkerMentions })
     composerScope.current = { chatId: chat.chatId, workspaceId: chat.workspaceId, draft: ui.draft, mentions: ui.draftCoworkerMentions }
     const pendingStarter = !!starter && !starter.decision?.settled
-    const onRoutines = ui.tab === 'routines'
+    const mobile = useMediaQuery('(max-width: 767px)')
+    const wide = useMediaQuery('(min-width: 1280px)')
+    // In the Simple view's middle the Chief of Staff takes the frame a coworker's chat has (upstream #316).
+    const framed = !!fill && !mobile && !!framedBar
+    // There the routines are not in a tab over the chat.
+    const onRoutines = ui.tab === 'routines' && !framed
     const [sendingDocuments, setSendingDocuments] = useState(false)
     const [retryingSend, setRetryingSend] = useState(false)
     const retryInFlight = useRef(false)
@@ -301,8 +309,6 @@ export function DesktopForemanColumn({
         }
     }
     const triggerRef = useRef<HTMLElement | null>(null)
-    const mobile = useMediaQuery('(max-width: 767px)')
-    const wide = useMediaQuery('(min-width: 1280px)')
     const dockBinding = useDesktopForemanDockBinding({ chat, placement: ui.placement, dock: ui.dock ?? DEFAULT_DOCK_EXTRAS, setPlacement: foreman.setPlacement, setDock: foreman.setDock })
     const consumedFocus = useRef<string | undefined>(undefined)
     const changeOpen = useCallback((open: boolean) => {
@@ -343,7 +349,9 @@ export function DesktopForemanColumn({
             placement={dockBinding.placement} dock={dockBinding.dock} onPlacement={dockBinding.onPlacement} onDock={dockBinding.onDock}
             onClose={() => changeOpen(false)} returnFocus={() => triggerRef.current} onLayout={onLayout}>
             {header => <div ref={column} className="relative flex h-full min-h-0 flex-col">
-                <DesktopForemanHeader
+                {framed && framedBar ? <DesktopForemanTopBar bar={framedBar}
+                    name={<span data-foreman-name-pill className="flex h-10 max-w-full items-center gap-2 rounded-full border border-border/50 bg-background/85 pr-3 pl-1.5 text-sm shadow-sm"><DesktopForemanNameMark orbState={orbState} /></span>} />
+                : <DesktopForemanHeader
                     onDragPointerDown={header.onPointerDown}
                     anchor={desktopForemanAnchorOf(dockBinding.placement)}
                     crumb={intake ? undefined : headerCrumb}
@@ -360,7 +368,7 @@ export function DesktopForemanColumn({
                             <Button type="button" size="icon-xs" variant="ghost" aria-label={t('foreman.alternates.title')}
                                 title={t('foreman.alternates.title')} onClick={alternates.openList}><RotateCwIcon /></Button>}
                     </>}
-                />
+                />}
                 <div className={onRoutines || alternates.open ? 'hidden' : 'contents'}>
                     {intake ? <>
                         <div className="relative flex min-h-0 flex-1 flex-col justify-center overflow-y-auto px-3 py-6">
@@ -396,6 +404,7 @@ export function DesktopForemanColumn({
                             </DesktopArrive>}
                         </> : null}
                         underCrumb={!!headerCrumb}
+                        framed={framed}
                         emptyWelcome={!starterPack && !pendingStarter}
                         emptyContent={team && !starterPack && !pendingStarter && !starter && <DesktopForemanTeamWelcome
                             agents={team} firstName={firstName} nextRoutine={nextRoutine} now={routineNow}
@@ -474,6 +483,8 @@ export function DesktopForemanColumn({
                     {!intake && !pendingStarter && draftRepositories > 0 && <p data-foreman-github-hint role="status" className="mx-3 mt-2 text-[11px] text-muted-foreground">
                         {draftRepositories === 1 ? '1 GitHub repository' : `${draftRepositories} GitHub repositories`} will be read when you send. Nothing is cloned or run.
                     </p>}
+                    {/* In a coworker's frame the composer sits under its line, in the conversation's column. */}
+                    <div className={framed ? 'shrink-0 border-t border-border' : 'contents'}>
                     <DesktopForemanComposer
                         mentions={mentions}
                         trailing={intake || pendingStarter ? undefined : composerTrailing}
@@ -486,7 +497,9 @@ export function DesktopForemanColumn({
                             ? <DesktopDocumentAttachmentControls controller={documents} disabled={!editAttachments} /> : undefined}
                         hasAttachments={attachmentComposer && documents.attachments.length > 0}
                         onFiles={editAttachments && documents.loaded ? documents.add : undefined}
-                        placeholder={intake || pendingStarter ? t('foreman.ownEntryPlaceholder') : undefined}
+                        className={framed ? 'mx-auto w-full max-w-[48rem]' : undefined}
+                        placeholder={intake || pendingStarter ? t('foreman.ownEntryPlaceholder') : !framed || !framedBar ? undefined
+                            : framedBar.thread?.named ? t('reply', { title: framedBar.thread.title }) : t('message', { name: t('workspaceView.foreman.name') })}
                         maxLength={intake || pendingStarter ? 4000 : undefined}
                         draft={ui.draft}
                         onDraftChange={foreman.setDraft}
@@ -498,6 +511,7 @@ export function DesktopForemanColumn({
                         onSend={send}
                         onStop={() => void foreman.stop()}
                     />
+                    </div>
                 </div>
                 {!onRoutines && alternates.open && <DesktopForemanAlternates ui={alternates}
                     sourceText={id => messages.find(message => message.id === id)?.text} />}
