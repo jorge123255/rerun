@@ -99,6 +99,8 @@ private final class PinnedSession: NSObject, URLSessionDataDelegate {
   private var tasks: [String: URLSessionTask] = [:]
   // Why the last certificate check failed, for the error the person sees.
   private var lastTrustProblem: String?
+  // How many times the phone was asked to check the Mac's certificate.
+  private var trustChecks = 0
 
   init(pin: String) {
     self.pin = pin
@@ -132,6 +134,7 @@ private final class PinnedSession: NSObject, URLSessionDataDelegate {
   }
 
   private func trusted(_ trust: SecTrust, host: String) -> Bool {
+    trustChecks += 1
     guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let leaf = chain.first else { return false }
     let digest = SHA256.hash(data: SecCertificateCopyData(leaf) as Data).map { String(format: "%02x", $0) }.joined()
     guard digest == pin else { lastTrustProblem = "the Mac's certificate is not the one in the code"; return false }
@@ -206,8 +209,12 @@ private final class PinnedSession: NSObject, URLSessionDataDelegate {
     switch call.call {
     case .buffered(let promise):
       if let error {
-        let code = (error as NSError).code
-        promise.reject("ERR_MAC_PAIRING_REQUEST", "\(error.localizedDescription) (\(code))" + (lastTrustProblem.map { " Certificate: \($0)" } ?? ""))
+        let failure = error as NSError
+        // The stream's own code says where a secure connection broke: the phone's check of the
+        // certificate, the Mac closing the connection, or a refused handshake.
+        let stream = failure.userInfo["_kCFStreamErrorCodeKey"].map { " stream \($0)" } ?? ""
+        let under = (failure.userInfo[NSUnderlyingErrorKey] as? NSError).map { " under \($0.domain) \($0.code)" } ?? ""
+        promise.reject("ERR_MAC_PAIRING_REQUEST", "\(error.localizedDescription) (\(failure.code)\(stream)\(under), asked: \(trustChecks))" + (lastTrustProblem.map { " Certificate: \($0)" } ?? ""))
       } else {
         promise.resolve(["status": call.status, "body": String(data: call.data, encoding: .utf8) ?? ""])
       }
