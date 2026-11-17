@@ -31,6 +31,8 @@ type ForemanTeamEmptyStateProps = {
     onSend?: (text: string) => void
     onPrefill?: (text: string) => void
     onAction?: (row: TeamEmptyStateRow) => void
+    /** The column is folded away: its orb is out of sight and stops moving. */
+    orbPaused?: boolean
     className?: string
     disabled?: boolean
     pulseLabels?: (count: number, working: number) => { coworkers: string; working: string }
@@ -38,13 +40,13 @@ type ForemanTeamEmptyStateProps = {
     orb?: ReactNode
 }
 
-export function ForemanTeamEmptyState({ model, now, onSend, onPrefill, onAction, className, disabled, pulseLabels, orb }: ForemanTeamEmptyStateProps) {
+export function ForemanTeamEmptyState({ model, now, onSend, onPrefill, onAction, orbPaused, className, disabled, pulseLabels, orb }: ForemanTeamEmptyStateProps) {
     const run = (action: TeamEmptyStateAction) => (action.type === 'send' ? onSend : onPrefill)?.(action.text)
 
     return (
         <div className={cn('my-auto flex flex-col items-center gap-4 p-4 text-center', SHORT_STACK, className)}>
             <div className={SHORT_HIDDEN}>
-                {orb ?? <Orb size={WELCOME_ORB_SIZE} />}
+                {orb ?? <Orb size={WELCOME_ORB_SIZE} paused={orbPaused} />}
             </div>
             <div className="space-y-1">
                 <h3 className="text-sm font-medium text-balance text-foreground">{model.title}</h3>

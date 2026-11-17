@@ -19,6 +19,10 @@ import { SidePanel } from '@/components/layout/SidePanel'
 import { SIDE_PANEL_GAP, loadSidePanelWidth } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopSimpleSidebar } from './simple/DesktopSimpleSidebar'
+import { useDesktopSidebarList } from './simple/useDesktopSidebarList'
+import { setDesktopDetailsWanted } from '@/lib/desktop/simple-details'
+import { AppBootCover } from '@/components/layout/AppBootCover'
+import { useAppBootStore, useHoldAppBoot } from '@/stores/app-boot.store'
 import { DesktopViewMenuRow } from './simple/DesktopViewMenuRow'
 import { desktopCoworkerPreviewsSchema, type DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
 import { desktopSimpleInitialOpen, loadDesktopWorkspaceView, resolveDesktopWorkspaceView, saveDesktopWorkspaceView, type DesktopWorkspaceView } from '@/lib/desktop/workspace-view'
@@ -45,7 +49,7 @@ import { flushDesktopBrainDrafts } from '@/lib/desktop/use-brain-page-draft'
 import { createDesktopBrainPagesActions } from '@/lib/desktop/brain-pages'
 import { countDesktopBrainProposals } from '@/lib/desktop/brain-proposals'
 import { DesktopSharedFiles } from './DesktopSharedFiles'
-import { DesktopBoard } from './DesktopBoard'
+import { DesktopBoard, type DesktopBoardTileAction } from './DesktopBoard'
 import { FxBoardCameraBoundary } from './fx-repairs/FxBoardCameraBoundary'
 import { createFxCameraHttpPersistence } from '@/lib/desktop/fx-repairs/board-camera-client'
 import { useDesktopBoardState } from './useDesktopBoardState'
@@ -70,6 +74,7 @@ import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { GridPosition } from '@rerun/ui/iso-grid'
 import { Button } from '@/components/ui/button'
 import { DesktopChatTabs } from './DesktopChatTabs'
+import { DesktopThreadPeeksContext, type DesktopThreadPeeks } from './DesktopThreadBranch'
 import type { DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
 import type { DesktopOverviewIdentity } from '@/lib/desktop/coworker-overview/identity'
 import { DesktopGettingStartedPill } from './getting-started'
@@ -898,10 +903,21 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
     }, [])
     const simple = resolveDesktopWorkspaceView({ preference: viewPreference, placing: !!creation.placement || !!templatePlacement.placement || placingCopy }) === 'simple'
     const chooseView = (view: DesktopWorkspaceView) => { saveDesktopWorkspaceView({ view }); setViewPreference(view) }
+    // Leaving the Simple view forgets that its right column was open, as upstream does.
+    useEffect(() => { if (!simple) setDesktopDetailsWanted(false) }, [simple])
     const [coworkerPreviews, setCoworkerPreviews] = useState<DesktopCoworkerPreviews['previews'] | null>(null)
     const [simpleInboxSlot, setSimpleInboxSlot] = useState<HTMLElement | null>(null)
     const [unseenAgents, setUnseenAgents] = useState<string[]>([])
-    const [tileAction, setTileAction] = useState<{ kind: 'copy'; agentId: string; nonce: number } | { kind: 'move'; agentId: string; spaceId: string; nonce: number } | null>(null)
+    const [tileAction, setTileAction] = useState<DesktopBoardTileAction | null>(null)
+    const boardSpaces = boardState.board?.spaces, boardPlacements = boardState.board?.placements
+    const simpleBoxes = useMemo(() => boardSpaces?.map(space => ({ id: space.id, name: space.name })), [boardSpaces])
+    const simpleHomes = useMemo(() => {
+        const placed = new Map(boardPlacements?.map(placement => [placement.agentId, placement.spaceId]))
+        return Object.fromEntries(agents.map(agent => [agent.id, placed.get(agent.id) ?? null]))
+    }, [boardPlacements, agents])
+    const simpleBoxOf = useCallback((id: string) => simpleHomes[id] ?? null, [simpleHomes])
+    const simpleBoxIds = useMemo(() => simpleBoxes?.map(box => box.id) ?? null, [simpleBoxes])
+    const sidebarList = useDesktopSidebarList({ enabled: simple, boxIds: simpleBoxIds, homes: simpleHomes })
     const tileActionNonce = useRef(0)
     // The local engine does not announce a finished turn here, so the list is read again when the
     // board's activity or the open conversation changes, and every few seconds while it is on screen.
@@ -927,10 +943,19 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
     // Once each time the Simple view comes up with nothing open: the coworker open last on this Mac,
     // else the most recently active one.
     const simpleRestored = useRef(false)
+    // One loader over the whole app until it can show itself in one go (upstream #284). On the Mac the
+    // board is in the page the server sent, so what the cover waits for is the saved view (else the
+    // board would flash before the Simple view takes its place), then in the Simple view its list and
+    // the coworker it reopens; the open chat holds it on while it reads its conversation. Capped at
+    // 2.5 s by AppBootCover, and lifted once per launch.
+    const [simpleOpened, setSimpleOpened] = useState(false)
+    useEffect(() => { useAppBootStore.getState().setBoardReady(viewLoaded) }, [viewLoaded])
+    useHoldAppBoot(simple && (coworkerPreviews === null || !simpleOpened))
     useEffect(() => {
         if (!simple) { simpleRestored.current = false; return }
         if (simpleRestored.current || coworkerPreviews === null || !viewLoaded) return
         simpleRestored.current = true
+        setSimpleOpened(true)
         if (panelOpen || foremanOpen) return
         const mostRecent = agents.map(agent => ({ id: agent.id, latest: coworkerPreviews[agent.id] ?? null })).sort(byRecency)[0]?.id ?? null
         const initial = desktopSimpleInitialOpen({ remembered: simpleLastOpened.current, agentIds: agents.map(agent => agent.id), mostRecent })
@@ -1008,10 +1033,18 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
                             selectedId={panelOpen ? selectedAgentId : null} foremanOpen={foremanEngaged && foremanOpen && !panelOpen}
                             disabled={creationNavigationBlocked || workspaceDialogActive || quitting}
                             onOpenCoworker={id => selectCoworker(id)} onOpenCard={openBoardCoworkerSettings} inboxSlot={setSimpleInboxSlot} unseenIds={unseenAgents}
-                            boxes={boardState.board?.spaces.map(space => ({ id: space.id, name: space.name }))}
-                            boxOf={id => boardState.board?.placements.find(placed => placed.agentId === id)?.spaceId ?? null}
+                            boxes={simpleBoxes} boxOf={simpleBoxOf} order={sidebarList.list}
                             onDuplicate={initialData.board ? id => setTileAction({ kind: 'copy', agentId: id, nonce: ++tileActionNonce.current }) : undefined}
                             onMoveToBox={initialData.board ? (id, spaceId) => setTileAction({ kind: 'move', agentId: id, spaceId, nonce: ++tileActionNonce.current }) : undefined}
+                            collapsed={sidebarList.list.collapsed} onToggleBox={sidebarList.toggleBox}
+                            onArrange={!sidebarList.loaded ? undefined : drop => {
+                                if (drop.kind === 'boxes') sidebarList.orderBoxes(drop.writes)
+                                else if (drop.kind === 'agents') sidebarList.orderAgents(drop.boxId, drop.writes)
+                                // Its rank in the Box it lands in is kept first, then the board moves it there.
+                                else if (initialData.board) { sidebarList.arriveIn(drop.agentId, drop.boxId, drop.writes); setTileAction({ kind: 'move', agentId: drop.agentId, spaceId: drop.boxId, nonce: ++tileActionNonce.current }) }
+                            }}
+                            onNewBox={initialData.board && !boardState.error ? () => setTileAction({ kind: 'box', target: { kind: 'create' }, nonce: ++tileActionNonce.current }) : undefined}
+                            onBoxDialog={initialData.board && !boardState.error ? (kind, spaceId) => setTileAction({ kind: 'box', target: { kind, spaceId }, nonce: ++tileActionNonce.current }) : undefined}
                             onNewCoworker={() => showBoard(true)}
                             onOpenForeman={controlCenterDisabled ? undefined : () => { setRequestedPanel(null); setPanelOpen(false); engageForeman() }}
                             onSearch={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled) setControlCenterOpen(true) }} />
@@ -1157,6 +1190,7 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
                     requestDesktopGettingStartedReopen()
                 } : undefined}
                 onModelSettings={openSettings} onBackToBoard={() => showBoard()} />
+            <AppBootCover />
         </main>
     )
 }
@@ -1185,8 +1219,13 @@ function CoworkerChat({ cardBeside, agent, workspaceId, attention, overview, req
     const pendingChatSummaries = useMemo(() => new Map(attention.items
         .filter(item => item.agentId === agent.id && item.kind !== 'info')
         .map(item => [item.sessionId, item.summary])), [agent.id, attention.items])
+    // Upstream #334: General's rows know which of this coworker's threads wait on the person, and for what.
+    const threadPeeks = useMemo<DesktopThreadPeeks>(() => ({ agentId: agent.id, agentName: agent.name, agentEnabled: agent.enabled !== false,
+        waiting: new Map(attention.items.filter(item => item.agentId === agent.id).map(item => [item.sessionId, { kind: item.kind, id: item.id }])) }), [agent.id, agent.name, agent.enabled, attention.items])
     const [bootstrap, setBootstrap] = useState<{ layout: DesktopTabLayout | null } | null>(null)
     const [sessionReadFailed, setSessionReadFailed] = useState(false)
+    // In the Simple view the boot cover stays on while the open coworker's conversations are read.
+    useHoldAppBoot(!!cardBeside && selected && (!bootstrap || !sessions) && !sessionReadFailed)
     const [checkedRequest, setCheckedRequest] = useState<DesktopChatRequest | null>(null)
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/sessions`
     const sessionRead = useRef<AbortController | null>(null)
@@ -1281,9 +1320,9 @@ function CoworkerChat({ cardBeside, agent, workspaceId, attention, overview, req
                 <p role="status" className="text-sm text-muted-foreground">{t('openingCoworkerChat', { name: agent.name })}</p>
             </div>
         </div>}
-        {!bootstrap || !sessions ? dismiss : <DesktopChatTabs cardBeside={cardBeside} workspaceId={workspaceId} onOpenCoworkerChat={onOpenCoworkerChat}
+        {!bootstrap || !sessions ? dismiss : <DesktopThreadPeeksContext.Provider value={threadPeeks}><DesktopChatTabs cardBeside={cardBeside} workspaceId={workspaceId} onOpenCoworkerChat={onOpenCoworkerChat}
             agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} pendingChatSummaries={pendingChatSummaries} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
-            refreshSessions={readSessions} refreshThreads={refreshThreads} renameTitle={renameTitle} reload={reload} modelLabel={modelLabel} workspaceDefault={workspaceDefault} connections={connections} onOpenModelSettings={onOpenModelSettings} onOpenTranscriptionSettings={onOpenTranscriptionSettings} onClosePanel={onClosePanel} />}
+            refreshSessions={readSessions} refreshThreads={refreshThreads} renameTitle={renameTitle} reload={reload} modelLabel={modelLabel} workspaceDefault={workspaceDefault} connections={connections} onOpenModelSettings={onOpenModelSettings} onOpenTranscriptionSettings={onOpenTranscriptionSettings} onClosePanel={onClosePanel} /></DesktopThreadPeeksContext.Provider>}
     </>
 }

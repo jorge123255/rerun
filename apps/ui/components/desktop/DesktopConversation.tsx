@@ -23,6 +23,9 @@ import { DefaultChatTransport, readUIMessageStream, type UIMessage, type FileUIP
 import { AgentBuddy } from '@rerun/ui/iso-grid'
 import { Message, MessageContent, Suggestion, Suggestions } from '@rerun/ui/chat'
 import { FloatingPill } from '@/components/agent/sheet/floating'
+import { setDesktopDetailsWanted, useDesktopDetailsWanted } from '@/lib/desktop/simple-details'
+import { useHoldAppBoot } from '@/stores/app-boot.store'
+import { DESKTOP_DETAILS_ROOM, DesktopDetailsColumn } from './simple/DesktopDetailsColumn'
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton, type ConversationHandle } from '@/components/ai-elements/conversation'
 import { bringBlockIn, useArriveByTop } from '@/hooks/useArriveByTop'
 import { DesktopArrive, useDesktopLiveGate } from './panel-motion/DesktopArrive'
@@ -219,8 +222,6 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-// Kept across coworkers, as the original does: a card closed beside one chat stays closed for the next.
-let besideCardWanted: boolean | null = null
 const WIDE_WINDOW = '(min-width: 1280px)'
 
 function useWideWindow(): boolean {
@@ -280,12 +281,15 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const beside = !!cardBeside && wide && !!overview
     const cardCovers = cardOpen && !beside
     const openedBeside = useRef(false)
+    // Closed until the person opens it, whatever the window's width (upstream #276). What they chose
+    // is kept across coworkers and the Chief of Staff: open beside one, it is open beside the next.
+    const detailsWanted = useDesktopDetailsWanted()
     useEffect(() => {
         if (!cardBeside) return
-        // Beside the chat the card is open until closed; over it, closed until asked for.
-        if (beside && besideCardWanted !== false) { openedBeside.current = true; setCardOpen(true) }
-        else if (!beside && openedBeside.current) { openedBeside.current = false; setCardOpen(false) }
-    }, [beside, cardBeside])
+        if (beside && detailsWanted) { openedBeside.current = true; setCardOpen(true) }
+        // Out of sight nothing of the card is mounted, so nothing unsaved can be lost by closing it.
+        else if (openedBeside.current && (!beside || !active)) { openedBeside.current = false; setCardOpen(false) }
+    }, [beside, cardBeside, detailsWanted, active])
     const [overviewCovered, setOverviewCovered] = useState(false)
     const chatCovered = overviewCovered && !beside
     const [serviceStreaming, setServiceStreaming] = useState(false)
@@ -331,7 +335,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const overviewCloseControl = useDesktopPanelCloseGuard()
     const dismissCard = () => {
         if (requestedPanel) { handledPanel.current = requestedPanel; onPanelRequestHandled?.(requestedPanel) }
-        if (beside) besideCardWanted = false
+        if (beside) setDesktopDetailsWanted(false)
         openedBeside.current = false
         setCardOpen(false)
         setPanelNotice('')
@@ -738,6 +742,8 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const historyGeneration = historyRead.current.generation
 
     const ready = history.id === sessionId && !history.error
+    // In the Simple view the boot cover stays on while the conversation on screen is read (upstream #284).
+    useHoldAppBoot(!!cardBeside && active && history.id !== sessionId)
     const runInFlight = !busy && engineRunning.id === sessionId && engineRunning.running
     const generating = busy || runInFlight
     useEffect(() => {
@@ -745,7 +751,10 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
         if (isDesktopQuitting()) return
         // A freshly restored chat has not yet checked whether its engine is still replying.
         // Keep Settings closed until that read belongs to this session; Back/Close cancels it.
+        // Asked for from the tile menu or a link to one of its screens: the column opens, and stays wanted.
+        const wantBeside = () => { if (beside) { setDesktopDetailsWanted(true); openedBeside.current = true } }
         if (requestedPanel.panel === 'settings' && sessionId && !busy && engineRunning.id !== sessionId) {
+            wantBeside()
             setCardOpen(true)
             setPanelNotice('Checking this chat’s reply status before opening settings…')
             setPanelFocus('card')
@@ -756,6 +765,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
         setPanelNotice('')
         if (requestedPanel.panel === 'chat') { setDetailPanel(null); setCardOpen(false); setPanelFocus('chat'); return }
         if (requestedPanel.panel === 'actions') { setDetailPanel(null); setCardOpen(false); setPanelFocus(null); setNeedsRequest(requestedPanel.nonce); return }
+        wantBeside()
         setCardOpen(true)
         if (requestedPanel.panel === 'settings' && generating) {
             setPanelNotice('Wait for this reply to finish before editing the coworker.')
@@ -802,6 +812,14 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const webhookOwns = (kind: TriggerRequestView['link']['kind'], id: string | undefined) => !!wrappedWebhook && wrappedWebhook.link.kind === kind && wrappedWebhook.link.requestId === id
     const pendingRequest = question || approval || takeover || (serviceRequest ? { id: serviceRequest.serviceRequestId, toolCallId: serviceRequest.source.toolCallId } : null) || (secretRequest ? { id: secretRequest.requestId, toolCallId: secretRequest.source.toolCallId } : null) || (mcpRequest ? { id: mcpRequest.requestId, toolCallId: mcpRequest.source.toolCallId } : null)
     // Every pending request must be known before a later turn or an automatic queue flush.
+    // One picker, shown where the person is: in the message box, or on the install screen while the
+    // coworker's setup holds the message box back, so the model can be chosen before setup runs on it.
+    // Only once the install screen is really shown: while setup is still being read, or could not be,
+    // the picker stays mounted in the message box as before.
+    const modelPickerOnInstall = setupBlocked && !!setup.view && !setup.error
+    const modelPicker = <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
+        connections={connections} workspaceDefault={workspaceDefault} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel}
+        onReady={setModelReady} onBlocked={setModelBlock} openRequest={openModelRequest} />
     const requestBlocked = reconnecting || setupBlocked || !!sessionId && (question !== null || approval !== null || takeover !== null || serviceRequest !== null || secretRequest !== null || mcpSignIn === undefined || !!mcpRequest)
     const canRegenerate = draft.loaded && !draft.error && !draft.quitting && !quickReplyBusy && !requestBlocked && !inactive && !!sessionId && ready && !!history.transcript && engineRunning.id === sessionId && !generating && !stopping && !queue.queued && !queue.pending
     const feedback = useDesktopReplyFeedback(agent.id, sessionId, active)
@@ -1573,7 +1591,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     } : null
     const placeholder = generalView ? t('message', { name: agent.name }) : sessionId && currentTitle !== 'New conversation' ? t('reply', { title: currentTitle }) : t('sendMessage')
     return (
-        <div ref={conversationRoot} className={cn('relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background', beside && cardOpen && 'pr-[26rem]')} onKeyDown={event => {
+        <div ref={conversationRoot} className={cn('relative isolate flex min-h-0 min-w-0 flex-1 flex-col bg-background', beside && cardOpen && DESKTOP_DETAILS_ROOM)} onKeyDown={event => {
             if (cardOpen && (cardCovers || (event.target as HTMLElement).closest('[aria-label="Coworker details"]')) && event.key === 'Escape' && !event.defaultPrevented && !(event.target as HTMLElement).closest('[role="dialog"], [role="alertdialog"]')) {
                 event.preventDefault()
                 event.stopPropagation()
@@ -1596,7 +1614,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     )}
                 </div>
                 <h1 aria-label={agent.name} className="min-w-0">
-                    <FloatingPill label="Coworker card" active={cardOpen} onClick={() => { if (cardOpen) overviewCloseControl.requestClose(dismissCard); else { if (beside) { besideCardWanted = true; openedBeside.current = true } setCardOpen(true) } }} className="max-w-full pl-1.5">
+                    <FloatingPill label="Coworker card" active={cardOpen} onClick={() => { if (cardOpen) overviewCloseControl.requestClose(dismissCard); else { if (beside) { setDesktopDetailsWanted(true); openedBeside.current = true } setCardOpen(true) } }} className="max-w-full pl-1.5">
                         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
                             <AgentBuddy agentId={agent.id} mood={inactive ? 'asleep' : generating ? 'working' : 'idle'} size={20} facing="right" />
                         </span>
@@ -1607,7 +1625,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                 {onClosePanel && <Button type="button" aria-label={t('closePanel')} variant="ghost" size="icon-sm" className="justify-self-end" onClick={() => overviewCloseControl.requestClose(onClosePanel)}><XIcon className="size-4" /></Button>}
             </header>
             {cardCovers && !overviewCovered && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => overviewCloseControl.requestClose(dismissCard)} />}
-            <section aria-label="Coworker details" hidden={!cardOpen} data-card-beside={beside || undefined} className={!cardOpen ? "hidden" : overview ? beside ? 'absolute inset-y-0 right-0 z-40 flex min-h-0 w-[26rem] flex-col overflow-auto border-l border-border bg-background' : 'absolute inset-x-3 top-14 bottom-3 z-40 flex min-h-0 flex-col overflow-auto rounded-2xl border border-border bg-background shadow-xl' : "absolute inset-x-3 top-14 z-40 rounded-2xl border border-border bg-background p-4 shadow-xl"}>
+            <DesktopDetailsColumn label="Coworker details" open={cardOpen} beside={beside} bare={!overview}>
                 {overview && cardOpen && active && <DesktopConversationOverview
                     authority={overview} agent={agent} active={active && !draft.quitting}
                     working={generating} settingsDisabledReason={generating || !!sessionId && engineRunning.id !== sessionId ? 'Wait for this coworker’s current run to finish.' : null}
@@ -1636,7 +1654,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     <DesktopCoworkerSettings agent={agent} authority={overview} disabled={generating || !!sessionId && engineRunning.id !== sessionId} dialogControl={dialogControl('settings')} />
                 </div>
                 </div>
-            </section>
+            </DesktopDetailsColumn>
             {/* A coworker screen covers the chat only when it opens over it. Beside the chat, in its own column, the chat stays in use. */}
             <div inert={chatCovered} className={cn('contents', chatCovered && 'invisible')}>
             {tabStrip ?? <div className="flex shrink-0 items-center gap-1 px-3 pt-2 pb-1">
@@ -1846,7 +1864,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     busy={generating} pending={!draft.loaded || !!draft.error || draft.quitting || (requestBlocked && !generating) || !!pendingRequest || queue.pending || stopping || inactive || !!flushingQueue.current}
                     onSendNow={() => void sendQueuedNow()} onDiscard={() => { if (queued && !isDesktopQuitting()) void queue.action('remove', queued.id).then(() => { setQueueNotice(undefined); setSendQueuedId(null) }).catch(() => {}) }} />
                 {setup.error && <div role="alert" className="p-2 text-sm text-destructive">{setup.error}<Button type="button" size="sm" variant="ghost" onClick={()=>void setup.refresh()}>Retry setup</Button></div>}
-                {setupBlocked && <DesktopSetupGate agentId={agent.id} agentName={agent.name} apps={[]} canStart={modelReady} onStartBlocked={onOpenModelSettings} modelSlot={<Button type="button" variant="ghost" size="sm" onClick={onOpenModelSettings}>{modelLabel ?? 'Choose a model'}</Button>} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
+                {setupBlocked && <DesktopSetupGate agentId={agent.id} agentName={agent.name} apps={[]} canStart={modelReady} onStartBlocked={onOpenModelSettings} modelSlot={modelPickerOnInstall ? modelPicker : undefined} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {setup.view?.skipped && <DesktopSetupSkippedBanner agentId={agent.id} canStart={modelReady} onStartBlocked={onOpenModelSettings} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {documentPreview && <DesktopDocumentLightbox {...documentPreview} onIndexChange={index => setDocumentPreview(value => value ? { ...value, index } : null)} onClose={() => setDocumentPreview(null)} />}
                 {active && workspacePreview?.owner === uploadOwner && <DesktopWorkspaceAttachmentLightbox {...workspacePreview}
@@ -1929,9 +1947,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     </DesktopCoworkerMentions>
                     <div ref={setVoiceReviewTarget} />
                     <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 pb-1.5">
-                        <DesktopModelSelector active={active} agentId={agent.id} sessionId={sessionId} disabled={generating || stopping}
-                            connections={connections} workspaceDefault={workspaceDefault} onOpenSettings={onOpenModelSettings} onConversationChoice={rememberModel}
-                            onReady={setModelReady} onBlocked={setModelBlock} openRequest={openModelRequest} />
+                        {!modelPickerOnInstall && modelPicker}
                         <div className="flex shrink-0 items-center gap-1">
                             <DesktopAttachmentPicker key={draftKey} agent={agent} disabled={uploadDisabled || uploadsActive}
                                 paths={textAttachments} onChange={paths => {

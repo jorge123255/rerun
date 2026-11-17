@@ -770,6 +770,8 @@ test('open General picks up a saved sibling without rewriting the active layout'
             checkedAt: base.updatedAt, unavailableAgentIds: [] },
         })
         if (url === '/api/desktop/sessions/general/messages') return Response.json({ messages: [] })
+        // A row that waits on a question reads its request as soon as it waits (upstream #334).
+        if (url === '/api/desktop/sessions/sibling/pending-peek') return Response.json({ question: null, approval: null, ask: '', before: null })
         if (url.endsWith('/tabs') && init?.method === 'PUT') return Response.json({ tabs: { revision: 3 } })
     })
     const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(5000) })

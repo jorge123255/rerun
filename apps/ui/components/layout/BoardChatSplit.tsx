@@ -5,6 +5,7 @@ import { type CSSProperties, useEffect, type ReactNode } from 'react'
 
 import { ForemanColumn } from '@/components/foreman/ForemanColumn'
 import { ForemanDropPreview } from '@/components/foreman/ForemanDropPreview'
+import { AppBootCover } from '@/components/layout/AppBootCover'
 import { ProviderStatusBanner } from '@/components/layout/ProviderStatusBanner'
 import { DEFAULT_FOREMAN_PLACEMENT, type ForemanPlacement, dockedForemanSide, loadForemanPlacement } from '@/lib/foreman-layout'
 import { loadForemanOpen } from '@/lib/foreman-open'
@@ -104,6 +105,7 @@ export function BoardChatSplit({ initialOpen, initialPlacement, children }: { in
                 </div>
             </div>
             {visible && <ForemanDropPreview />}
+            <AppBootCover />
         </div>
     )
 }

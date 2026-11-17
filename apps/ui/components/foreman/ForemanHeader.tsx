@@ -77,7 +77,7 @@ export function ForemanHeader({
             onToggleSheetDetent={onToggleSheetDetent}
             actions={
                 <>
-                    <DropdownMenu>
+                    <DropdownMenu modal={false}>
                         <TooltipLabeled label="Move" side="bottom">
                             <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon-sm" aria-label="Move the chat" className="max-md:hidden">

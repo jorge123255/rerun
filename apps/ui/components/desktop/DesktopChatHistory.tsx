@@ -2,7 +2,7 @@
 
 import { useDesktopLocale } from './DesktopLocale'
 import { useEffect, useId, useState } from 'react'
-import { Badge } from '@rerun/ui/primitives'
+import { Badge, ScrollFade } from '@rerun/ui/primitives'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Chip } from '@/components/ui/chip'
@@ -238,24 +238,26 @@ function ChatHistoryPanel({ agentId, selectedId, sessions, verifiedRunStatus, bu
                     </Chip>
                 ))}
             </div>
-            <div className="max-h-[min(420px,50dvh)] min-h-0 space-y-0.5 overflow-y-auto px-1 pb-2">
-                {(filter === 'all' || filter === 'needs') && <DesktopNeedsChats key={filter} inline={filter === 'all'}
-                    agentId={agentId} query={query} onSelect={onSelect} busy={busy} inbox={inbox} />}
-                {filter !== 'needs' && (error ? (
-                    <div role="alert" className="flex flex-col items-center gap-2 px-3 py-6 text-center text-xs">
-                        <p className="text-destructive">{t('threadHistory.loadFailed')}</p>
-                        <Button type="button" size="sm" variant="outline" onClick={retry}>{t('retryConversations')}</Button>
-                    </div>
-                ) : history === null ? (
-                    <div role="status" aria-busy="true">
-                        <span className="sr-only">{t('threadHistory.loading')}</span>
-                        <SkeletonPanelRows rows={4} aria-hidden="true" />
-                    </div>
-                ) : (
-                    <ChatHistoryList history={history} details={details} verifiedRunStatus={verifiedRunStatus} filter={filter} query={query} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries}
-                        inlinePendingIds={inlinePendingIds} onSelect={onSelect} onRetry={retry} rename={rename} />
-                ))}
-            </div>
+            <ScrollFade className="max-h-[min(420px,50dvh)] min-h-0 px-1 pb-2">
+                <div className="space-y-0.5">
+                    {(filter === 'all' || filter === 'needs') && <DesktopNeedsChats key={filter} inline={filter === 'all'}
+                        agentId={agentId} query={query} onSelect={onSelect} busy={busy} inbox={inbox} />}
+                    {filter !== 'needs' && (error ? (
+                        <div role="alert" className="flex flex-col items-center gap-2 px-3 py-6 text-center text-xs">
+                            <p className="text-destructive">{t('threadHistory.loadFailed')}</p>
+                            <Button type="button" size="sm" variant="outline" onClick={retry}>{t('retryConversations')}</Button>
+                        </div>
+                    ) : history === null ? (
+                        <div role="status" aria-busy="true">
+                            <span className="sr-only">{t('threadHistory.loading')}</span>
+                            <SkeletonPanelRows rows={4} aria-hidden="true" />
+                        </div>
+                    ) : (
+                        <ChatHistoryList history={history} details={details} verifiedRunStatus={verifiedRunStatus} filter={filter} query={query} selectedId={selectedId} busy={busy} pendingChatSummaries={pendingChatSummaries}
+                            inlinePendingIds={inlinePendingIds} onSelect={onSelect} onRetry={retry} rename={rename} />
+                    ))}
+                </div>
+            </ScrollFade>
         </>
     )
 }
@@ -301,7 +303,8 @@ export function DesktopChatHistory({ agentId, count, selectedId, sessions = [], 
                     <MessageCircle aria-hidden className="size-4 text-muted-foreground" />
                 </Button>
             </PopoverTrigger>
-            <PopoverContent align="end" collisionPadding={12}
+            {/* The button opens the row, so its list opens from the left (upstream #277). */}
+            <PopoverContent align="start" collisionPadding={12}
                 onInteractOutside={event => {
                     if (rename?.target?.surface === 'history' || document.querySelector('[role="alertdialog"][data-state="open"]')) event.preventDefault()
                 }}
