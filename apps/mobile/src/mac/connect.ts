@@ -53,11 +53,14 @@ const pause = (ms: number, signal: AbortSignal) =>
 // Hands the code to the Mac, then waits for the person to approve the phone there. Resolves once the
 // phone holds its token; the app then starts again on the Mac. `onWaiting` fires when the Mac has
 // listed the phone and the rest is up to the person.
-export async function pairWithMac(client: Pick<MacClient, 'connectToThisMac' | 'waitForApproval' | 'clearMacSession'>, offer: MacOfferRead & { ok: true }, { signal, onWaiting, pollMs = POLL_MS }: { signal: AbortSignal; onWaiting: () => void; pollMs?: number }): Promise<{ ok: true } | { ok: false; problem: MacPairingProblem | 'cancelled' }> {
+export async function pairWithMac(client: Pick<MacClient, 'connectToThisMac' | 'waitForApproval' | 'clearMacSession'>, offer: MacOfferRead & { ok: true }, { signal, onWaiting, pollMs = POLL_MS }: { signal: AbortSignal; onWaiting: () => void; pollMs?: number }): Promise<{ ok: true } | { ok: false; problem: MacPairingProblem | 'cancelled' ; detail?: string }> {
     try {
         await client.connectToThisMac(offer.offer, signal)
     } catch (error) {
-        return { ok: false, problem: signal.aborted ? 'cancelled' : pairingProblemOf(error) }
+        // What the phone itself reported, shown small under the message: "cannot reach this Mac"
+        // alone does not say whether the network, the certificate or the Mac's answer was at fault.
+        const { status, message } = error as { status?: number; message?: string }
+        return { ok: false, problem: signal.aborted ? 'cancelled' : pairingProblemOf(error), detail: [status ? `HTTP ${status}` : null, message].filter(Boolean).join(' · ').slice(0, 200) }
     }
     onWaiting()
     let misses = 0
@@ -76,7 +79,7 @@ export async function pairWithMac(client: Pick<MacClient, 'connectToThisMac' | '
             const refused = typeof (error as { status?: number }).status === 'number'
             if (refused || ++misses >= 5) {
                 await client.clearMacSession()
-                return { ok: false, problem: refused ? 'declined' : 'unreachable' }
+                return { ok: false, problem: refused ? 'declined' : 'unreachable', detail: String((error as { message?: string }).message ?? '').slice(0, 200) }
             }
         }
         await pause(pollMs, signal)

@@ -28,6 +28,7 @@ export function MacStep() {
     const [focused, setFocused] = useState(false)
     const [stage, setStage] = useState<Stage>('code')
     const [problem, setProblem] = useState<MacPairingProblem | null>(null)
+    const [detail, setDetail] = useState('')
     const [permission, requestPermission] = useCameraPermissions()
     const attempt = useRef<AbortController | null>(null)
 
@@ -50,6 +51,7 @@ export function MacStep() {
         const controller = new AbortController()
         attempt.current = controller
         setProblem(null)
+        setDetail('')
         setStage('connecting')
         setThinking(true)
         const result = await pairWithMac(macClient, offer, { signal: controller.signal, onWaiting: () => setStage('waiting') })
@@ -57,7 +59,7 @@ export function MacStep() {
         if (attempt.current !== controller) return
         setThinking(false)
         setStage('code')
-        if (result.problem !== 'cancelled') setProblem(result.problem)
+        if (result.problem !== 'cancelled') { setProblem(result.problem); setDetail('detail' in result && typeof result.detail === 'string' ? result.detail : '') }
     }
 
     const scan = async () => {
@@ -139,6 +141,11 @@ export function MacStep() {
                     {problem && (
                         <AppText variant="footnote" tone="destructive">
                             {t(`problems.${problem}`)}
+                        </AppText>
+                    )}
+                    {problem && !!detail && (
+                        <AppText variant="footnote" tone="muted" selectable>
+                            {detail}
                         </AppText>
                     )}
                     <Button label={t('connect')} size="lg" loading={stage === 'connecting'} disabled={!code.trim()} onPress={() => connect(code)} />
