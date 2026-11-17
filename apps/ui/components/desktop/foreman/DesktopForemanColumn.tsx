@@ -22,6 +22,10 @@ import { DesktopForemanHeader } from './DesktopForemanHeader'
 import { DesktopForemanMove, desktopForemanAnchorOf } from './DesktopForemanMove'
 import { DesktopForemanRoutines } from './DesktopForemanRoutines'
 import { DesktopForemanNameMark, DesktopForemanTopBar, type DesktopForemanFramedBar } from './DesktopForemanTopBar'
+import { DesktopForemanDetails } from './DesktopForemanDetails'
+import { DESKTOP_DETAILS_ROOM, DesktopDetailsColumn } from '../simple/DesktopDetailsColumn'
+import { FloatingPill } from '@/components/agent/sheet/floating'
+import { setDesktopDetailsWanted, useDesktopDetailsWanted } from '@/lib/desktop/simple-details'
 import { DesktopWorkspaceRoutines } from './routines/DesktopWorkspaceRoutines'
 import { createDesktopWorkspaceRoutinesClient } from '@/lib/desktop/workspace-routines/client'
 import { useMemo } from 'react'
@@ -42,7 +46,8 @@ import { DesktopQuestionCard } from '@/components/desktop/DesktopQuestionCard'
 import type { DesktopPendingQuestion, DesktopQuestionAnswer } from '@/lib/desktop/questions'
 import type { DesktopTemplateIdentity } from '@/components/desktop/templates/types'
 import { Button } from '@/components/ui/button'
-import { RotateCwIcon } from '@/lib/icons'
+import { ChevronDownIcon, RotateCwIcon } from '@/lib/icons'
+import { cn } from '@/lib/utils'
 import { useDesktopLocale } from '../DesktopLocale'
 import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import { DesktopForemanAlternateReview, DesktopForemanAlternates } from './DesktopForemanAlternates'
@@ -199,6 +204,12 @@ export function DesktopForemanColumn({
     const framed = !!fill && !mobile && !!framedBar
     // There the routines are not in a tab over the chat.
     const onRoutines = ui.tab === 'routines' && !framed
+    // The column beside the chat: open or closed as a coworker's card was left, and kept from one to the other.
+    const detailsWanted = useDesktopDetailsWanted()
+    const detailsOpen = framed && detailsWanted
+    // Mounted by the first opening and kept, so opening it again draws nothing new.
+    const [detailsMounted, setDetailsMounted] = useState(false)
+    if (detailsOpen && !detailsMounted) setDetailsMounted(true)
     const [sendingDocuments, setSendingDocuments] = useState(false)
     const [retryingSend, setRetryingSend] = useState(false)
     const retryInFlight = useRef(false)
@@ -348,9 +359,20 @@ export function DesktopForemanColumn({
         <DesktopForemanDockLayout scope={dockBinding.scope} open={ui.open} hidden={hidden} fill={fill}
             placement={dockBinding.placement} dock={dockBinding.dock} onPlacement={dockBinding.onPlacement} onDock={dockBinding.onDock}
             onClose={() => changeOpen(false)} returnFocus={() => triggerRef.current} onLayout={onLayout}>
-            {header => <div ref={column} className="relative flex h-full min-h-0 flex-col">
+            {header => <div ref={column} className={cn('relative flex h-full min-h-0 flex-col', detailsOpen && wide && DESKTOP_DETAILS_ROOM)} onKeyDown={event => {
+                // Escape in its panel closes it, as it closes a coworker's card. A dialog or a field in it keeps its own Escape.
+                const target = event.target as HTMLElement
+                if (detailsOpen && event.key === 'Escape' && !event.defaultPrevented && target.closest('[data-foreman-details]') && !target.closest('[role="dialog"], [role="alertdialog"], input, textarea')) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setDesktopDetailsWanted(false)
+                }
+            }}>
                 {framed && framedBar ? <DesktopForemanTopBar bar={framedBar}
-                    name={<span data-foreman-name-pill className="flex h-10 max-w-full items-center gap-2 rounded-full border border-border/50 bg-background/85 pr-3 pl-1.5 text-sm shadow-sm"><DesktopForemanNameMark orbState={orbState} /></span>} />
+                    name={<FloatingPill label={t('workspaceView.foreman.card')} active={detailsOpen} onClick={() => setDesktopDetailsWanted(!detailsOpen)} className="max-w-full pl-1.5">
+                        <DesktopForemanNameMark orbState={orbState} />
+                        <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                    </FloatingPill>} />
                 : <DesktopForemanHeader
                     onDragPointerDown={header.onPointerDown}
                     anchor={desktopForemanAnchorOf(dockBinding.placement)}
@@ -516,6 +538,22 @@ export function DesktopForemanColumn({
                 {!onRoutines && alternates.open && <DesktopForemanAlternates ui={alternates}
                     sourceText={id => messages.find(message => message.id === id)?.text} />}
                 <DesktopForemanAlternateReview ui={alternates} />
+                {/* Its panel beside the chat, the column a coworker's card has: who it is, then every routine of
+                    the workspace (upstream #317). Over the chat on a narrower window, behind the same backdrop. */}
+                {framed && detailsOpen && !wide && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => setDesktopDetailsWanted(false)} />}
+                {framed && <DesktopDetailsColumn label={t('workspaceView.foreman.card')} open={detailsOpen} beside={wide}>
+                    {detailsMounted && <DesktopForemanDetails orbState={orbState} shown={detailsOpen} onClose={() => setDesktopDetailsWanted(false)} routines={
+                        <DesktopWorkspaceRoutines
+                            key={`details:${chat.workspaceId}`}
+                            client={routinesClient}
+                            // Out of sight it reads nothing, and reads once when it shows again (upstream #319).
+                            active={detailsOpen && ui.open && !hidden}
+                            onOpenChat={target => foreman.navigate({ kind: 'open_coworker', agentId: target.agentId, sessionId: target.sessionId })}
+                            docked={false}
+                            agentNameOf={agentNameOf}
+                            className="min-h-0 flex-1"
+                        />} />}
+                </DesktopDetailsColumn>}
                 {onRoutines && (
                     <DesktopWorkspaceRoutines
                         key={`${chat.workspaceId}:${chat.chatId}`}

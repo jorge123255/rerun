@@ -12,7 +12,7 @@ vi.mock('./dock', () => ({
     DesktopForemanDockLayout: (props: DockLayoutProps) => <div data-open={String(props.open)}>{props.children({ onPointerDown() {} })}</div>,
     DesktopParkedForeman: () => null,
 }))
-vi.mock('@rerun/ui/primitives/use-is-mobile', () => ({ useIsMobile: () => false }))
+vi.mock('@rerun/ui/primitives/use-is-mobile', () => ({ useIsMobile: (query?: string) => !!query?.includes('min-width: 1280') && wide }))
 const routineMounts: { active: boolean }[] = []
 vi.mock('./routines/DesktopWorkspaceRoutines', () => ({ DesktopWorkspaceRoutines: (props: { active?: boolean }) => { routineMounts.push({ active: props.active !== false }); return <div data-routines data-active={String(props.active !== false)}>Routines content</div> } }))
 vi.mock('./plan/DesktopPlanBoardPreview', () => ({ DesktopPlanBoardPreview: () => null }))
@@ -25,6 +25,8 @@ const team = [{ id: 'ada', name: 'Ada QA', handle: null, status: 'idle', disable
 let root: Root | undefined
 let ports: DesktopForemanActionPorts
 let wide = true
+const details = () => document.querySelector<HTMLElement>('section[aria-label="Chief of Staff card"]')!
+const pill = () => document.querySelector<HTMLButtonElement>('[data-foreman-top-bar] h1 button')!
 beforeEach(() => {
     cancelDraftShutdown(); wide = true; routineMounts.length = 0; setDesktopDetailsWanted(false)
     ports = {
@@ -54,6 +56,7 @@ it('in the middle of the Simple view the Chief of Staff takes the frame a cowork
     const header = topBar()!.querySelector('header')!
     expect(header.firstElementChild!.querySelector('[data-history]')).not.toBeNull()
     expect(header.querySelector('h1')!.textContent).toBe('Chief of Staff')
+    expect(pill().getAttribute('aria-label')).toBe('Chief of Staff card')
     expect(header.lastElementChild!.querySelector('[data-end]')).not.toBeNull()
     const general = topBar()!.querySelector<HTMLButtonElement>('[data-general-tab]')!
     expect(general.textContent).toBe('General')
@@ -93,4 +96,53 @@ it('the board\'s floating or docked Chief of Staff keeps its own header', async 
     expect([...document.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(['Ask', 'Routines'])
     expect(document.querySelector('.pt-24')).not.toBeNull()
     expect(box().placeholder).toBe('Send a message...')
+})
+
+it('the name opens a panel beside the chat with every routine of the workspace, kept open or closed from a coworker to the Chief of Staff', async () => {
+    await render({ fill: true, framedBar: bar() })
+    // Closed until asked for: nothing of it is mounted, nothing is read.
+    expect(details().hidden).toBe(true)
+    expect(routineMounts).toEqual([])
+    expect(pill().getAttribute('aria-expanded')).toBe('false')
+    await act(async () => { pill().click() })
+    expect(desktopDetailsWanted()).toBe(true)
+    expect(details().hidden).toBe(false)
+    expect(details().dataset.cardBeside).toBe('true')
+    expect(pill().getAttribute('aria-expanded')).toBe('true')
+    // Who it is, then the routines, in the column a coworker's card has: the chat keeps its room beside it.
+    expect(details().textContent).toContain('Chief of StaffAsk anything')
+    expect(details().querySelector('h3')!.textContent).toBe('Routines')
+    expect(details().querySelector('[data-routines]')!.getAttribute('data-active')).toBe('true')
+    expect(details().parentElement!.className).toContain('pr-[26rem]')
+    expect(document.querySelector('button[aria-label="Back to the chat"]')).toBeNull()
+    // Closed from its own button, it reads nothing while out of sight and stays mounted.
+    await act(async () => { details().querySelector<HTMLButtonElement>('button[aria-label="Close the card"]')!.click() })
+    expect(desktopDetailsWanted()).toBe(false)
+    expect(details().hidden).toBe(true)
+    expect(details().querySelector('[data-routines]')!.getAttribute('data-active')).toBe('false')
+    expect(details().parentElement!.className).not.toContain('pr-[26rem]')
+    // A coworker's card left open is the Chief of Staff's panel open, and the other way round.
+    await act(async () => { setDesktopDetailsWanted(true) })
+    expect(details().hidden).toBe(false)
+    expect(details().querySelector('[data-routines]')!.getAttribute('data-active')).toBe('true')
+    // Escape in the panel closes it, as it closes a coworker's card.
+    await act(async () => { details().querySelector('h3')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+    expect(details().hidden).toBe(true)
+})
+
+it('on a narrower window the panel lies over the chat behind a backdrop that closes it; the board\'s Chief of Staff has none', async () => {
+    wide = false
+    await render({ fill: true, framedBar: bar() })
+    await act(async () => { pill().click() })
+    expect(details().hidden).toBe(false)
+    expect(details().dataset.cardBeside).toBeUndefined()
+    expect(details().parentElement!.className).not.toContain('pr-[26rem]')
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="Back to the chat"]')!.click() })
+    expect(details().hidden).toBe(true)
+    expect(desktopDetailsWanted()).toBe(false)
+    // Outside the Simple view's middle the routines stay in their tab, and no panel exists even when one is wanted.
+    setDesktopDetailsWanted(true)
+    await render({ framedBar: bar() })
+    expect(document.querySelector('section[aria-label="Chief of Staff card"]')).toBeNull()
+    expect([...document.querySelectorAll('[role="tab"]')].map(tab => tab.textContent)).toEqual(['Ask', 'Routines'])
 })
