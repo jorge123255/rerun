@@ -16,7 +16,7 @@ export type Command = (args: readonly string[], options: CommandOptions) => Prom
 const SAFE = [
     '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.pager=cat', '-c', 'core.editor=true', '-c', 'core.askPass=',
     '-c', 'credential.interactive=false', '-c', 'protocol.file.allow=never', '-c', 'protocol.ext.allow=never', '-c', 'submodule.recurse=false',
-    '-c', 'core.sshCommand=false', '-c', 'gc.auto=0', '-c', 'advice.detachedHead=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false',
+    '-c', 'gc.auto=0', '-c', 'advice.detachedHead=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false',
     '-c', 'core.symlinks=false', '-c', 'core.quotePath=false',
 ] as const
 
@@ -24,6 +24,9 @@ function environment(): NodeJS.ProcessEnv {
     const env: Record<string, string> = {
         HOME: process.env.HOME || homedir(), PATH: '/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin', LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8',
         GIT_TERMINAL_PROMPT: '0', GIT_LFS_SKIP_SMUDGE: '1', GIT_OPTIONAL_LOCKS: '0', GIT_PAGER: 'cat', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1',
+        // A Mac whose git reaches GitHub over SSH uses the person's own key, and is never left waiting on a question.
+        GIT_SSH_COMMAND: '/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=20',
+        ...(process.env.SSH_AUTH_SOCK && { SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK }),
         ...(process.env.USER && { USER: process.env.USER }), ...(process.env.TMPDIR && { TMPDIR: process.env.TMPDIR }),
     }
     return env as NodeJS.ProcessEnv
@@ -70,7 +73,7 @@ export const hostGh: Command | null = (() => {
 /** Words a git or gh failure is told to the coworker in. Nothing from the program's own output is passed on except a known cause. */
 export function commandFailure(result: CommandResult, doing: string): string {
     const said = `${result.stderr}\n${result.stdout}`.toLowerCase()
-    if (/could not read username|authentication failed|terminal prompts disabled|gh auth login|not logged in|http 401|bad credentials/.test(said)) return `${doing} failed: this Mac is not signed in to GitHub for this repository. Tell the user to run "gh auth login" in Terminal on this Mac, then try again.`
+    if (/could not read username|authentication failed|terminal prompts disabled|gh auth login|not logged in|http 401|bad credentials|permission denied \(publickey|could not read from remote repository/.test(said)) return `${doing} failed: this Mac is not signed in to GitHub for this repository. Tell the user to run "gh auth login" in Terminal on this Mac, then try again.`
     if (/repository not found|http 404|not found/.test(said)) return `${doing} failed: GitHub does not show this repository to this Mac's sign-in. Tell the user to check the repository name in Edit coworker and that their GitHub account can open it.`
     if (/could not resolve host|failed to connect|network is unreachable|timed out/.test(said)) return `${doing} failed: GitHub could not be reached from this Mac. Try again later.`
     if (/http 403|rate limit/.test(said)) return `${doing} failed: GitHub refused this for now (a limit or a permission). Try again later.`
