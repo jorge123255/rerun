@@ -11,7 +11,11 @@ export const DESKTOP_TEAM_CHANGE_PERMISSIONS = ['mcp', 'services', 'callAgent', 
 export type DesktopTeamChangePermission = (typeof DESKTOP_TEAM_CHANGE_PERMISSIONS)[number]
 export const desktopTeamChangePermissionLabel = (id: DesktopTeamChangePermission): string => desktopRerunToolCatalog.find(row => row.id === id)?.label ?? id
 
-export const DESKTOP_TEAM_CHANGE_ACTIONS = ['switch_on', 'switch_off', 'allow', 'stop_allowing', 'give_github', 'start_setup', 'set_model', 'set_effort'] as const
+export const DESKTOP_TEAM_CHANGE_ACTIONS = ['switch_on', 'switch_off', 'allow', 'stop_allowing', 'allow_calls', 'give_github', 'start_setup', 'set_model', 'set_effort'] as const
+/** How a proposal names the Chief of Staff itself as the one that may message coworkers. */
+export const DESKTOP_TEAM_CHANGE_CHIEF = 'Chief of Staff'
+/** In `targets`: every other coworker. */
+export const DESKTOP_TEAM_CHANGE_EVERYONE = 'everyone'
 export type DesktopTeamChangeAction = (typeof DESKTOP_TEAM_CHANGE_ACTIONS)[number]
 export const DESKTOP_TEAM_CHANGE_LIMITS = { maxChanges: 80, maxSummary: 300 } as const
 
@@ -22,6 +26,7 @@ export const desktopTeamChangesInputSchema = z.strictObject({
     changes: z.array(z.strictObject({
         action: z.enum(DESKTOP_TEAM_CHANGE_ACTIONS),
         coworker: short(120).optional().describe('The coworker\'s exact name. Required for every action except set_effort.'),
+        targets: z.array(short(120)).min(1).max(40).optional().describe('For allow_calls: the exact names of the coworkers this one may ask for help, or the single entry "everyone".'),
         permission: z.enum(DESKTOP_TEAM_CHANGE_PERMISSIONS).optional().describe('For allow and stop_allowing.'),
         connection: short(120).optional().describe('For set_model and set_effort: the name of a connected provider, as listed to you.'),
         model: short(200).optional().describe('For set_model and set_effort: a model that connection offers, as listed to you.'),
@@ -40,6 +45,10 @@ export const desktopTeamChangeSchema = z.strictObject({
     connectionId: z.string().max(256).nullable(),
     model: z.string().max(256).nullable(),
     effort: z.string().max(32).nullable(),
+    /** For allow_calls: who may be asked. Absent on cards kept before this action existed. */
+    targetAgentIds: z.array(z.string().max(200)).max(100).nullable().default(null),
+    /** For allow_calls: the one that may ask is the Chief of Staff itself, not a coworker. */
+    chief: z.boolean().default(false),
     label: z.string().max(400),
     /** Said under the line when it reaches further than its words suggest. */
     caution: z.string().max(400).nullable(),
@@ -67,4 +76,4 @@ export type DesktopTeamModelOption = { connectionId: string; name: string; model
 
 export const DESKTOP_TEAM_CHANGES_TOOL = 'propose_team_changes'
 export const DESKTOP_TEAM_CHANGES_DESCRIPTION =
-    'Propose changes to coworkers that already exist, as a card the person approves with one click: switch a coworker on or off, allow or stop allowing one of its permissions, give it the GitHub sign-in, start its setup, set the model it answers with, or set a model\'s reasoning effort. Nothing changes when you call this: the app checks each line, shows the card in its own words, and applies only what the person approves. Use the coworkers\' exact names. Put every change the person asked for on one card. After calling it, tell them in one sentence that the card is waiting above the message box and end your turn; never say a change was made.'
+    'Propose changes to coworkers that already exist, as a card the person approves with one click: switch a coworker on or off, allow or stop allowing one of its permissions, choose which coworkers it may ask for help, give it the GitHub sign-in, start its setup, set the model it answers with, or set a model\'s reasoning effort. Nothing changes when you call this: the app checks each line, shows the card in its own words, and applies only what the person approves. Use the coworkers\' exact names. Put every change the person asked for on one card. After calling it, tell them in one sentence that the card is waiting above the message box and end your turn; never say a change was made.'

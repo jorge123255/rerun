@@ -3,7 +3,7 @@ import type { DesktopTeamChange, DesktopTeamChanges } from '@rerun/contracts'
 import { applyTeamChanges, type TeamChangesPorts } from './team-changes-client'
 
 const change = (key: string, action: DesktopTeamChange['action'], extra: Partial<DesktopTeamChange> = {}): DesktopTeamChange => ({
-    key, action, agentId: 'a1', coworker: 'Dev', permission: null, connectionId: null, model: null, effort: null, label: `${action} Dev`, caution: null, result: null, ...extra,
+    key, action, agentId: 'a1', coworker: 'Dev', permission: null, connectionId: null, model: null, effort: null, targetAgentIds: null, chief: false, label: `${action} Dev`, caution: null, result: null, ...extra,
 })
 const card = (changes: DesktopTeamChange[]): DesktopTeamChanges => ({ id: 'ftc_12345678', summary: 's', state: 'shown', changes, createdAt: 'now' })
 function fake() {
@@ -14,6 +14,7 @@ function fake() {
         setEnabled: async (id, enabled) => { calls.push(`enabled ${id} ${enabled}`) },
         setPermission: async (id, permission, enabled) => { calls.push(`permission ${id} ${permission} ${enabled}`) },
         startSetup: async id => { calls.push(`setup ${id}`) },
+        allowCalls: async (id, targets) => { calls.push(`calls ${id ?? 'chief'} ${targets.join(',')}`) },
         setModel: async (id, connection, model) => { calls.push(`model ${id} ${connection} ${model}`) },
         setEffort: async (connection, model, effort) => { calls.push(`effort ${connection} ${model} ${effort}`) },
     }
@@ -40,4 +41,14 @@ test('a line whose coworker is gone fails by itself and says so', async () => {
     const { ports, calls } = fake()
     await applyTeamChanges(ports, card([change('change-0', 'switch_on', { agentId: null }), change('change-1', 'switch_on')]), new Set(['change-0', 'change-1']))
     expect(calls).toEqual(['enabled a1 true', 'settle applied [["change-0",false],["change-1",true]]'])
+})
+
+test('who may be asked is added through its own request, for a coworker and for the Chief of Staff', async () => {
+    const { ports, calls } = fake()
+    await applyTeamChanges(ports, card([
+        change('change-0', 'allow_calls', { targetAgentIds: ['b', 'c'] }),
+        change('change-1', 'allow_calls', { agentId: null, coworker: null, chief: true, targetAgentIds: ['a1'] }),
+        change('change-2', 'allow_calls', { agentId: null, coworker: null, targetAgentIds: ['b'] }),
+    ]), new Set(['change-0', 'change-1', 'change-2']))
+    expect(calls).toEqual(['calls a1 b,c', 'calls chief a1', 'settle applied [["change-0",true],["change-1",true],["change-2",false]]'])
 })

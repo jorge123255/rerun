@@ -18,7 +18,10 @@ export function createHttpCoworkerCallBridge(runtime: Runtime, epoch: string, fe
     adoptPublicSession: (input: { publicAgentId: string; engineSessionId: string; title: string }) => Promise<{ publicSessionId: string }>
 } {
     async function post(op: string, payload: unknown): Promise<unknown> {
-        const stop = AbortSignal.timeout(10_000)
+        // The app answers these from its own database. Ten seconds was not enough while it was busy
+        // starting several coworkers at once, and the caller was told the hand-off timed out instead
+        // of the app's real answer.
+        const stop = AbortSignal.timeout(30_000)
         const response = await fetchImpl(`${runtime.app.origin}/api/webhooks/engine`, {
             method: 'POST',
             redirect: 'error',

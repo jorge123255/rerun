@@ -2,7 +2,7 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import {
-    connectionReasoningOptions, desktopTeamChangePermissionLabel, desktopTeamChangesInputSchema, desktopTeamChangesSchema,
+    connectionReasoningOptions, DESKTOP_TEAM_CHANGE_CHIEF, DESKTOP_TEAM_CHANGE_EVERYONE, desktopTeamChangePermissionLabel, desktopTeamChangesInputSchema, desktopTeamChangesSchema,
     type ConnectionSummary, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopTeamChange, type DesktopTeamChanges, type DesktopTeamModelOption,
 } from '@rerun/contracts'
 
@@ -49,7 +49,9 @@ export function sealTeamChanges(raw: unknown, workspace: TeamChangeWorkspace): {
     for (const line of parsed.data.changes) {
         const refuse = (why: string) => { if (refused.length < 20) refused.push(`${line.action}${line.coworker ? ` for "${line.coworker}"` : ''}: ${why}`) }
         const matches = line.coworker ? workspace.coworkers.filter(coworker => same(coworker.name, line.coworker!)) : []
-        if (line.action !== 'set_effort') {
+        // The Chief of Staff may be the one that asks; no coworker can take its name's place.
+        const chief = line.action === 'allow_calls' && !!line.coworker && same(line.coworker, DESKTOP_TEAM_CHANGE_CHIEF) && matches.length === 0
+        if (line.action !== 'set_effort' && !chief) {
             if (!line.coworker) { refuse('name the coworker'); continue }
             if (matches.length !== 1) { refuse(matches.length ? 'more than one coworker has this name' : 'no coworker has this name'); continue }
         }
@@ -61,9 +63,22 @@ export function sealTeamChanges(raw: unknown, workspace: TeamChangeWorkspace): {
             if (!line.model || ![...connection.models, ...(connection.extraModels ?? [])].includes(line.model)) { refuse('that provider does not offer this model'); continue }
         }
         if ((line.action === 'allow' || line.action === 'stop_allowing') && !line.permission) { refuse('name the permission'); continue }
+        let targets: { id: string; name: string }[] = []
+        if (line.action === 'allow_calls') {
+            const others = workspace.coworkers.filter(coworker => coworker.id !== who?.id)
+            if (!line.targets) { refuse('name who may be asked, or "everyone"'); continue }
+            if (line.targets.some(name => same(name, DESKTOP_TEAM_CHANGE_EVERYONE))) targets = [...others]
+            else {
+                const found = line.targets.map(name => others.filter(coworker => same(coworker.name, name)))
+                const bad = line.targets.find((_, index) => found[index].length !== 1)
+                if (bad) { refuse(`"${bad}" is not the name of exactly one other coworker`); continue }
+                targets = [...new Map(found.map(([coworker]) => [coworker.id, coworker])).values()]
+            }
+            if (!targets.length) { refuse('there is no other coworker to ask'); continue }
+        }
         if (line.action === 'start_setup' && who?.setupWaiting === false) { refuse('this coworker has no setup waiting to start'); continue }
         if (line.action === 'set_effort' && (!line.effort || !connectionReasoningOptions(connection as never, line.model!)?.supported.includes(line.effort))) { refuse('that model does not offer this effort'); continue }
-        const identity = JSON.stringify([line.action, who?.id ?? null, line.permission ?? null, connection?.id ?? null, line.model ?? null])
+        const identity = JSON.stringify([line.action, chief ? 'chief' : who?.id ?? null, line.permission ?? null, connection?.id ?? null, line.model ?? null])
         if (seen.has(identity)) continue
         seen.add(identity)
         const name = who?.name ?? ''
@@ -73,13 +88,16 @@ export function sealTeamChanges(raw: unknown, workspace: TeamChangeWorkspace): {
             : line.action === 'switch_off' ? [`Switch off ${name}`, null]
             : line.action === 'allow' ? [`Allow ${name}: ${desktopTeamChangePermissionLabel(line.permission!)}`, line.permission === 'githubWrite' ? 'Every change to a repository still asks you first.' : null]
             : line.action === 'stop_allowing' ? [`Stop allowing ${name}: ${desktopTeamChangePermissionLabel(line.permission!)}`, null]
+            : line.action === 'allow_calls' ? [`Let ${chief ? 'the Chief of Staff' : name} ask ${targets.length > 3 ? `${targets.slice(0, 3).map(target => target.name).join(', ')} and ${targets.length - 3} more` : targets.map(target => target.name).join(', ')} for help`,
+                chief ? 'It can send them a message and read the answer. Each coworker still works with its own permissions.' : 'Added to who it may already ask. It also needs the Call coworkers permission.']
             : line.action === 'give_github' ? [`Let ${name} work on its GitHub repository`, 'A copy kept on this Mac; no app from the Vault is given. A pull request or a comment asks you first, every time.']
             : line.action === 'start_setup' ? [`Start ${name}'s setup`, 'Runs one conversation turn on its model.']
             : line.action === 'set_model' ? [`Set ${name} to answer with ${model}`, null]
             : [`Set ${model} to ${line.effort} effort`, 'Applies wherever this model runs, not to one coworker.']
         changes.push({
             key: `change-${changes.length}`, action: line.action, agentId: who?.id ?? null, coworker: who?.name ?? null, permission: line.permission ?? null,
-            connectionId: connection?.id ?? null, model: connection ? line.model! : null, effort: line.action === 'set_effort' ? line.effort! : null, label, caution, result: null,
+            connectionId: connection?.id ?? null, model: connection ? line.model! : null, effort: line.action === 'set_effort' ? line.effort! : null,
+            targetAgentIds: line.action === 'allow_calls' ? targets.map(target => target.id) : null, chief, label, caution, result: null,
         })
     }
     return { ok: true, summary: parsed.data.summary, changes, refused }
