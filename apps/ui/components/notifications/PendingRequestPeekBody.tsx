@@ -84,10 +84,12 @@ type PeekRequestProps = {
     onSubmit: (text: string) => void
     /** The credential block's own close button: it only puts the request away. */
     onDismiss: () => void
+    /** Draws the form in place of the widgets above: the Mac answers through its own question and approval cards. */
+    renderWidget?: (pending: PendingRequest) => ReactNode
 }
 
 /** What a conversation waits on, with the form that answers it: the context, the widget or why it cannot be answered here, and a failed send. */
-export function PeekRequest({ peek, phase, notice, attempt, agentId, agentName, widgetRef, onSubmit, onDismiss }: PeekRequestProps) {
+export function PeekRequest({ peek, phase, notice, attempt, agentId, agentName, widgetRef, onSubmit, onDismiss, renderWidget }: PeekRequestProps) {
     const t = usePeekTranslations()
     const pending = peek.state === 'ready' ? peek.peek.pending : null
     return (
@@ -97,7 +99,7 @@ export function PeekRequest({ peek, phase, notice, attempt, agentId, agentName, 
                 <PeekNote>{t('stale')}</PeekNote>
             ) : pending && isAnswerable(pending) && peek.state === 'ready' ? (
                 <div ref={widgetRef} className={cn(phase.step === 'sending' && 'pointer-events-none opacity-60')}>
-                    <PeekWidget key={attempt} pending={pending} agentId={agentId} sessionId={peek.sessionId} onSubmit={onSubmit} onDismiss={onDismiss} />
+                    {renderWidget ? renderWidget(pending) : <PeekWidget key={attempt} pending={pending} agentId={agentId} sessionId={peek.sessionId} onSubmit={onSubmit} onDismiss={onDismiss} />}
                 </div>
             ) : (
                 <PeekNote>{t('openToAnswer')}</PeekNote>

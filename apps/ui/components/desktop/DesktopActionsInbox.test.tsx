@@ -9,6 +9,11 @@ import { DesktopActionsInbox } from './DesktopActionsInbox'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
+// The list and a peek swap inside a step transition whose exit is animated: here they swap at once.
+vi.mock('@rerun/ui/steps', async importOriginal => ({
+    ...await importOriginal<typeof import('@rerun/ui/steps')>(),
+    StepTransition: ({ children }: { children: React.ReactNode }) => children,
+}))
 const notices = vi.hoisted(() => ({ show: vi.fn(), error: vi.fn() }))
 vi.mock('sonner', () => ({ toast: Object.assign(notices.show, { error: notices.error }) }))
 
@@ -35,6 +40,8 @@ afterEach(() => { document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.useRea
 
 const pillOf = (container: HTMLElement) => container.querySelector<HTMLElement>('button[aria-label^="Actions:"]')!
 const panelOf = (container: HTMLElement) => container.querySelector('[aria-label="Actions inbox"]')
+const peekOf = (container: HTMLElement, id: string) => container.querySelector<HTMLElement>(`[data-actions-inbox-peek="${id}"]`)
+const buttonNamed = (scope: ParentNode, name: string) => [...scope.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent?.trim() === name)!
 
 test('the inbox row menu mutes, unfollows and undoes one field without navigating or acknowledging the chat', async () => {
     let saved = normalizeNotificationPrefs({ version: 2, coworkers: { researcher: { mode: 'everything', follow: true } } })
@@ -162,10 +169,13 @@ test('lists pending question and approval rows, opens a navigation hit, and stop
     // A disabled coworker stays identifiable, next to its pending action.
     expect(container.textContent).toContain('Inactive')
 
-    // Opening is navigation only: the exact DesktopConversationHit, nothing marked handled.
+    // A question opens its peek in the card (upstream #273). The conversation opens from there:
+    // navigation only, the exact DesktopConversationHit, nothing marked handled.
     const row = container.querySelector<HTMLElement>('[data-actions-inbox-item="q1"]')!
     await act(async () => { row.click() })
-    expect(onOpen).toHaveBeenCalledWith({ id: 's1', agentId: 'researcher', agentName: 'Researcher', title: 'Filter before matching' })
+    expect(onOpen).not.toHaveBeenCalled()
+    await act(async () => { buttonNamed(peekOf(container, 'q1')!, 'Open conversation').click() })
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith({ id: 's1', agentId: 'researcher', agentName: 'Researcher', title: 'Filter before matching' })
 
     const calls = fetcher.mock.calls.length
     await act(async () => { root.unmount() })
@@ -357,6 +367,8 @@ test('current roster filters counts and unknown owners, and removed rows cannot 
     expect(container.textContent).not.toContain("Some coworkers couldn't be reached")
     const oldRow = container.querySelector<HTMLElement>('[data-actions-inbox-item="q1"]')!
     await act(async () => { oldRow.click() })
+    expect(peekOf(container, 'q1')!.textContent).toContain('Renamed researcher')
+    await act(async () => { buttonNamed(peekOf(container, 'q1')!, 'Open conversation').click() })
     expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ agentName: 'Renamed researcher', id: 's1' }))
     onOpen.mockClear()
     await act(async () => { root.render(<DesktopActionsInbox open agents={[]} onOpenConversation={onOpen} />) })
@@ -709,7 +721,7 @@ test('a pending mark-read failure keeps the row visible with a Retry that re-pos
     } finally { await act(async () => { root.unmount() }) }
 })
 
-test('opening a pending row navigates but never marks it read', async () => {
+test('opening a pending row peeks, and neither that nor opening its conversation marks it read', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     const fetcher = routedFetch(() => Response.json({ items: [question], unavailableAgentIds: [], checkedAt }))
@@ -721,8 +733,13 @@ test('opening a pending row navigates but never marks it read', async () => {
 
     const row = container.querySelector<HTMLElement>('[data-actions-inbox-item="q1"]')!
     await act(async () => { row.click() })
+    expect(peekOf(container, 'q1')).not.toBeNull()
+    expect(onOpen).not.toHaveBeenCalled()
+    expect(fetcher.mock.calls.filter(([url]) => url === '/api/desktop/pending-inbox/read')).toHaveLength(0)
+    await act(async () => { buttonNamed(peekOf(container, 'q1')!, 'Open conversation').click() })
     expect(onOpen).toHaveBeenCalledWith({ id: 's1', agentId: 'researcher', agentName: 'Researcher', title: 'Filter before matching' })
     expect(fetcher.mock.calls.filter(([url]) => url === '/api/desktop/pending-inbox/read')).toHaveLength(0)
+    expect(fetcher.mock.calls.every(([, init]) => (init?.method ?? 'GET') === 'GET')).toBe(true)
     expect(container.querySelector('[data-actions-inbox-item="q1"]')).not.toBeNull()
     expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 1 pending')
 

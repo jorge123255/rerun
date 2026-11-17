@@ -385,6 +385,7 @@ export function desktopMessages(locale: Locale, source: DesktopMessageSource) {
         notificationToast: source.notifications.toast,
         notificationSettings: source.notifications.settings,
         notificationRowMenu: source.notifications.inbox.rowMenu,
+        inboxPeek: source.notifications.inbox.peek,
         notificationUI: desktopNotificationMessages(locale),
         questionForm: source.kit.chat.question,
         question: desktopQuestionMessages(locale),
