@@ -9,10 +9,11 @@ import { desktopRerunToolCatalog } from './desktop-tool-grants.js'
 // CopilotKit/OpenBot's shared/audit-words.ts and shared/audit-filters.ts (MIT). The storage, the
 // record shape and every phrase here are Rerun's own.
 
-export const DESKTOP_ACTIVITY_OUTCOMES = [
+const ACTION_DECISIONS = [
     'allowed-by-permission', 'allowed-once-by-person', 'declined-by-person', 'asked-person',
-    'refused-no-permission', 'refused-policy', 'failed', 'completed', 'started', 'cancelled',
+    'refused-no-permission', 'refused-policy', 'failed', 'completed',
 ] as const
+export const DESKTOP_ACTIVITY_OUTCOMES = [...ACTION_DECISIONS, 'started', 'cancelled'] as const
 export type DesktopActivityOutcome = (typeof DESKTOP_ACTIVITY_OUTCOMES)[number]
 
 export const DESKTOP_ACTIVITY_SOURCES = ['chat', 'routine', 'trigger', 'delegated', 'call'] as const
@@ -51,7 +52,7 @@ export type DesktopActivityRecord = z.infer<typeof desktopActivityRecordSchema>
  * approval fits the same three fields: how it ended, the rule that decided, and the kind.
  */
 export const desktopActivityDecisionSchema = z.object({
-    outcome: z.enum(DESKTOP_ACTIVITY_OUTCOMES).optional(),
+    outcome: z.enum(ACTION_DECISIONS).optional(),
     rule: z.string().max(120).optional(),
     kind: kind.optional(),
     app: z.string().max(80).optional(),
