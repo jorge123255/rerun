@@ -88,3 +88,16 @@ export async function callWorkspace(runtime, { resource, method = 'GET', body, q
         default: return { failure: { code: 'unavailable', status: 502 } }
     }
 }
+
+// The reply to a turn, as one of those resources streams it: lines of text, handed on as they come.
+export async function openWorkspaceStream(runtime, { resource, query }, signal) {
+    if (!runtime?.app?.origin || !runtime.app.sessionToken) throw hiddenWorkspaceError()
+    const address = new URL('/api/desktop/phone-pairing/' + resource, runtime.app.origin)
+    for (const [name, value] of Object.entries(query ?? {})) address.searchParams.set(name, value)
+    const response = await fetch(address, { headers: { Cookie: `rerun-desktop-session=${runtime.app.sessionToken}`, Accept: 'application/x-ndjson' }, redirect: 'error', signal })
+    if (response.status === 204) return null
+    if (response.ok && response.body && response.headers.get('content-type')?.split(';')[0] === 'application/x-ndjson') return response.body
+    void response.body?.cancel().catch(() => {})
+    if (response.status === 404) throw hiddenWorkspaceError()
+    throw new Error('Local reply is unavailable')
+}

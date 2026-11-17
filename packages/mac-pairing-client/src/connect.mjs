@@ -102,6 +102,11 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
         return request(session, chatPath(session, agentId, chatId) + suffix, { ...options, credential: session.credential, fetchImpl, pinnedFetch })
     }
 
+    async function chiefRequest(suffix, options) {
+        const session = await sessionOrThrow()
+        return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/chief` + suffix, { ...options, credential: session.credential, fetchImpl, pinnedFetch })
+    }
+
     return {
         parseOffer,
         encodeOfferLink,
@@ -227,6 +232,45 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
         async markInboxRead(ids, signal) {
             const session = await sessionOrThrow()
             return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/inbox/read`, { method: 'POST', body: { ids }, credential: session.credential, fetchImpl, pinnedFetch, signal })
+        },
+        // The Chief of Staff: whether it is ready or still asks its first-run questions on the Mac,
+        // and the conversations someone wrote in.
+        async readChief(signal) {
+            return chiefRequest('', { signal })
+        },
+        // One of its conversations: messages as text, the question it waits on, the words of the
+        // cards only the Mac settles.
+        async openChiefChat(chatId, signal) {
+            return chiefRequest('/chat?chat=' + encodeURIComponent(chatId), { signal })
+        },
+        // A message for it: in the conversation named, in a new task thread (`thread`), or in General
+        // when neither is given. Answers the conversation it landed in. Needs the send permission.
+        async sendToChief({ requestId, text, chatId, thread }, signal) {
+            const result = await chiefRequest('/send', { method: 'POST', body: { requestId, text, ...(chatId && { chatId }), ...(thread && { thread: true }) }, signal })
+            if (result?.requestId !== requestId || typeof result.chatId !== 'string' || !/^fmc_[0-9a-f-]{36}$/.test(result.chatId) || (chatId && result.chatId !== chatId)) throw new Error('invalid_send_receipt')
+            return result.chatId
+        },
+        // Answers the question a conversation with it waits on, or dismisses it when `answers` is left out.
+        async answerChief(chatId, { requestId, toolCallId, answers }, signal) {
+            const result = await chiefRequest('/answer', { method: 'POST', body: { chatId, requestId, toolCallId, ...(answers && { answers }) }, signal })
+            if (result?.requestId !== requestId) throw new Error('invalid_send_receipt')
+            return result
+        },
+        async readChiefTurn(chatId, requestId, signal) {
+            const result = await chiefRequest('/turn?chat=' + encodeURIComponent(chatId) + '&request=' + encodeURIComponent(requestId), { signal })
+            if (!['running', 'done', 'error', 'cancelled'].includes(result?.status)) throw new Error('invalid_turn_status')
+            return result
+        },
+        async stopChiefTurn(chatId, requestId, signal) {
+            const result = await chiefRequest('/stop', { method: 'POST', body: { chatId, requestId }, signal })
+            if (result?.requestId !== requestId) throw new Error('invalid_stop_receipt')
+        },
+        async streamChiefTurn(chatId, requestId, onFrame, signal) {
+            const session = await sessionOrThrow()
+            const pin = session.certificateFingerprint
+            if (!pin || typeof pinnedStream !== 'function') throw new Error('pinned_transport_required')
+            const url = pairingOrigin(session.origin, pin) + API_PREFIX + `/workspaces/${encodeURIComponent(session.workspaceId)}/chief/stream?chat=${encodeURIComponent(chatId)}&request=${encodeURIComponent(requestId)}`
+            return pinnedStream(url, pin, 'Bearer ' + session.credential, onFrame, signal)
         },
         readMacSession: () => sessions.read(),
         clearMacSession: () => sessions.clear(),

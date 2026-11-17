@@ -28,6 +28,7 @@ import { useWorkspaceAgents } from '@/data/useWorkspaceAgents'
 import { CHAT_COLUMN_MAX_WIDTH } from '@/components/layout/split'
 import { connectHref } from '@/components/providers/routes'
 import { AppText } from '@/components/ui/AppText'
+import { onMac } from '@/config/environment'
 import { moodOf } from '@/components/ui/CoworkerAvatar'
 import { PillButton } from '@/components/ui/PillButton'
 import { useTheme } from '@/theme/theme'
@@ -316,7 +317,8 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
 
     // A voice message carries the attachments picked before it, their marker after its own, as on the web.
     // A throw keeps the recording for a retry.
-    const voice: VoiceSender | undefined = caller
+    // A paired Mac takes the Chief of Staff's messages as text: no recording is offered there.
+    const voice: VoiceSender | undefined = caller && !(onMac && coworker.kind === 'foreman')
         ? {
               upload: uri => uploadVoiceRecording(caller, endpoints.fileOwner(chat.sessionId), uri),
               transcribe: uri => transcribeRecording(caller, uri),

@@ -65,6 +65,13 @@ export function createMacPairingClient(options: {
     streamSentTurn(coworkerId: string, chatId: string, requestId: string, onFrame: (frame: MacReplyFrame) => void, signal?: AbortSignal): Promise<void>
     readInbox(signal?: AbortSignal): Promise<unknown>
     markInboxRead(ids: string[], signal?: AbortSignal): Promise<unknown>
+    readChief(signal?: AbortSignal): Promise<unknown>
+    openChiefChat(chatId: string, signal?: AbortSignal): Promise<unknown>
+    sendToChief(message: MacOutgoingMessage & { chatId?: string; thread?: boolean }, signal?: AbortSignal): Promise<string>
+    answerChief(chatId: string, answer: { requestId: string; toolCallId: string; answers?: string[][] }, signal?: AbortSignal): Promise<{ requestId: string }>
+    readChiefTurn(chatId: string, requestId: string, signal?: AbortSignal): Promise<{ status: 'running' | 'done' | 'error' | 'cancelled' }>
+    stopChiefTurn(chatId: string, requestId: string, signal?: AbortSignal): Promise<void>
+    streamChiefTurn(chatId: string, requestId: string, onFrame: (frame: MacReplyFrame) => void, signal?: AbortSignal): Promise<void>
     readMacSession(): Promise<MacSession | null>
     clearMacSession(): Promise<void>
 }

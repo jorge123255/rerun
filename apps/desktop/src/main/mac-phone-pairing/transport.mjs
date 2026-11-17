@@ -4,7 +4,7 @@ import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { API_PREFIX, CREDENTIAL_CLAIM_TTL_MS, DEVICE_STATUS, ERRORS, LOOPBACK_HOST, PROTOCOL_VERSION, SERVICE_NAME } from './protocol.mjs'
 import { hashSecret, hashesEqual, randomSecret } from './crypto.mjs'
-import { callWorkspace, readWorkspaceChats, readWorkspaceReply, sendWorkspaceMessage, stopWorkspaceTurn } from './workspace-reads.mjs'
+import { callWorkspace, openWorkspaceStream, readWorkspaceChats, readWorkspaceReply, sendWorkspaceMessage, stopWorkspaceTurn } from './workspace-reads.mjs'
 import { assertDeviceWorkspace, hiddenWorkspaceError } from './workspace-access.mjs'
 import { publicDevice } from './store.mjs'
 
@@ -49,6 +49,16 @@ const RESOURCES = new Map([
     ['GET inbox', { to: 'inbox' }],
     // Marking a row read changes the Mac's own inbox: a phone that only reads changes nothing.
     ['POST inbox/read', { to: 'inbox', needs: 'sendMessages' }],
+    // The Chief of Staff: General and its task threads, read as text by any approved phone. `grants`
+    // adds what this phone may do to the answer. Sending, answering its question and stopping take
+    // the send permission. Its cards that change things are words only: no entry here settles one.
+    ['GET chief', { to: 'chief', grants: true }],
+    ['GET chief/chat', { to: 'chief/chat', grants: true, query: chiefChat }],
+    ['GET chief/turn', { to: 'chief/turn', query: chiefTurn }],
+    ['GET chief/stream', { to: 'chief/stream', query: chiefTurn, stream: true }],
+    ['POST chief/send', { to: 'chief/send', needs: 'sendMessages', limit: MESSAGE_BODY_LIMIT, body: chiefSend }],
+    ['POST chief/answer', { to: 'chief/answer', needs: 'sendMessages', limit: MESSAGE_BODY_LIMIT, body: chiefAnswer }],
+    ['POST chief/stop', { to: 'chief/stop', needs: 'sendMessages', body: chiefStop }],
 ])
 const RESOURCE_PATH = /^\/workspaces\/([^/]+)\/([a-z-]+(?:\/[a-z-]+)?)$/
 const REFUSALS = { sendMessages: 'send_not_allowed', approveRequests: 'approve_not_allowed' }
@@ -71,6 +81,61 @@ function validAnswer(answer) {
     if (answer.answers === undefined) return keys.length === 1
     return keys.length === 2 && Array.isArray(answer.answers) && answer.answers.length >= 1 && answer.answers.length <= 32
         && answer.answers.every(values => Array.isArray(values) && values.length <= 100 && values.every(value => typeof value === 'string' && value.length <= 4000))
+}
+
+// A conversation with the Chief of Staff, by the id the Mac gave it.
+const CHIEF_CHAT = /^fmc_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const only = (value, required, optional = []) => {
+    const keys = Object.keys(value)
+    return required.every(key => keys.includes(key)) && keys.every(key => required.includes(key) || optional.includes(key))
+}
+// The Mac's id for the turn a phone started with the Chief of Staff. It is made from the phone and
+// the id the phone chose, so a phone can only ever name, follow or stop a turn of its own.
+const chiefRun = (device, requestId) => phoneUuid(['rerun-mac-phone-chief-turn-v1', device.deviceId, requestId.toLowerCase()])
+
+function chiefChat(_device, query) {
+    const chat = query.get('chat')
+    return [...query.keys()].length === 1 && chat && CHIEF_CHAT.test(chat) ? { chatId: chat } : null
+}
+
+function chiefTurn(device, query) {
+    const chat = query.get('chat'), request = query.get('request')
+    return [...query.keys()].length === 2 && chat && CHIEF_CHAT.test(chat) && request && UUID.test(request) ? { chatId: chat, runId: chiefRun(device, request) } : null
+}
+
+// A message: to the conversation named, to a new task thread, or to General when neither is.
+function chiefSend(device, body) {
+    if (!only(body, ['requestId', 'text'], ['chatId', 'thread']) || typeof body.requestId !== 'string' || !UUID.test(body.requestId)
+        || typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000
+        || (body.chatId !== undefined && (typeof body.chatId !== 'string' || !CHIEF_CHAT.test(body.chatId)))
+        || (body.thread !== undefined && (body.thread !== true || body.chatId !== undefined))) return null
+    const runId = chiefRun(device, body.requestId)
+    const newChatRequestId = body.thread ? phoneUuid(['rerun-mac-phone-chief-chat-v1', device.deviceId, body.requestId.toLowerCase()]) : undefined
+    return {
+        send: { runId, text: body.text, ...(body.chatId && { chatId: body.chatId }), ...(newChatRequestId && { newChatRequestId }) },
+        receipt: taken => taken?.runId === runId && typeof taken.chatId === 'string' && CHIEF_CHAT.test(taken.chatId)
+            && (!body.chatId || taken.chatId === body.chatId) && (!newChatRequestId || taken.chatId === `fmc_${newChatRequestId}`)
+            ? { requestId: body.requestId, chatId: taken.chatId } : null,
+    }
+}
+
+// The answer to the question a conversation waits on, or its dismissal when `answers` is left out.
+function chiefAnswer(device, body) {
+    if (!only(body, ['chatId', 'requestId', 'toolCallId'], ['answers']) || typeof body.chatId !== 'string' || !CHIEF_CHAT.test(body.chatId)
+        || typeof body.requestId !== 'string' || !UUID.test(body.requestId)
+        || !validAnswer({ toolCallId: body.toolCallId, ...(body.answers !== undefined && { answers: body.answers }) })) return null
+    const runId = chiefRun(device, body.requestId)
+    return {
+        send: { chatId: body.chatId, runId, toolCallId: body.toolCallId, ...(body.answers && { answers: body.answers }) },
+        receipt: taken => taken?.runId === runId ? { requestId: body.requestId } : null,
+    }
+}
+
+function chiefStop(device, body) {
+    if (!only(body, ['chatId', 'requestId']) || typeof body.chatId !== 'string' || !CHIEF_CHAT.test(body.chatId)
+        || typeof body.requestId !== 'string' || !UUID.test(body.requestId)) return null
+    const runId = chiefRun(device, body.requestId)
+    return { send: { chatId: body.chatId, runId }, receipt: taken => taken?.runId === runId ? { requestId: body.requestId } : null }
 }
 
 async function streamReply(response, open, authorize) {
@@ -230,11 +295,14 @@ export function createPairingTransport({
         return send(response, 200, { ...common, macId: installId, fingerprint, credential: claim.credential })
     }
 
-    async function resource(request, response, rawWorkspaceId, spec) {
+    async function resource(request, response, rawWorkspaceId, spec, search) {
         const presented = hashSecret(BEARER.exec(request.headers.authorization ?? '')?.[1])
         const device = await authenticate(presented)
         if (!device) return fail(response, await removed(presented) ? ERRORS.revoked : ERRORS.unauthorized)
         if (!WORKSPACE.test(rawWorkspaceId)) return fail(response, ERRORS.not_found, 404)
+        // A resource takes only the query it lists, and one that lists none takes none.
+        const query = spec.query ? spec.query(device, new URLSearchParams(search ?? '')) : undefined
+        if (spec.query ? !query : search !== undefined) return fail(response, ERRORS.not_found, 404)
         const workspaceId = Number(rawWorkspaceId)
         const current = getRuntime()
         const permitted = candidate => !spec.needs || (Boolean(tls) && candidate[spec.needs] === true)
@@ -242,22 +310,41 @@ export function createPairingTransport({
         // the phone is checked again under the queue those changes share before anything is released.
         const recheck = async () => {
             const authorized = await authenticate(presented)
-            if (!authorized || authorized.deviceId !== device.deviceId) { fail(response, ERRORS.unauthorized); return false }
-            if (!permitted(authorized)) { fail(response, REFUSALS[spec.needs], 403); return false }
+            if (!authorized || authorized.deviceId !== device.deviceId) { fail(response, ERRORS.unauthorized); return null }
+            if (!permitted(authorized)) { fail(response, REFUSALS[spec.needs], 403); return null }
             await workspaceFor(authorized, workspaceId, current)
-            return true
+            return authorized
         }
-        const release = result => result.failure ? fail(response, result.failure.code, result.failure.status) : send(response, 200, result.payload)
+        const release = (result, authorized) => result.failure ? fail(response, result.failure.code, result.failure.status)
+            : send(response, 200, spec.grants ? { ...result.payload, permissions: { sendMessages: Boolean(tls && authorized.sendMessages === true) } } : result.payload)
         try {
             await workspaceFor(device, workspaceId, current)
             if (!permitted(device)) return fail(response, REFUSALS[spec.needs], 403)
+            if (spec.stream) {
+                if (!tls) return fail(response, ERRORS.not_found, 404)
+                return await streamReply(response, signal => openWorkspaceStream(current, { resource: spec.to, query }, signal), publish => exclusive(async () => {
+                    const authorized = await authenticate(presented)
+                    if (!authorized || authorized.deviceId !== device.deviceId) throw Object.assign(new Error(ERRORS.unauthorized), { code: ERRORS.unauthorized })
+                    await workspaceFor(authorized, workspaceId, current)
+                    return publish()
+                }))
+            }
             if (request.method === 'GET') {
-                const result = await callWorkspace(current, { resource: spec.to })
-                return await exclusive(async () => { if (await recheck()) release(result) })
+                const result = await callWorkspace(current, { resource: spec.to, query })
+                return await exclusive(async () => { const authorized = await recheck(); if (authorized) release(result, authorized) })
             }
             const body = await readBody(request, spec.limit ?? BODY_LIMIT)
-            if (!body) return fail(response, 'invalid_request', 400)
-            return await exclusive(async () => { if (await recheck()) release(await callWorkspace(current, { resource: spec.to, method: request.method, body })) })
+            // What the app is sent is made here from what the phone sent, and so is what the phone is told.
+            const turn = body && (spec.body ? spec.body(device, body) : { send: body })
+            if (!turn) return fail(response, 'invalid_request', 400)
+            return await exclusive(async () => {
+                const authorized = await recheck()
+                if (!authorized) return
+                const result = await callWorkspace(current, { resource: spec.to, method: request.method, body: turn.send })
+                if (result.failure || !turn.receipt) return release(result, authorized)
+                const receipt = turn.receipt(result.payload)
+                return receipt ? send(response, 200, receipt) : fail(response, 'unavailable', 502)
+            })
         } catch (error) {
             if (error.code === ERRORS.not_found) fail(response, ERRORS.not_found, 404)
             else if (error.code === ERRORS.unauthorized) fail(response, ERRORS.unauthorized)
@@ -290,9 +377,10 @@ export function createPairingTransport({
             return body ? exclusive(() => claimStatus(response, body)) : fail(response, ERRORS.unauthorized)
         }
 
-        const named = path.startsWith(API_PREFIX) && RESOURCE_PATH.exec(path.slice(API_PREFIX.length))
+        const [pathname, search] = path.split(/\?(.*)/s)
+        const named = pathname.startsWith(API_PREFIX) && RESOURCE_PATH.exec(pathname.slice(API_PREFIX.length))
         const spec = named && RESOURCES.get(`${request.method} ${named[2]}`)
-        if (spec) return resource(request, response, named[1], spec)
+        if (spec) return resource(request, response, named[1], spec, search)
 
         const route = path.startsWith(API_PREFIX) && /^\/workspaces\/([^/]+)\/coworkers(?:\/([^/]+)\/chats(?:\/([^/]+)(?:\/turns\/([^/]+)(\/stream)?)?)?)?$/.exec(path.slice(API_PREFIX.length))
         if (!route) return fail(response, ERRORS.not_found, 404)

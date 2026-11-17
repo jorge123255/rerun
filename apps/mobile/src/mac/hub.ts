@@ -1,15 +1,16 @@
-import type { AgentConversationsOverview, AgentModels, AgentView, BoardAgent, Box, Conversation, ConversationMessage, Inbox, InboxItem, Me, SessionStatus } from '@rerun/contracts'
-import { macPhoneChatReadSchema, macPhoneChatsSchema, macPhoneCoworkersSchema, macPhoneInboxSchema, type MacPhoneChat, type MacPhoneInboxItem, type MacPhoneChatRead, type MacPhoneCoworker } from '@rerun/mac-contracts/mac-phone-pairing'
+import { FOREMAN_AGENT_ID, type AgentConversationsOverview, type AgentModels, type AgentView, type BoardAgent, type Box, type Conversation, type ConversationMessage, type ForemanStateResponse, type Inbox, type InboxItem, type Me, type SessionStatus } from '@rerun/contracts'
+import { macPhoneChatReadSchema, macPhoneChatsSchema, macPhoneChiefChatSchema, macPhoneChiefSchema, macPhoneCoworkersSchema, macPhoneInboxSchema, type MacPhoneChat, type MacPhoneChiefCard, type MacPhoneChiefChat, type MacPhoneInboxItem, type MacPhoneChatRead, type MacPhoneCoworker } from '@rerun/mac-contracts/mac-phone-pairing'
 
 import type { MacClient } from './client'
 import type { MacLink } from './session'
+import { turnOf } from './turns'
 
 // The app's screens ask a hub for what they show, by its `/api/v1` paths. A paired Mac is not a hub:
-// its phone listener serves the coworkers of one workspace and their saved chats, and nothing else.
-// This answers the paths those screens read with what the Mac serves, in the shapes a hub gives, so
-// the Home and the chat run unchanged. What a Mac does not serve to a phone (the inbox, Boxes, files,
-// routines, the Foreman, AI providers) answers empty where a screen needs an answer to draw, and
-// "not available" everywhere else.
+// its phone listener serves the coworkers of one workspace, their saved chats, its inbox and its
+// Chief of Staff (the Foreman's pages here), and nothing else. This answers the paths those screens
+// read with what the Mac serves, in the shapes a hub gives, so the Home and the chat run unchanged.
+// What a Mac does not serve to a phone (Boxes, files, routines, voice, AI providers) answers empty
+// where a screen needs an answer to draw, and "not available" everywhere else.
 
 export type MacHubRequest = { method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: unknown; signal?: AbortSignal }
 
@@ -84,17 +85,25 @@ export function conversationOf(chat: MacPhoneChat, status: SessionStatus): Conve
 }
 
 // What the hub words for the person, in the app's language.
-export type MacWords = { approvalOnMac: () => string; macOnly: (kind: MacOnlyKind) => string }
+export type MacWords = { approvalOnMac: () => string; macOnly: (kind: MacOnlyKind) => string; chiefCard?: (kind: MacPhoneChiefCard['kind']) => string; openOnMac?: () => string }
 export type MacOnlyKind = NonNullable<NonNullable<MacPhoneChatRead['pending']>['macOnly']>['kind']
 
-const ENGLISH: MacWords = { approvalOnMac: () => 'Waiting for your approval on your Mac', macOnly: () => 'Waiting for you on your Mac' }
+const CHIEF_CARDS = { plan: 'A plan to build', 'team-changes': 'Changes to your team', starter: 'A starter pack' } as const
+const ENGLISH: Required<MacWords> = { approvalOnMac: () => 'Waiting for your approval on your Mac', macOnly: () => 'Waiting for you on your Mac', chiefCard: kind => CHIEF_CARDS[kind], openOnMac: () => 'Open on your Mac to approve' }
+
+// A card of the Chief of Staff that changes things, as the text it is shown as: what it is, its
+// words, and where it is settled. The phone holds nothing that could settle it.
+export function chiefCardText(card: MacPhoneChiefCard, words: MacWords = ENGLISH): string {
+    const lines = card.lines.filter(Boolean).map(line => `- ${line}`)
+    return [`**${(words.chiefCard ?? ENGLISH.chiefCard)(card.kind)}**`, card.title, lines.join('\n'), `_${(words.openOnMac ?? ENGLISH.openOnMac)()}_`].filter(Boolean).join('\n\n')
+}
 
 // The Mac sends a saved chat as text, and what it waits on in words. A question is put back where the
 // app looks for its card, a tool call left open at the end of the last reply. So is an approval, when
 // the person allowed this phone to approve requests on the Mac: the card shows the action and its
 // detail as the Mac's does, and nothing is decided without a tap. Otherwise the approval is shown as
 // text, like the requests only the Mac settles (a held app action, a secret, a sign-in).
-export function messagesOf(read: MacPhoneChatRead, words: MacWords = ENGLISH): ConversationMessage[] {
+export function messagesOf(read: Pick<MacPhoneChatRead, 'messages' | 'pending' | 'permissions'> & { cards?: MacPhoneChiefCard[] }, words: MacWords = ENGLISH): ConversationMessage[] {
     const messages: ConversationMessage[] = read.messages.map(message => ({
         id: message.id,
         role: message.role,
@@ -102,7 +111,7 @@ export function messagesOf(read: MacPhoneChatRead, words: MacWords = ENGLISH): C
         ...(message.createdAt ? { metadata: { createdAt: message.createdAt } } : {}),
     }))
     const { question, approval, macOnly } = read.pending ?? { question: null, approval: null }
-    const cards: ConversationMessage['parts'] = []
+    const cards: ConversationMessage['parts'] = (read.cards ?? []).map(card => ({ type: 'text', text: chiefCardText(card, words) }))
     if (approval && read.permissions?.approveRequests) cards.push({ type: 'tool-request_approval', toolCallId: approval.toolCallId, state: 'input-available', input: { approvals: approval.approvals } })
     else if (approval) cards.push({ type: 'text', text: [`**${words.approvalOnMac()}**`, ...approval.approvals.map(item => `- ${item.action}${item.detail ? `\n  ${item.detail}` : ''}`)].join('\n\n') })
     if (macOnly) cards.push({ type: 'text', text: `**${words.macOnly(macOnly.kind)}**${macOnly.summary ? `\n\n${macOnly.summary}` : ''}` })
@@ -111,6 +120,20 @@ export function messagesOf(read: MacPhoneChatRead, words: MacWords = ENGLISH): C
     const last = messages.at(-1)
     if (last?.role === 'assistant') return [...messages.slice(0, -1), { ...last, parts: [...last.parts, ...cards] }]
     return [...messages, { id: `pending-${(question ?? approval)?.toolCallId ?? 'mac'}`, role: 'assistant', parts: cards }]
+}
+
+// A conversation with the Chief of Staff, read as a coworker's chat is. Its approval stays text: what
+// it asks to approve is decided on the Mac, whatever this phone may approve for coworkers.
+export function chiefMessagesOf(read: MacPhoneChiefChat, words: MacWords = ENGLISH): ConversationMessage[] {
+    return messagesOf({ messages: read.messages, pending: read.pending, permissions: { sendMessages: read.permissions?.sendMessages === true, approveRequests: false }, cards: read.cards }, words)
+}
+
+// What the conversation's row says it is doing: a reply being written, or what it waits on.
+export function chiefWaitingOf(read: MacPhoneChiefChat): SessionStatus | null {
+    if (read.running) return 'working'
+    if (read.pending?.question) return 'awaiting_question'
+    if (read.pending?.approval) return 'awaiting_approval'
+    return read.cards.length > 0 ? 'waiting_human' : null
 }
 
 const INBOX_STATUS = { question: 'awaiting_question', approval: 'awaiting_approval', 'on-mac': 'waiting_human', done: 'done' } as const
@@ -130,7 +153,7 @@ export function waitingOf(read: MacPhoneChatRead): SessionStatus | null {
 const STOP_SETTLE_MS = 4000
 const STOP_POLL_MS = 250
 
-type Route = { method: string; pattern: RegExp; answer: (ids: string[], request: MacHubRequest) => Promise<unknown> | unknown }
+type Route = { method: string; pattern: RegExp; answer: (ids: string[], request: MacHubRequest, query: URLSearchParams) => Promise<unknown> | unknown }
 
 const id = '([\\w-]+)'
 
@@ -229,7 +252,7 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
     async function activeRun(chatId: string, signal?: AbortSignal): Promise<{ runId: string | null }> {
         const turn = turns.get(chatId)
         if (!turn) return { runId: null }
-        const { status } = await ask(() => client.readSentTurn(turn.agentId, chatId, turn.requestId, signal))
+        const { status } = await ask(() => turnOf(client, { ...turn, chatId }).status(signal))
         if (status === 'running') return { runId: turn.requestId }
         if (running.get(chatId) === turn.requestId) running.delete(chatId)
         return { runId: null }
@@ -239,9 +262,10 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
         const turn = turns.get(chatId)
         if (!turn) return
         const stopped = (async () => {
-            await ask(() => client.stopSentTurn(turn.agentId, chatId, turn.requestId, signal))
+            const sent = turnOf(client, { ...turn, chatId })
+            await ask(() => sent.stop(signal))
             for (const until = Date.now() + STOP_SETTLE_MS; Date.now() < until; ) {
-                const over = await client.readSentTurn(turn.agentId, chatId, turn.requestId, signal).then(
+                const over = await sent.status(signal).then(
                     ({ status }) => status !== 'running',
                     () => true
                 )
@@ -279,6 +303,44 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
         listed = listed.filter(item => !ids.includes(item.id))
     }
 
+    // The Chief of Staff. While it still asks its first-run company questions the Mac serves nothing
+    // of it: the page says to finish there, and lists no conversation.
+    async function chief(signal?: AbortSignal) {
+        return macPhoneChiefSchema.parse(await ask(() => client.readChief(signal)))
+    }
+
+    async function chiefConversations(signal?: AbortSignal): Promise<Conversation[]> {
+        await Promise.allSettled([...reads])
+        const { conversations } = await chief(signal)
+        return conversations.map(chat => conversationOf({ ...chat, agentId: FOREMAN_AGENT_ID, title: chat.title ?? '' }, statusOf(chat.id)))
+    }
+
+    async function chiefState(signal?: AbortSignal): Promise<ForemanStateResponse> {
+        const { state } = await chief(signal)
+        return { surface: state === 'intake' ? 'onboarding' : 'engine', phase: state === 'intake' ? 'discover' : 'companion', firstName: '' }
+    }
+
+    async function readChiefChat(chatId: string, signal?: AbortSignal): Promise<MacPhoneChiefChat> {
+        await stops.get(chatId)
+        const read = macPhoneChiefChatSchema.parse(await ask(() => client.openChiefChat(chatId, signal)))
+        agentOfChat.set(chatId, FOREMAN_AGENT_ID)
+        waiting.set(chatId, chiefWaitingOf(read))
+        if (read.pending?.question) questions.set(chatId, read.pending.question)
+        else questions.delete(chatId)
+        return read
+    }
+
+    const chiefRun = async (chatId: string, signal?: AbortSignal) => (await activeRun(chatId, signal).catch(() => ({ runId: null }))).runId
+
+    // With a conversation named, its messages and the turn this phone has going in it. Without, what
+    // the Home's row says: the conversation last written in, General or a task.
+    async function chiefConversation(chatId: string | null, signal?: AbortSignal) {
+        if (chatId) return { sessionId: chatId, messages: chiefMessagesOf(await tracked(readChiefChat(chatId, signal)), words), activeRunId: await chiefRun(chatId, signal) }
+        const { conversations } = await chief(signal)
+        const last = [...conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+        return last ? { sessionId: last.id, title: last.title, messages: [], activeRunId: await chiefRun(last.id, signal) } : null
+    }
+
     const models: AgentModels = { groups: [], pinned: null, resolved: null, boxDefault: null }
     const box: Box = { id: MAC_BOX_ID, name: 'Mac', createdAt: null, managed: false, access: 'use' }
     const nothing = () => undefined
@@ -291,6 +353,12 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
         { method: 'GET', pattern: /^\/api\/v1\/boxes$/, answer: () => [box] },
         { method: 'GET', pattern: /^\/api\/v1\/inbox$/, answer: (_, { signal }) => inbox(signal) },
         { method: 'POST', pattern: /^\/api\/v1\/inbox\/read$/, answer: (_, { body, signal }) => markInboxRead(body, signal) },
+        { method: 'GET', pattern: /^\/api\/chat\/foreman\/state$/, answer: (_, { signal }) => chiefState(signal) },
+        { method: 'GET', pattern: /^\/api\/chat\/foreman\/engine$/, answer: (_, { signal }, query) => chiefConversation(query.get('sessionId'), signal) },
+        { method: 'DELETE', pattern: /^\/api\/chat\/foreman\/engine$/, answer: (_, { signal }, query) => stop(query.get('sessionId') ?? '', signal) },
+        { method: 'GET', pattern: /^\/api\/v1\/foreman\/conversations$/, answer: (_, { signal }) => chiefConversations(signal) },
+        // Attachments stay on the Mac.
+        { method: 'GET', pattern: /^\/api\/v1\/foreman\/files$/, answer: () => ({ supported: false }) },
         { method: 'GET', pattern: /^\/api\/v1\/agents$/, answer: async (_, { signal }) => (await coworkers(signal)).map(coworker => boardAgentOf(coworker, link.workspaceId)) },
         { method: 'GET', pattern: /^\/api\/v1\/agents\/conversations$/, answer: (_, { signal }) => overview(signal) },
         { method: 'GET', pattern: new RegExp(`^/api/v1/agents/${id}$`), answer: ([agentId], { signal }) => agentView(agentId, signal) },
@@ -307,11 +375,11 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
     return {
         async api<T>(path: string, request: MacHubRequest = {}): Promise<T> {
             const method = request.method ?? 'GET'
-            const pathname = path.split('?')[0]
+            const [pathname, search = ''] = path.split('?')
             for (const route of routes) {
                 if (route.method !== method) continue
                 const match = route.pattern.exec(pathname)
-                if (match) return (await route.answer(match.slice(1).map(decodeURIComponent), request)) as T
+                if (match) return (await route.answer(match.slice(1).map(decodeURIComponent), request, new URLSearchParams(search))) as T
             }
             throw fail(404, NOT_ON_A_MAC)
         },
