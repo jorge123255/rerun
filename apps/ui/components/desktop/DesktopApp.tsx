@@ -70,6 +70,7 @@ import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { GridPosition } from '@rerun/ui/iso-grid'
 import { Button } from '@/components/ui/button'
 import { DesktopChatTabs } from './DesktopChatTabs'
+import { DesktopThreadPeeksContext, type DesktopThreadPeeks } from './DesktopThreadBranch'
 import type { DesktopConversationOverviewAuthority } from './coworker-overview/conversation-mount'
 import type { DesktopOverviewIdentity } from '@/lib/desktop/coworker-overview/identity'
 import { DesktopGettingStartedPill } from './getting-started'
@@ -1185,6 +1186,9 @@ function CoworkerChat({ cardBeside, agent, workspaceId, attention, overview, req
     const pendingChatSummaries = useMemo(() => new Map(attention.items
         .filter(item => item.agentId === agent.id && item.kind !== 'info')
         .map(item => [item.sessionId, item.summary])), [agent.id, attention.items])
+    // Upstream #334: General's rows know which of this coworker's threads wait on the person, and for what.
+    const threadPeeks = useMemo<DesktopThreadPeeks>(() => ({ agentId: agent.id, agentName: agent.name, agentEnabled: agent.enabled !== false,
+        waiting: new Map(attention.items.filter(item => item.agentId === agent.id).map(item => [item.sessionId, { kind: item.kind, id: item.id }])) }), [agent.id, agent.name, agent.enabled, attention.items])
     const [bootstrap, setBootstrap] = useState<{ layout: DesktopTabLayout | null } | null>(null)
     const [sessionReadFailed, setSessionReadFailed] = useState(false)
     const [checkedRequest, setCheckedRequest] = useState<DesktopChatRequest | null>(null)
@@ -1281,9 +1285,9 @@ function CoworkerChat({ cardBeside, agent, workspaceId, attention, overview, req
                 <p role="status" className="text-sm text-muted-foreground">{t('openingCoworkerChat', { name: agent.name })}</p>
             </div>
         </div>}
-        {!bootstrap || !sessions ? dismiss : <DesktopChatTabs cardBeside={cardBeside} workspaceId={workspaceId} onOpenCoworkerChat={onOpenCoworkerChat}
+        {!bootstrap || !sessions ? dismiss : <DesktopThreadPeeksContext.Provider value={threadPeeks}><DesktopChatTabs cardBeside={cardBeside} workspaceId={workspaceId} onOpenCoworkerChat={onOpenCoworkerChat}
             agent={agent} overview={overview} selected={selected && !missing} requested={missing ? null : requested} requestedPanel={requestedPanel} onPanelRequestHandled={onPanelRequestHandled} pendingChatSummaries={pendingChatSummaries} sessions={sessions} initialLayout={bootstrap.layout}
             onVisibleSession={onVisibleSession}
-            refreshSessions={readSessions} refreshThreads={refreshThreads} renameTitle={renameTitle} reload={reload} modelLabel={modelLabel} workspaceDefault={workspaceDefault} connections={connections} onOpenModelSettings={onOpenModelSettings} onOpenTranscriptionSettings={onOpenTranscriptionSettings} onClosePanel={onClosePanel} />}
+            refreshSessions={readSessions} refreshThreads={refreshThreads} renameTitle={renameTitle} reload={reload} modelLabel={modelLabel} workspaceDefault={workspaceDefault} connections={connections} onOpenModelSettings={onOpenModelSettings} onOpenTranscriptionSettings={onOpenTranscriptionSettings} onClosePanel={onClosePanel} /></DesktopThreadPeeksContext.Provider>}
     </>
 }
