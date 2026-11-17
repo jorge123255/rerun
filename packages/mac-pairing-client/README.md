@@ -10,8 +10,11 @@ minutes and can be redeemed once. After approval on the Mac, the client can
 list coworkers and read their saved chats in that workspace. Approvals survive
 restart on the same endpoint and revocation takes effect immediately.
 
-The stock iPhone app still needs a Mac pairing screen and a native TLS adapter.
-Its existing server picker requires a Rerun hub with Supabase authentication.
+The phone app in `apps/mobile` uses this package: **Connect to This Mac** on its
+sign-in screen takes the offer (scanned or pasted), and its native module
+`modules/mac-pairing-transport` is the pinned TLS adapter described below. Its
+other sign-in paths still require a Rerun hub with Supabase authentication.
+See `apps/mobile/README.md`, "Paired with the Mac app".
 
 ## Why the stock iPhone app cannot sign in to the Mac unmodified
 
@@ -68,5 +71,7 @@ message is admitted.
 The phone uses the chat’s existing model and coworker settings. A stable send
 ID lets the phone retry a missing acknowledgement without starting a second
 turn. The client follows reply text and refreshes the saved chat at completion.
+`answerQuestion` answers the question a saved chat waits on: it names the card
+the phone was shown and the choices, and the Mac finds its saved question itself.
 Stop can cancel the exact turn sent by that approved device. The client reads
 the saved outcome so a reply that finishes first still shows as completed.

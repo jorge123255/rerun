@@ -10,6 +10,11 @@
             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
             "default": "./dist/index.js"
+        },
+        "./mac-phone-pairing": {
+            "types": "./dist/mac-phone-pairing.d.ts",
+            "import": "./dist/mac-phone-pairing.js",
+            "default": "./dist/mac-phone-pairing.js"
         }
     },
     "files": [

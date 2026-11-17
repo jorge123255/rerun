@@ -13,7 +13,16 @@ const exec = promisify(execFile)
 export function isPrivateAddress(address) {
     if (!isIPv4(address)) return false
     const [first, second] = address.split('.').map(Number)
-    return first === 10 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168)
+    return first === 10 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168) || isTailscaleAddress(address)
+}
+
+// Tailscale gives each of the person's devices an address in 100.64.0.0/10. It reaches only the
+// devices of their own tailnet, so a phone away from the Wi-Fi can pair over it; the pinned
+// certificate and the approval on this Mac are the same as on the local network.
+export function isTailscaleAddress(address) {
+    if (!isIPv4(address)) return false
+    const [first, second] = address.split('.').map(Number)
+    return first === 100 && second >= 64 && second <= 127
 }
 
 export function localPairingAddresses() {

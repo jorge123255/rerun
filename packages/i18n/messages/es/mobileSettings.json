@@ -24,7 +24,9 @@
         "environment": "Entorno",
         "signOut": "Cerrar sesión",
         "deleteAccount": "Eliminar cuenta",
-        "server": "Servidor"
+        "server": "Servidor",
+        "mac": "Mac",
+        "disconnectMac": "Desconectar del Mac"
     },
     "notifications": {
         "title": "Notificaciones",
@@ -35,8 +37,18 @@
             "label": "Notificaciones push",
             "off": "Desactivadas",
             "turnOn": "Activar",
-            "openIosSettings": "Abrir Ajustes de iOS",
-            "footnote": "Nada de lo siguiente llega a este iPhone hasta que actives el push."
+            "openSettings": "{platform, select, android {Abrir ajustes de Android} other {Abrir Ajustes de iOS}}",
+            "footnote": "{platform, select, android {Nada de lo siguiente llega a este teléfono hasta que actives el push.} other {Nada de lo siguiente llega a este iPhone hasta que actives el push.}}"
+        },
+        "channels": {
+            "messages": {
+                "name": "Mensajes de los coworkers",
+                "description": "Cuando un coworker te necesita o tiene algo que decir."
+            },
+            "silent": {
+                "name": "Tareas terminadas",
+                "description": "Cuando un coworker termina una tarea, sin sonido."
+            }
         },
         "scopeTitle": "Notificarme sobre",
         "recommended": "Recomendado",

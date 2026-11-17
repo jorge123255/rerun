@@ -24,7 +24,9 @@
         "environment": "Environnement",
         "signOut": "Se déconnecter",
         "deleteAccount": "Supprimer le compte",
-        "server": "Serveur"
+        "server": "Serveur",
+        "mac": "Mac",
+        "disconnectMac": "Se déconnecter du Mac"
     },
     "notifications": {
         "title": "Notifications",
@@ -35,8 +37,18 @@
             "label": "Notifications push",
             "off": "Désactivées",
             "turnOn": "Activer",
-            "openIosSettings": "Ouvrir les Réglages iOS",
-            "footnote": "Rien de ce qui suit n'arrive sur cet iPhone tant que le push est désactivé."
+            "openSettings": "{platform, select, android {Ouvrir les paramètres Android} other {Ouvrir les Réglages iOS}}",
+            "footnote": "{platform, select, android {Rien de ce qui suit n'arrive sur ce téléphone tant que le push est désactivé.} other {Rien de ce qui suit n'arrive sur cet iPhone tant que le push est désactivé.}}"
+        },
+        "channels": {
+            "messages": {
+                "name": "Messages des coworkers",
+                "description": "Quand un coworker a besoin de vous ou a quelque chose à dire."
+            },
+            "silent": {
+                "name": "Tâches terminées",
+                "description": "Quand un coworker termine une tâche, sans son."
+            }
         },
         "scopeTitle": "Me notifier pour",
         "recommended": "Recommandé",

@@ -154,7 +154,9 @@
         "request_takeover": "Asked you to take over the browser",
         "request_spend": "Asked to spend credits",
         "notify_user": "Notified you",
-        "install_complete": "Finished the setup"
+        "install_complete": "Finished the setup",
+        "ai_status": "Check AI Providers",
+        "rerun_hub_search_docs": "Search Docs"
     },
     "activities": {
         "shell_exec": "Running a command",
@@ -210,7 +212,9 @@
         "analyze_website": "Reading the website",
         "list_templates": "Browsing templates",
         "propose_plan": "Writing the plan",
-        "install_template": "Installing a template"
+        "install_template": "Installing a template",
+        "ai_status": "Checking AI providers",
+        "rerun_hub_search_docs": "Searching the docs"
     },
     "paidData": {
         "people": {

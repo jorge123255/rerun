@@ -128,6 +128,7 @@
         "device": "{name} · {workspace}",
         "localNetwork": "Red local",
         "networkAddress": "Red local ({address})",
+        "tailscaleAddress": "Tailscale ({address})",
         "unavailableAddress": "No disponible ({address})",
         "listening": "Escuchando en {origin}",
         "retry": "Reintentar",

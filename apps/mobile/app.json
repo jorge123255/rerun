@@ -1,0 +1,123 @@
+{
+  "expo": {
+    "name": "Rerun",
+    "slug": "rerun",
+    "version": "1.0.2",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "rerun",
+    "userInterfaceStyle": "automatic",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "ios": {
+      "bundleIdentifier": "build.rerun.app",
+      "supportsTablet": true,
+      "usesAppleSignIn": true,
+      "deploymentTarget": "26.0",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        },
+        "NSLocalNetworkUsageDescription": "Rerun connects to a Rerun server on your local network when you choose one.",
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationPortraitUpsideDown",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ]
+      }
+    },
+    "android": {
+      "package": "build.rerun.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "monochromeImage": "./assets/images/adaptive-icon-monochrome.png",
+        "backgroundColor": "#ececee"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#4d34f7",
+          "defaultChannel": "messages"
+        }
+      ],
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Rerun uses the camera to attach a photo to a message, and to scan the code your Mac shows when you connect to it.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Rerun uses your photo library to attach photos to a message.",
+          "cameraPermission": "Rerun uses the camera to attach a photo to a message."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Rerun uses the microphone to record voice messages."
+        }
+      ],
+      "./plugins/without-background-playback",
+      "./plugins/with-home-launch-screen",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#f8f8f8",
+          "dark": {
+            "backgroundColor": "#0a0a0a"
+          }
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "26.0"
+          },
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.530380179314-likpnhr06isv0ucqs86c4bgpt0oi91c5"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "platforms": [
+      "ios",
+      "android"
+    ]
+  }
+}

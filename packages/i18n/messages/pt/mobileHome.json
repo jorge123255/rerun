@@ -29,7 +29,8 @@
         "working": "Trabalhando",
         "workingOn": "Trabalhando · {detail}",
         "asleep": "Dormindo",
-        "asleepAbout": "Dormindo · {about}"
+        "asleepAbout": "Dormindo · {about}",
+        "you": "Você: {message}"
     },
     "foreman": {
         "askAnything": "Pergunte qualquer coisa"
@@ -53,7 +54,11 @@
         "deleteFailedMessage": "Tente de novo daqui a pouco.",
         "leaveServerTitle": "Sair de {host}?",
         "leaveServerMessage": "Você será desconectado, e o Rerun reabre no Rerun Cloud.",
-        "leaveServer": "Sair"
+        "leaveServer": "Sair",
+        "disconnectMac": "Desconectar do Mac",
+        "leaveMacTitle": "Desconectar deste Mac?",
+        "leaveMacMessage": "Este telefone esquece o Mac. Para removê-lo de vez, remova-o também em Conectar iPhone no seu Mac.",
+        "leaveMac": "Desconectar"
     },
     "workspace": {
         "untitled": "Meu workspace",
@@ -66,7 +71,7 @@
         "title": "Buscar",
         "back": "Voltar",
         "placeholder": "Buscar coworkers e conversas",
-        "askRerun": "Perguntar ao Rerun",
+        "askRerun": "Pergunte ao seu Chief of Staff",
         "quotedAsk": "“{query}”",
         "coworkers": "Coworkers",
         "conversations": "Conversas",

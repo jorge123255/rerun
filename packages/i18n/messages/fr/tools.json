@@ -148,7 +148,9 @@
         "request_takeover": "Vous a demandé de prendre la main sur le navigateur",
         "request_spend": "A demandé à dépenser des crédits",
         "notify_user": "Vous a prévenu",
-        "install_complete": "A terminé la configuration"
+        "install_complete": "A terminé la configuration",
+        "ai_status": "Consulter les fournisseurs d'IA",
+        "rerun_hub_search_docs": "Chercher dans la doc"
     },
     "activities": {
         "shell_exec": "Exécution d'une commande",
@@ -204,7 +206,9 @@
         "analyze_website": "Lecture du site web",
         "list_templates": "Parcours des templates",
         "propose_plan": "Rédaction du plan",
-        "install_template": "Installation d'un template"
+        "install_template": "Installation d'un template",
+        "ai_status": "Consulte les fournisseurs d'IA",
+        "rerun_hub_search_docs": "Recherche dans la doc"
     },
     "paidData": {
         "people": {

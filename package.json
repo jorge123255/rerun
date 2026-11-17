@@ -13,6 +13,7 @@
         "dev:engine": "pnpm --filter rerun-engine dev",
         "dev:ui": "pnpm --filter rerun dev",
         "dev:ui:full": "concurrently -k -n next,engine -c cyan,green \"pnpm --filter rerun dev\" \"pnpm --filter rerun-engine dev\"",
+        "dev:mobile": "node scripts/dev-mobile.mjs",
         "dev:docs": "cd apps/docs && npx --yes mint dev --port 3333",
         "check:docs": "cd apps/docs && npx --yes mint validate && npx --yes mint broken-links",
         "typecheck": "pnpm -r --if-present ts-check",

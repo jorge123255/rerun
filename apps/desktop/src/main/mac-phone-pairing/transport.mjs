@@ -42,6 +42,15 @@ function fail(response, code, status = 401) {
     send(response, status, { error: code })
 }
 
+function validAnswer(answer) {
+    if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return false
+    const keys = Object.keys(answer)
+    if (typeof answer.toolCallId !== 'string' || !answer.toolCallId || answer.toolCallId.length > 256) return false
+    if (answer.answers === undefined) return keys.length === 1
+    return keys.length === 2 && Array.isArray(answer.answers) && answer.answers.length >= 1 && answer.answers.length <= 32
+        && answer.answers.every(values => Array.isArray(values) && values.length <= 100 && values.every(value => typeof value === 'string' && value.length <= 4000))
+}
+
 async function streamReply(response, open, authorize) {
     const disconnected = new AbortController()
     const close = () => disconnected.abort()
@@ -127,6 +136,14 @@ export function createPairingTransport({
         const store = await getStore()
         return store.devices.find(device => inScope(device) && device.status === DEVICE_STATUS.approved
             && device.credentialIssued !== false && hashesEqual(device.credentialHash, presented)) ?? null
+    }
+
+    // A phone the person removed is told so, once it proves it held that phone's token: it can then
+    // forget the Mac instead of asking forever. Anyone else learns nothing more than `unauthorized`.
+    async function removed(presented) {
+        if (!presented || !(await enabled())) return false
+        const store = await getStore()
+        return store.devices.some(device => inScope(device) && device.status === DEVICE_STATUS.revoked && hashesEqual(device.credentialHash, presented))
     }
 
     async function workspaceFor(device, requested, current) {
@@ -225,7 +242,7 @@ export function createPairingTransport({
         if (!sending && !stopping && request.method !== 'GET') return fail(response, ERRORS.not_found, 404)
         const presented = hashSecret(BEARER.exec(request.headers.authorization ?? '')?.[1])
         const device = await authenticate(presented)
-        if (!device) return fail(response, ERRORS.unauthorized)
+        if (!device) return fail(response, await removed(presented) ? ERRORS.revoked : ERRORS.unauthorized)
         if (!WORKSPACE.test(rawWorkspaceId) || (agentId && !ID.test(agentId)) || (chatId && !ID.test(chatId)) || (requestId && !UUID.test(requestId))) {
             return fail(response, ERRORS.not_found, 404)
         }
@@ -236,8 +253,11 @@ export function createPairingTransport({
             if (sending || stopping) {
                 if (!tls || device.sendMessages !== true) return fail(response, 'send_not_allowed', 403)
                 const body = sending ? await readBody(request, MESSAGE_BODY_LIMIT) : null
+                // A turn is a message, or the answer to the question the chat waits on. Answering is sending:
+                // it takes the same permission, and never opens a conversation.
+                const answering = sending && !creating && body && body.text === undefined && validAnswer(body.answer)
                 if (sending && (!body || Object.keys(body).length !== 2 || typeof body.requestId !== 'string' || !UUID.test(body.requestId)
-                    || typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000)) return fail(response, 'invalid_message', 400)
+                    || (!answering && (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 20_000)))) return fail(response, 'invalid_message', 400)
                 return await exclusive(async () => {
                     const authorized = await authenticate(presented)
                     if (!authorized || authorized.deviceId !== device.deviceId) return fail(response, ERRORS.unauthorized)
@@ -248,7 +268,7 @@ export function createPairingTransport({
                     const runId = phoneRunId(authorized, agentId, chatId ?? newChatId, turnRequestId)
                     const failure = stopping
                         ? await stopWorkspaceTurn(current, { agentId, chatId, runId })
-                        : await sendWorkspaceMessage(current, { agentId, chatId, runId, text: body.text, newChatId })
+                        : await sendWorkspaceMessage(current, { agentId, chatId, runId, newChatId, ...(answering ? { answer: body.answer } : { text: body.text }) })
                     return failure ? fail(response, failure.code, failure.status) : send(response, stopping ? 200 : 202, { requestId: turnRequestId, ...(newChatId && { chatId: newChatId }) })
                 })
             }

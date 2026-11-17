@@ -148,7 +148,9 @@
         "request_takeover": "Hat dich gebeten, den Browser zu übernehmen",
         "request_spend": "Hat gefragt, Guthaben auszugeben",
         "notify_user": "Hat dich benachrichtigt",
-        "install_complete": "Hat die Einrichtung abgeschlossen"
+        "install_complete": "Hat die Einrichtung abgeschlossen",
+        "ai_status": "KI-Anbieter prüfen",
+        "rerun_hub_search_docs": "Doku durchsuchen"
     },
     "activities": {
         "shell_exec": "Führt einen Befehl aus",
@@ -204,7 +206,9 @@
         "analyze_website": "Liest die Website",
         "list_templates": "Durchsucht Vorlagen",
         "propose_plan": "Schreibt den Plan",
-        "install_template": "Installiert eine Vorlage"
+        "install_template": "Installiert eine Vorlage",
+        "ai_status": "Prüft die KI-Anbieter",
+        "rerun_hub_search_docs": "Durchsucht die Doku"
     },
     "paidData": {
         "people": {

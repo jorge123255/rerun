@@ -6,7 +6,7 @@ function pairingOrigin(origin, certificateFingerprint) {
     const parsed = new URL(origin)
     if (parsed.origin !== origin || !parsed.port) throw new Error('invalid_origin')
     if (parsed.protocol === 'http:' && parsed.hostname === '127.0.0.1' && !certificateFingerprint) return origin
-    const privateAddress = /^(?:10\.\d+|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d+\.\d+$/.test(parsed.hostname)
+    const privateAddress = /^(?:10\.\d+|172\.(?:1[6-9]|2\d|3[01])|192\.168|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7]))\.\d+\.\d+$/.test(parsed.hostname)
     if (parsed.protocol === 'https:' && privateAddress && typeof certificateFingerprint === 'string'
         && /^[0-9a-f]{64}$/.test(certificateFingerprint)) return origin
     throw new Error('invalid_origin')
@@ -184,6 +184,13 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
         },
         async sendMessage(agentId, sessionId, { requestId, text }, signal) {
             const result = await chatRequest(agentId, sessionId, '', { method: 'POST', body: { requestId, text }, signal })
+            if (result?.requestId !== requestId) throw new Error('invalid_send_receipt')
+            return result
+        },
+        // Answers the question a saved chat waits on. `toolCallId` names the card the phone was shown;
+        // `answers` holds the choices for each of its questions, and is left out to dismiss it.
+        async answerQuestion(agentId, sessionId, { requestId, toolCallId, answers }, signal) {
+            const result = await chatRequest(agentId, sessionId, '', { method: 'POST', body: { requestId, answer: { toolCallId, ...(answers && { answers }) } }, signal })
             if (result?.requestId !== requestId) throw new Error('invalid_send_receipt')
             return result
         },

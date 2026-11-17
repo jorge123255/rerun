@@ -29,7 +29,8 @@
         "working": "Au travail",
         "workingOn": "Au travail · {detail}",
         "asleep": "Endormi",
-        "asleepAbout": "Endormi · {about}"
+        "asleepAbout": "Endormi · {about}",
+        "you": "Vous : {message}"
     },
     "foreman": {
         "askAnything": "Demandez ce que vous voulez"
@@ -53,7 +54,11 @@
         "deleteFailedMessage": "Réessayez dans un instant.",
         "leaveServerTitle": "Quitter {host} ?",
         "leaveServerMessage": "Vous serez déconnecté, et Rerun se rouvrira sur Rerun Cloud.",
-        "leaveServer": "Quitter"
+        "leaveServer": "Quitter",
+        "disconnectMac": "Se déconnecter du Mac",
+        "leaveMacTitle": "Se déconnecter de ce Mac ?",
+        "leaveMacMessage": "Ce téléphone oublie le Mac. Pour le retirer définitivement, retirez-le aussi dans Connecter l’iPhone sur votre Mac.",
+        "leaveMac": "Se déconnecter"
     },
     "workspace": {
         "untitled": "Mon workspace",
@@ -66,7 +71,7 @@
         "title": "Rechercher",
         "back": "Retour",
         "placeholder": "Rechercher des coworkers et des conversations",
-        "askRerun": "Demander à Rerun",
+        "askRerun": "Demander à votre Chief of Staff",
         "quotedAsk": "« {query} »",
         "coworkers": "Coworkers",
         "conversations": "Conversations",

@@ -8,7 +8,8 @@
         "or": "Or",
         "welcome": "Welcome to Rerun",
         "ownServer": "Use your own server",
-        "useCloud": "Use Rerun Cloud"
+        "useCloud": "Use Rerun Cloud",
+        "connectMac": "Connect to This Mac"
     },
     "back": "Back",
     "phone": {
@@ -107,5 +108,35 @@
             "not-rerun": "This address is not a Rerun server.",
             "outdated": "Update this Rerun server to use it from the app."
         }
+    },
+    "mac": {
+        "title": "Connect to This Mac",
+        "hint": "In Rerun on your Mac, choose File, then Connect iPhone. Allow local pairing, pick your network and create a pairing offer.",
+        "scan": "Scan QR code",
+        "typeInstead": "Enter the code instead",
+        "code": "Pairing code",
+        "connect": "Connect",
+        "waiting": "Approve this phone on your Mac",
+        "waitingHint": "Rerun on your Mac lists this phone under Waiting for approval.",
+        "cancel": "Cancel",
+        "cameraDenied": "Allow camera access in Settings to scan the code, or enter it instead.",
+        "problems": {
+            "invalid": "This is not a Rerun pairing code.",
+            "expired": "This code has expired or was already used. Create a new one on your Mac.",
+            "unreachable": "Could not reach your Mac. Check that this phone is on the same network.",
+            "unsupported": "This version of the app cannot connect to a Mac on the local network.",
+            "declined": "The request was declined on your Mac, or it ran out of time.",
+            "off": "Phone access is switched off on your Mac."
+        },
+        "send": {
+            "sendOff": "This phone can read chats but not send. On your Mac, open Connect iPhone and turn on Send messages for it.",
+            "busy": "This coworker is still working. Try again in a moment.",
+            "coworkerOff": "This coworker is switched off on your Mac.",
+            "removed": "Your Mac no longer accepts this phone. Open Connect iPhone on your Mac to check.",
+            "unreachable": "Could not reach your Mac.",
+            "answerFirst": "Answer the question above first."
+        },
+        "pickCoworker": "Pick a coworker to open its conversations.",
+        "approvalOnMac": "Waiting for your approval on your Mac"
     }
 }
