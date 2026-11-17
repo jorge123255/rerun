@@ -19,6 +19,7 @@ import { SidePanel } from '@/components/layout/SidePanel'
 import { SIDE_PANEL_GAP, loadSidePanelWidth } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopSimpleSidebar } from './simple/DesktopSimpleSidebar'
+import { setDesktopDetailsWanted } from '@/lib/desktop/simple-details'
 import { DesktopViewMenuRow } from './simple/DesktopViewMenuRow'
 import { desktopCoworkerPreviewsSchema, type DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
 import { desktopSimpleInitialOpen, loadDesktopWorkspaceView, resolveDesktopWorkspaceView, saveDesktopWorkspaceView, type DesktopWorkspaceView } from '@/lib/desktop/workspace-view'
@@ -898,6 +899,8 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
     }, [])
     const simple = resolveDesktopWorkspaceView({ preference: viewPreference, placing: !!creation.placement || !!templatePlacement.placement || placingCopy }) === 'simple'
     const chooseView = (view: DesktopWorkspaceView) => { saveDesktopWorkspaceView({ view }); setViewPreference(view) }
+    // Leaving the Simple view forgets that its right column was open, as upstream does.
+    useEffect(() => { if (!simple) setDesktopDetailsWanted(false) }, [simple])
     const [coworkerPreviews, setCoworkerPreviews] = useState<DesktopCoworkerPreviews['previews'] | null>(null)
     const [simpleInboxSlot, setSimpleInboxSlot] = useState<HTMLElement | null>(null)
     const [unseenAgents, setUnseenAgents] = useState<string[]>([])

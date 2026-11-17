@@ -23,6 +23,7 @@ import { DefaultChatTransport, readUIMessageStream, type UIMessage, type FileUIP
 import { AgentBuddy } from '@rerun/ui/iso-grid'
 import { Message, MessageContent, Suggestion, Suggestions } from '@rerun/ui/chat'
 import { FloatingPill } from '@/components/agent/sheet/floating'
+import { setDesktopDetailsWanted, useDesktopDetailsWanted } from '@/lib/desktop/simple-details'
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton, type ConversationHandle } from '@/components/ai-elements/conversation'
 import { bringBlockIn, useArriveByTop } from '@/hooks/useArriveByTop'
 import { DesktopArrive, useDesktopLiveGate } from './panel-motion/DesktopArrive'
@@ -219,8 +220,6 @@ function scheduledRunOf(message: UIMessage) {
     return parseScheduledRun(prompt)
 }
 
-// Kept across coworkers, as the original does: a card closed beside one chat stays closed for the next.
-let besideCardWanted: boolean | null = null
 const WIDE_WINDOW = '(min-width: 1280px)'
 
 function useWideWindow(): boolean {
@@ -280,12 +279,15 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const beside = !!cardBeside && wide && !!overview
     const cardCovers = cardOpen && !beside
     const openedBeside = useRef(false)
+    // Closed until the person opens it, whatever the window's width (upstream #276). What they chose
+    // is kept across coworkers and the Chief of Staff: open beside one, it is open beside the next.
+    const detailsWanted = useDesktopDetailsWanted()
     useEffect(() => {
         if (!cardBeside) return
-        // Beside the chat the card is open until closed; over it, closed until asked for.
-        if (beside && besideCardWanted !== false) { openedBeside.current = true; setCardOpen(true) }
-        else if (!beside && openedBeside.current) { openedBeside.current = false; setCardOpen(false) }
-    }, [beside, cardBeside])
+        if (beside && detailsWanted) { openedBeside.current = true; setCardOpen(true) }
+        // Out of sight nothing of the card is mounted, so nothing unsaved can be lost by closing it.
+        else if (openedBeside.current && (!beside || !active)) { openedBeside.current = false; setCardOpen(false) }
+    }, [beside, cardBeside, detailsWanted, active])
     const [overviewCovered, setOverviewCovered] = useState(false)
     const chatCovered = overviewCovered && !beside
     const [serviceStreaming, setServiceStreaming] = useState(false)
@@ -331,7 +333,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const overviewCloseControl = useDesktopPanelCloseGuard()
     const dismissCard = () => {
         if (requestedPanel) { handledPanel.current = requestedPanel; onPanelRequestHandled?.(requestedPanel) }
-        if (beside) besideCardWanted = false
+        if (beside) setDesktopDetailsWanted(false)
         openedBeside.current = false
         setCardOpen(false)
         setPanelNotice('')
@@ -745,7 +747,10 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
         if (isDesktopQuitting()) return
         // A freshly restored chat has not yet checked whether its engine is still replying.
         // Keep Settings closed until that read belongs to this session; Back/Close cancels it.
+        // Asked for from the tile menu or a link to one of its screens: the column opens, and stays wanted.
+        const wantBeside = () => { if (beside) { setDesktopDetailsWanted(true); openedBeside.current = true } }
         if (requestedPanel.panel === 'settings' && sessionId && !busy && engineRunning.id !== sessionId) {
+            wantBeside()
             setCardOpen(true)
             setPanelNotice('Checking this chat’s reply status before opening settings…')
             setPanelFocus('card')
@@ -756,6 +761,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
         setPanelNotice('')
         if (requestedPanel.panel === 'chat') { setDetailPanel(null); setCardOpen(false); setPanelFocus('chat'); return }
         if (requestedPanel.panel === 'actions') { setDetailPanel(null); setCardOpen(false); setPanelFocus(null); setNeedsRequest(requestedPanel.nonce); return }
+        wantBeside()
         setCardOpen(true)
         if (requestedPanel.panel === 'settings' && generating) {
             setPanelNotice('Wait for this reply to finish before editing the coworker.')
@@ -1596,7 +1602,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     )}
                 </div>
                 <h1 aria-label={agent.name} className="min-w-0">
-                    <FloatingPill label="Coworker card" active={cardOpen} onClick={() => { if (cardOpen) overviewCloseControl.requestClose(dismissCard); else { if (beside) { besideCardWanted = true; openedBeside.current = true } setCardOpen(true) } }} className="max-w-full pl-1.5">
+                    <FloatingPill label="Coworker card" active={cardOpen} onClick={() => { if (cardOpen) overviewCloseControl.requestClose(dismissCard); else { if (beside) { setDesktopDetailsWanted(true); openedBeside.current = true } setCardOpen(true) } }} className="max-w-full pl-1.5">
                         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
                             <AgentBuddy agentId={agent.id} mood={inactive ? 'asleep' : generating ? 'working' : 'idle'} size={20} facing="right" />
                         </span>
