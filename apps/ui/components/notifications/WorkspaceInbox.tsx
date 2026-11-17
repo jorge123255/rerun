@@ -5,9 +5,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { InboxDetailCard } from '@/components/notifications/InboxDetailCard'
+import { InboxPeekCard } from '@/components/notifications/InboxPeekCard'
 import { InboxRowMenu } from '@/components/notifications/InboxRowMenu'
 import { useAttentionSessions, type AttentionSession } from '@/hooks/useAttentionSessions'
 import { useInboxAnnouncer } from '@/hooks/useInboxAnnouncer'
+import { useInboxPeek, type InboxPeekTarget } from '@/hooks/useInboxPeek'
 import { useTabSignals } from '@/hooks/useTabSignals'
 import { useUnseenGroups } from '@/hooks/useUnseenGroups'
 import type { SessionStatus } from '@/lib/board/types'
@@ -29,7 +31,12 @@ function InboxItemMenu({ item, onOpenChange }: RowMenuProps<InboxItem>) {
     return <InboxRowMenu agentId={item.agentId} agentName={item.agentName} onOpenChange={onOpenChange} />
 }
 
-type View = null | 'hub' | { notification: AnnouncedNotification }
+// What a coworker waits on is answered from the inbox; the rest still opens the conversation.
+const PEEK_STATUSES = new Set(['awaiting_question', 'awaiting_approval', 'awaiting_connector'])
+
+type Peek = { entry: InboxEntry; target: InboxPeekTarget; engineRunId: string | null }
+
+type View = null | 'hub' | { notification: AnnouncedNotification } | { peek: Peek }
 
 /** Every agent's « To handle » list in one place, parked in the board's bottom-left corner. */
 export function WorkspaceInbox() {
@@ -127,16 +134,33 @@ export function WorkspaceInbox() {
     )
     const openAnnouncement = useCallback(() => {
         if (!current) return
-        show(current.bundled > 1 ? 'hub' : { notification: current.notification })
-    }, [current, show])
+        const { notification } = current
+        if (current.bundled > 1) return show('hub')
+        if (notification.agentId && PEEK_STATUSES.has(notification.status)) {
+            return show({ peek: { entry: entryOf(notification), target: { agentId: notification.agentId, sessionId: rowOf(notification)?.id ?? null, engineSessionId: notification.engineSessionId }, engineRunId: notification.engineRunId } })
+        }
+        show({ notification })
+    }, [current, show, entryOf, rowOf])
 
     const openItem = useCallback((item: InboxItem) => {
+        if (PEEK_STATUSES.has(item.status) && !item.sessionIds) {
+            setView({ peek: { entry: item, target: { agentId: item.agentId, sessionId: item.id, engineSessionId: item.engineSessionId }, engineRunId: null } })
+            return
+        }
         setView(null)
         const board = useBoardStore.getState()
         board.focusAgentOnBoard(item.agentId, 'chat')
         board.setPendingOpenSession({ agentId: item.agentId, sessionId: item.latestSessionId ?? item.id, runId: null })
         // The conversation opened marks itself read; the other runs of the same task go with it.
         if (item.sessionIds) void useUnseenRunsStore.getState().markSeen(item.sessionIds)
+    }, [])
+    const openPeekConversation = useCallback((peek: Peek) => {
+        setView(null)
+        const { agentId, sessionId, engineSessionId } = peek.target
+        if (!sessionId) return void openConversationFromNotification({ agentId, engineSessionId, engineRunId: peek.engineRunId })
+        const board = useBoardStore.getState()
+        board.focusAgentOnBoard(agentId, 'chat')
+        board.setPendingOpenSession({ agentId, sessionId, runId: peek.engineRunId })
     }, [])
     const markRead = useCallback(
         (item: InboxItem) => {
@@ -158,8 +182,24 @@ export function WorkspaceInbox() {
 
     if (!shown) return null
 
+    const peeking = view !== null && view !== 'hub' && 'peek' in view
+    // The peek card holds a widget and the thread around it: wider than the plain detail, never wider
+    // than the board it sits on, which the chat column narrows on a tablet.
+    const detailClassName = peeking ? 'w-[min(420px,calc(100cqw-2rem))]' : undefined
+
     let detail: ReactNode = null
-    if (view !== null && view !== 'hub') {
+    if (view !== null && view !== 'hub' && 'peek' in view) {
+        const { peek } = view
+        detail = (
+            <InboxPeek
+                key={peek.entry.id}
+                peek={peek}
+                anchor="bottom"
+                onClose={() => setView(null)}
+                onOpenConversation={() => openPeekConversation(peek)}
+            />
+        )
+    } else if (view !== null && view !== 'hub') {
         const { notification } = view
         const row = rowOf(notification)
         const { agentId, engineSessionId, engineRunId } = notification
@@ -207,8 +247,10 @@ export function WorkspaceInbox() {
             rowReason={rowReason}
             RowMenu={InboxItemMenu}
             onRowMenuOpenChange={setRowMenuOpen}
-            keepOpen={rowMenuOpen}
+            // A half-written answer is not lost to a click elsewhere, nor to a portaled picker or tooltip.
+            keepOpen={rowMenuOpen || peeking}
             detail={detail}
+            detailClassName={detailClassName}
         />
     )
 }
@@ -231,4 +273,9 @@ export function InboxSurface({ items, onMarkAllRead, keepOpen = false, ...props 
             />
         </>
     )
+}
+
+function InboxPeek({ peek, anchor, onClose, onOpenConversation }: { peek: Peek; anchor: 'bottom' | 'top'; onClose: () => void; onOpenConversation: () => void }) {
+    const { peek: state, answer } = useInboxPeek(peek.target)
+    return <InboxPeekCard entry={peek.entry} peek={state} anchor={anchor} onAnswer={answer} onClose={onClose} onOpenConversation={onOpenConversation} />
 }
