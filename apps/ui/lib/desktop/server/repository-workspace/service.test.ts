@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
-const { fixtureGit } = await import('./git')
+const { fixtureGit, hostGithubGet } = await import('./git')
 const { createRepositoryWorkspace, slimGithub } = await import('./service')
 import type { Command } from './git'
 
@@ -139,4 +139,19 @@ test('a repository that contains links gives a copy with no false changes, and t
     expect((await space.read(dev, repository, { path: 'outside-link' })).text).toBe('/etc/hosts')
     await space.write(dev, repository, { path: 'note.txt', content: 'x\n' })
     expect((await space.status(dev, repository)).files).toEqual([{ path: 'note.txt', added: 1, removed: 0 }])
+})
+
+test('the app reads a GitHub page with the Mac\'s own command line: GitHub\'s status is passed on, and only repository paths are asked for', async () => {
+    const asked: string[][] = []
+    const answer = (code: number, stdout: string, stderr = '') => (async args => { asked.push([...args]); return { code, stdout, stderr, cut: false } }) as Command
+    const never = new AbortController().signal
+    expect(await hostGithubGet('/repos/acme/tuner', never, answer(0, '{"private":true}'))).toEqual({ status: 200, data: { private: true } })
+    expect(asked[0]).toEqual(['api', '--method', 'GET', '-H', 'Accept: application/vnd.github+json', '/repos/acme/tuner'])
+    expect(await hostGithubGet('/repos/acme/gone', never, answer(1, '{"message":"Not Found"}', 'gh: Not Found (HTTP 404)'))).toEqual({ status: 404, data: { message: 'Not Found' } })
+    // Not signed in, or no answer at all, is not an answer from GitHub.
+    expect(await hostGithubGet('/repos/acme/tuner', never, answer(4, '', 'To get started with GitHub CLI, please run: gh auth login'))).toBeNull()
+    const before = asked.length
+    for (const path of ['/user', '/repos/acme/../../user', '/repos/acme/tuner?x={owner}', 'https://evil.example/repos/a/b']) expect(await hostGithubGet(path, never, answer(0, '{}'))).toBeNull()
+    expect(asked.length).toBe(before)
+    expect(await hostGithubGet('/repos/acme/tuner', never, null)).toBeNull()
 })

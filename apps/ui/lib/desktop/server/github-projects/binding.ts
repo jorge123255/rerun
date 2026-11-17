@@ -12,6 +12,8 @@ import { DesktopHttpError } from '../auth'
 import { desktopAuxiliaryStore } from '../auxiliary/store'
 import { ownedForemanChat } from '../foreman/chat-store'
 import { openDesktopManagedApps } from '../managed-apps/binding'
+import { hostGhPath, hostGithubGet } from '../repository-workspace/git'
+import { desktopAppStoreBuild } from '../runtime'
 import type { DesktopRuntime } from '../runtime'
 import { assertDesktopWorkspaceAdmission } from '../workspace-admission'
 import { createDesktopGithubProjectsService, type DesktopGithubProjectsService } from './service'
@@ -40,8 +42,9 @@ async function understand(runtime: DesktopRuntime, input: DesktopGithubProjectsE
 /**
  * GitHub projects for one conversation. Public repositories are read without a credential. A
  * private one is read with the owner's read-only token from Settings, Tool services, when one is
- * saved, and otherwise through the GitHub account the owner signed in to in the Vault (held at
- * Composio), which is asked only for a repository the plain read could not see. Both are used
+ * saved, and otherwise with this Mac's own GitHub command line, or failing that the GitHub account
+ * the owner signed in to in the Vault (held at Composio); either is asked only for a repository
+ * the plain read could not see. Both are used
  * here, in the app, for the read alone: neither the token nor the Composio key reaches the engine,
  * a coworker or a model. A repository neither can see is reported and the others carry on.
  */
@@ -55,7 +58,17 @@ export function desktopGithubProjects(runtime: DesktopRuntime, app: App, chat: D
         store: createDesktopGithubProjectsStore(app.db),
         read: githubReaderWithSignIn(
             confinedGithubReader(permitted, async () => (await desktopAuxiliaryStore(app.db).read('github-read')).key),
-            async () => (await openDesktopManagedApps(runtime)).githubReader(),
+            // A repository the plain read cannot see is asked for with this Mac's own GitHub command line first, which
+            // needs nothing from the Vault; the GitHub account signed in there is the fallback.
+            async () => {
+                const vault = await (await openDesktopManagedApps(runtime)).githubReader().catch(() => null)
+                if (desktopAppStoreBuild() || !hostGhPath()) return vault
+                return async (path, signal) => {
+                    const own = await hostGithubGet(path, signal).catch(() => null)
+                    if (own && (own.status === 200 || !vault)) return own
+                    return vault ? vault(path, signal) : own ?? Promise.reject(new Error('GitHub could not be read.'))
+                }
+            },
             permitted,
         ),
         model: async current => {

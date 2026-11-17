@@ -79,3 +79,19 @@ export function commandFailure(result: CommandResult, doing: string): string {
     if (/http 403|rate limit/.test(said)) return `${doing} failed: GitHub refused this for now (a limit or a permission). Try again later.`
     return `${doing} failed.`
 }
+
+/**
+ * One GET of GitHub's API with this Mac's own GitHub command line, answered with GitHub's status
+ * and data. For the app's own reading of a repository the person listed. Only a path under
+ * /repos/ is ever asked for, and nothing is sent but the request itself.
+ */
+export async function hostGithubGet(path: string, signal: AbortSignal, gh: Command | null = hostGhPath() ? hostGh : null): Promise<{ status: number; data: unknown } | null> {
+    if (!gh || !/^\/repos\/[A-Za-z0-9._~%\/-]+$/.test(path) || path.split('/').some(part => part === '.' || part === '..')) return null
+    const answered = await gh(['api', '--method', 'GET', '-H', 'Accept: application/vnd.github+json', path], { timeoutMs: 20_000, maxOutput: 2_000_000, signal })
+    let data: unknown = null
+    try { data = JSON.parse(answered.stdout) } catch { /* no body */ }
+    if (answered.code === 0) return { status: 200, data }
+    // gh says the status on its error line; anything else is a failure to ask at all.
+    const status = Number(/\(HTTP (\d{3})\)/.exec(answered.stderr)?.[1] ?? 0)
+    return status >= 400 && status <= 599 ? { status, data } : null
+}
