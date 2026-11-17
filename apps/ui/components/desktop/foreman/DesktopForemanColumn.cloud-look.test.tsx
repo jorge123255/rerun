@@ -72,7 +72,7 @@ it('offers to set the team up on the welcome once there are coworkers: one tap s
     expect(choice!.textContent).toContain('Models, permissions and setup')
     await act(async () => choice!.click())
     expect(ports.conversation.sendMessage).toHaveBeenCalledTimes(1)
-    expect(JSON.stringify(ports.conversation.sendMessage.mock.calls[0])).toContain('Set up my team: walk me through the models, permissions and setup')
+    expect(JSON.stringify(vi.mocked(ports.conversation.sendMessage).mock.calls[0])).toContain('Set up my team: walk me through the models, permissions and setup')
 })
 
 it('keeps the team welcome on an empty task even where the template library is wired and the company questions never ran', async () => {
