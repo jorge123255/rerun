@@ -1,33 +1,28 @@
 'use client'
 
-import { byRecency, coworkerLine, type AgentStatus, type CoworkerLineKey, type CoworkerLineTone } from '@rerun/contracts'
-import { shortRelativeTime } from '@rerun/i18n/format'
+import { byRecency } from '@rerun/contracts'
 import { Orb } from '@rerun/ui/foreman'
-import { AgentBuddy, buddyMoodOfStatus } from '@rerun/ui/iso-grid'
-import { ArrowRight, CopyPlus, Ellipsis, PanelRight, Plus, Search, Users } from 'lucide-react'
+import { Box, Plus, Search, Users } from 'lucide-react'
 import { useScrollFade } from '@rerun/ui/primitives'
 import { useMemo, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import type { BoardActivityStatus } from '@/lib/desktop/board-activity'
 import type { DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
+import { desktopSidebarSections, type DesktopSidebarDrop, type DesktopSidebarList } from '@/lib/desktop/workspace-view'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from '../DesktopApp'
 import { useDesktopLocale } from '../DesktopLocale'
-
-const LINE_TONE: Record<CoworkerLineTone, string> = { muted: 'text-muted-foreground', waiting: 'text-orange-500', destructive: 'text-destructive' }
-
-// A failed read never reads as an error of the coworker's, and never as work in progress.
-function statusOf(status: BoardActivityStatus | undefined): AgentStatus {
-    return status === 'working' || status === 'waiting_human' ? status : 'idle'
-}
+import { DesktopCoworkerTile } from './DesktopCoworkerTile'
+import { DesktopSidebarBoxList } from './DesktopSidebarBoxList'
+import type { DesktopBoxDialogKind } from './DesktopSidebarBoxSection'
 
 /**
- * The left column of the Simple view: the workspace, search, then the Chief of Staff and one tile
- * per coworker, the most recently active first.
+ * The left column of the Simple view: the workspace, search, then the Chief of Staff and the
+ * coworkers by Box (upstream #279). Without the board's Boxes to read, it falls back to one tile per
+ * coworker, the most recently active first.
  */
-export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot, unseenIds, boxes, boxOf, onDuplicate, onMoveToBox }: {
+export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot, unseenIds, boxes, boxOf, onDuplicate, onMoveToBox, collapsed, order, onToggleBox, onNewBox, onBoxDialog, onArrange }: {
     workspaceMenu: ReactNode
     agents: DesktopAgentView[]
     statuses: Record<string, BoardActivityStatus>
@@ -47,15 +42,37 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
     // Both need the grid: a copy is placed on it, a move lands in the first free cell of the Box.
     onDuplicate?: (agentId: string) => void
     onMoveToBox?: (agentId: string, spaceId: string) => void
+    // The Boxes folded away, kept with the workspace.
+    collapsed?: readonly string[]
+    // Where someone dragged the Boxes and their coworkers; absent, things follow the order they were made.
+    order?: Pick<DesktopSidebarList, 'boxes' | 'agents'>
+    onToggleBox?: (boxId: string) => void
+    // Both open the board's own dialogs; left out where the board cannot change its Boxes.
+    onNewBox?: () => void
+    onBoxDialog?: (kind: DesktopBoxDialogKind, boxId: string) => void
+    // The list was dragged: where Boxes or coworkers now sit, or a coworker dropped in another Box
+    // (which also needs onMoveToBox). Left out, nothing can be picked up.
+    onArrange?: (drop: DesktopSidebarDrop) => void
     onOpenForeman?: () => void
     onSearch?: () => void
     onNewCoworker: () => void
 }) {
     const { t, language } = useDesktopLocale()
     const ordered = useMemo(() => agents.map(agent => ({ agent, latest: previews?.[agent.id] ?? null })).sort(byRecency), [agents, previews])
+    const grouped = useMemo(() => boxes ? desktopSidebarSections(agents, boxes, id => boxOf?.(id) ?? null, order) : null, [agents, boxes, boxOf, order])
+    const newBox = t('workspaceView.list.newBox')
+    const newCoworker = t('workspaceView.newCoworker')
+    const tile = (agent: DesktopAgentView) => <DesktopCoworkerTile agent={agent} status={statuses[agent.id]} latest={previews?.[agent.id] ?? null} selected={agent.id === selectedId} unseen={!!unseenIds?.includes(agent.id)} disabled={disabled}
+        onOpen={() => onOpenCoworker(agent.id)}
+        actions={onOpenCard && { onOpenCard: () => onOpenCard(agent.id), onDuplicate: onDuplicate && (() => onDuplicate(agent.id)),
+            onMoveToBox: onMoveToBox && (spaceId => onMoveToBox(agent.id, spaceId)), otherBoxes: boxes?.filter(box => box.id !== boxOf?.(agent.id)) }} />
+    const empty = <div className="flex flex-col items-center gap-3 px-3 py-10 text-center text-sm text-muted-foreground">
+        <Users className="size-6" />
+        {t('workspaceView.list.empty')}
+        <Button size="sm" disabled={disabled} onClick={onNewCoworker}><Plus className="size-4" />{newCoworker}</Button>
+    </div>
     const [listElement, setListElement] = useState<HTMLElement | null>(null)
     const listFade = useScrollFade(listElement)
-    const newCoworker = t('workspaceView.newCoworker')
 
     return <aside data-testid="desktop-simple-sidebar" className="flex h-full min-h-0 w-full flex-col">
         {/* Narrow enough that the menu's provider status folds to its icon and the workspace keeps its name. */}
@@ -67,8 +84,12 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
             </button>
         </div>}
         {inboxSlot && <div ref={inboxSlot} data-testid="desktop-simple-inbox" className="flex px-3 pt-1 empty:hidden" />}
-        <div className="flex items-center justify-between gap-2 pt-3 pr-3 pb-1 pl-5">
+        <div className="flex items-center gap-1 pt-3 pr-3 pb-1 pl-5">
             <h2 className="text-xs font-medium text-muted-foreground">{t('workspaceView.list.label')}</h2>
+            <span className="flex-1" />
+            {onNewBox && <TooltipLabeled label={newBox}>
+                <Button variant="ghost" size="icon-sm" aria-label={newBox} disabled={disabled} onClick={onNewBox}><Box className="size-4" /></Button>
+            </TooltipLabeled>}
             <TooltipLabeled label={newCoworker}>
                 <Button variant="ghost" size="icon-sm" aria-label={newCoworker} disabled={disabled} onClick={onNewCoworker}><Plus className="size-4" /></Button>
             </TooltipLabeled>
@@ -84,61 +105,15 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                     <span className="block truncate text-xs text-muted-foreground">{t('workspaceView.foreman.line')}</span>
                 </span>
             </button>}
-            {ordered.length === 0 ? <div className="flex flex-col items-center gap-3 px-3 py-10 text-center text-sm text-muted-foreground">
-                <Users className="size-6" />
-                {t('workspaceView.list.empty')}
-                <Button size="sm" disabled={disabled} onClick={onNewCoworker}><Plus className="size-4" />{newCoworker}</Button>
-            </div> : <ul className="space-y-0.5">
-                {ordered.map(({ agent, latest }) => {
-                    const paused = agent.enabled === false
-                    const status = statusOf(statuses[agent.id])
-                    const line = coworkerLine({ status, paused, description: agent.description || null, latest },
-                        (key: CoworkerLineKey, values) => t(`workspaceView.${key}`, values))
-                    const selected = agent.id === selectedId
-                    return <li key={agent.id}>
-                        <div className={cn('group relative flex items-center rounded-lg transition-colors', selected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/60')}>
-                            <button type="button" disabled={disabled} data-simple-tile-id={agent.id} onClick={() => onOpenCoworker(agent.id)} aria-current={selected ? 'true' : undefined}
-                                className="flex min-w-0 flex-1 items-center gap-2.5 py-2 pr-2 pl-2 text-left">
-                                <AgentBuddy agentId={agent.id} mood={buddyMoodOfStatus(status, paused)} size={32} facing="right" className="shrink-0" />
-                                <span className="min-w-0 flex-1">
-                                    <span className="flex items-baseline gap-2">
-                                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{agent.name}</span>
-                                        {latest && <span className={cn('shrink-0 text-[11px] text-muted-foreground tabular-nums', onOpenCard && 'group-focus-within:invisible group-hover:invisible')}>{shortRelativeTime(latest.updatedAt, language.locale)}</span>}
-                                    </span>
-                                    <span className="flex items-center gap-2">
-                                        <span className={cn('min-w-0 flex-1 truncate text-xs', LINE_TONE[line.tone])}>{line.text || ' '}</span>
-                                        {!paused && status === 'waiting_human' ? <span data-tile-dot="waiting" className="size-2 shrink-0 rounded-full bg-orange-400" />
-                                            : unseenIds?.includes(agent.id) && <span data-tile-dot="unseen" className="size-2 shrink-0 rounded-full bg-brand" />}
-                                    </span>
-                                </span>
-                            </button>
-                            {/* Where the time sits, on hover or focus. */}
-                            {onOpenCard && <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="icon-sm" disabled={disabled} aria-label={t('workspaceView.tile.more', { name: agent.name })}
-                                        className="absolute top-1.5 right-1.5 size-6 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100">
-                                        <Ellipsis className="size-3.5" />
-                                    </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="start" side="right" className="w-auto">
-                                    <DropdownMenuItem onSelect={() => onOpenCard(agent.id)} className="gap-2 whitespace-nowrap"><PanelRight className="size-4" />{t('workspaceView.tile.card')}</DropdownMenuItem>
-                                    {(onDuplicate || onMoveToBox) && <DropdownMenuSeparator />}
-                                    {onDuplicate && <DropdownMenuItem onSelect={() => onDuplicate(agent.id)} className="gap-2 whitespace-nowrap"><CopyPlus className="size-4" />{t('coworker.duplicate')}</DropdownMenuItem>}
-                                    {onMoveToBox && boxes && (() => {
-                                        const others = boxes.filter(box => box.id !== boxOf?.(agent.id))
-                                        return <DropdownMenuSub>
-                                            <DropdownMenuSubTrigger className="gap-2 whitespace-nowrap"><ArrowRight className="size-4" />{t('coworker.moveBox')}</DropdownMenuSubTrigger>
-                                            <DropdownMenuSubContent>
-                                                {others.length === 0 ? <DropdownMenuItem disabled>{t('coworker.noOtherBox')}</DropdownMenuItem>
-                                                    : others.map(box => <DropdownMenuItem key={box.id} className="max-w-56 truncate" onSelect={() => onMoveToBox(agent.id, box.id)}>{box.name}</DropdownMenuItem>)}
-                                            </DropdownMenuSubContent>
-                                        </DropdownMenuSub>
-                                    })()}
-                                </DropdownMenuContent>
-                            </DropdownMenu>}
-                        </div>
-                    </li>
-                })}
+            {/* With several Boxes and no coworker the Boxes are still listed: one just created is not hidden (upstream #283). */}
+            {grouped ? agents.length === 0 && grouped.sections.length <= 1 ? empty : <>
+                <DesktopSidebarBoxList sections={grouped.sections} order={order} collapsed={collapsed ?? []} disabled={disabled}
+                    waitingIn={members => members.some(agent => agent.enabled !== false && statuses[agent.id] === 'waiting_human')}
+                    onToggle={boxId => onToggleBox?.(boxId)} onDialog={onBoxDialog} renderTile={tile} onDrop={onArrange} canMoveBetweenBoxes={!!onMoveToBox} />
+                {/* A coworker the board has in no Box is still listed, after the Boxes. */}
+                {grouped.loose.length > 0 && <ul data-simple-loose className="space-y-0.5">{grouped.loose.map(agent => <li key={agent.id}>{tile(agent)}</li>)}</ul>}
+            </> : ordered.length === 0 ? empty : <ul className="space-y-0.5">
+                {ordered.map(({ agent }) => <li key={agent.id}>{tile(agent)}</li>)}
             </ul>}
             </div>
         </nav>

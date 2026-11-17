@@ -46,6 +46,10 @@ type CopyPlacement = {
     error?: string
 }
 
+// What the Simple view asks of the board it hides: place a copy, move a coworker to a Box, or open
+// one of the board's own Box dialogs (New Box, Rename, Delete).
+export type DesktopBoardTileAction = { nonce: number } & ({ kind: 'copy'; agentId: string } | { kind: 'move'; agentId: string; spaceId: string } | { kind: 'box'; target: DesktopSpaceDialogTarget })
+
 export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySnapshot, routineCountdowns, agents, workspaceName, workspaceMenu, gettingStarted, selectedAgentId, visibleSessionId, workspaceId, launchNonce, onOpenNotificationSettings, panelInsetRight = 0, panelInsetLeft = 0, recenterSignal, newBoxSignal = 0, focusRequest, boxFocusRequest, onOpen, onOpenSettings, onCreate, onDismiss, onOpenConversation, onRename, onShare, onDuplicate, onSetEnabled, onDelete, onPlacementChange, board, onBoardCommand, boardSaving = false, boardError, boardDisabled = false, onBoardInteractionChange, onRetryBoard, newCoworker, onPlaceCoworker, onCancelCoworker, creationChecking = false, creationError, onRetryCreation, templatePlacement, onPlaceTemplate, onCancelTemplate, onReviewTemplate, cameraMountKey, initialCamera, onCameraChange, teamPlacedSignal }: {
     activitySnapshot?: BoardActivitySnapshot
     routineCountdowns?: ReadonlyMap<string, TileCountdown>
@@ -79,7 +83,7 @@ export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySn
     // The coworkers with a finished run nobody has opened yet, for the Simple view's list.
     onUnseenAgents?: (agentIds: string[]) => void
     // What the Simple view's list asks of the grid: place a copy of a coworker, or move one to another Box.
-    tileAction?: { kind: 'copy'; agentId: string; nonce: number } | { kind: 'move'; agentId: string; spaceId: string; nonce: number } | null
+    tileAction?: DesktopBoardTileAction | null
     onPlacementChange?: (placing: boolean) => void
     board?: DesktopBoardState
     onBoardCommand?: (command: DesktopSpaceCommand) => Promise<void>
@@ -290,6 +294,8 @@ export function DesktopBoard({ inboxSlot, onUnseenAgents, tileAction, activitySn
         if (tileAction.kind === 'copy') {
             const source = agents.find(agent => agent.id === tileAction.agentId)
             if (source && onDuplicate) beginCopy(source)
+        } else if (tileAction.kind === 'box') {
+            if (tileAction.target.kind === 'create' || board?.spaces.some(space => space.id === (tileAction.target as { spaceId?: string }).spaceId)) openBoxDialog(tileAction.target)
         } else if (onBoardCommand) void moveAgent(tileAction.agentId, tileAction.spaceId).catch(() => {})
     })
 

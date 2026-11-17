@@ -144,8 +144,11 @@ export function DesktopForemanThreadCrumb({ conversations, state, disabled }: {
  * Markup from upstream apps/ui/components/foreman/ForemanHistory.tsx; its rows from ChatRow in
  * apps/ui/components/agent/sheet/AgentChatsList.tsx.
  */
-export function DesktopForemanHistory({ conversations, waiting = false, disabled }: {
+export function DesktopForemanHistory({ conversations, waiting = false, disabled, inBar = false }: {
     conversations: DesktopForemanConversationsController
+    // At the left of the header in the Simple view's middle, where a coworker keeps its conversations:
+    // their button, and the list opens under it from the left (upstream #316).
+    inBar?: boolean
     // The conversation on screen waits on the person: the dot on the button and on its row.
     waiting?: boolean
     disabled: boolean
@@ -181,14 +184,18 @@ export function DesktopForemanHistory({ conversations, waiting = false, disabled
         <Popover open={open} onOpenChange={next => { setOpen(next); if (next) void conversations.load() }}>
             <TooltipLabeled label={t('foreman.conversations')} side="bottom">
                 <PopoverTrigger asChild>
-                    <Button type="button" variant="ghost" size="icon-sm" disabled={disabled || busy} aria-label={t('foreman.conversations')} className="relative">
+                    {inBar ? <Button type="button" variant="outline" size="icon" disabled={disabled || busy} aria-label={t('foreman.conversations')}
+                        className="relative size-10 rounded-full border-border/50 bg-background/85 shadow-sm">
+                        <MessageCircle aria-hidden className="size-4 text-muted-foreground" />
+                        {waiting && <span aria-hidden data-foreman-waiting className="absolute top-2 right-2 size-2 rounded-full bg-amber-400 ring-2 ring-background" />}
+                    </Button> : <Button type="button" variant="ghost" size="icon-sm" disabled={disabled || busy} aria-label={t('foreman.conversations')} className="relative">
                         <History className="size-3.5" />
                         {waiting && <span aria-hidden data-foreman-waiting className="absolute top-1 right-1 size-1.5 rounded-full bg-amber-400" />}
-                    </Button>
+                    </Button>}
                 </PopoverTrigger>
             </TooltipLabeled>
             {/* A child of the header, whose pointer down drags the column: a press in the list stops here. */}
-            <PopoverContent align="end" data-foreman-history onPointerDown={event => event.stopPropagation()}
+            <PopoverContent align={inBar ? 'start' : 'end'} data-foreman-history onPointerDown={event => event.stopPropagation()}
                 className="max-h-[min(32rem,var(--radix-popover-content-available-height))] w-[min(360px,calc(100vw-1.5rem))] gap-0 overflow-hidden p-0 duration-150 ease-out motion-reduce:animate-none">
                 <div className="flex min-h-0 flex-col">
                     <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 pt-3 pb-1">

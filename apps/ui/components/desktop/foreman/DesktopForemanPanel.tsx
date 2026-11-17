@@ -342,6 +342,27 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
             ? <DesktopForemanThreadCrumb conversations={conversations} disabled={!!props.hidden}
                 state={state.view.live ? 'live' : state.question || state.approval ? 'needs' : 'quiet'} />
             : undefined}
+        framedBar={props.fill && conversations.enabled && !intakeOpen ? {
+            history: <DesktopForemanHistory inBar conversations={conversations} disabled={!!props.hidden}
+                waiting={!state.view.live && !!(state.question || state.approval)} />,
+            thread: conversations.thread ? { id: state.chat.chatId, title: conversations.title ?? t('foreman.newConversation'), named: conversations.title !== null,
+                state: state.view.live ? 'live' : state.question || state.approval ? 'needs' : 'quiet' } : null,
+            onShowGeneral: () => { void conversations.openGeneral() },
+            onNewTask: () => { void conversations.newTask() },
+            end: <>
+                {error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <Button type="button" variant="ghost" size="icon-sm" disabled={!!props.hidden} aria-label={t('foreman.more')} title={t('foreman.more')}><EllipsisIcon className="size-3.5" /></Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-auto">
+                        <DropdownMenuItem data-foreman-permissions onSelect={() => setPermissionsOpen(true)}><ShieldCheckIcon />{t('foreman.permissions')}</DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+                <DesktopForemanFilePermissions chat={state.chat} disabled={!!props.hidden} open={permissionsOpen} onOpenChange={setPermissionsOpen}
+                    onApprovalPermissionChanged={() => { void client.refresh().catch(() => {}) }} />
+            </>,
+        } : undefined}
         headerActions={<>
             {error && <span className="max-w-48 truncate text-xs text-destructive" role="alert" title={error}>{error}</span>}
             {conversations.enabled && <DesktopForemanHistory conversations={conversations} disabled={!!props.hidden}
