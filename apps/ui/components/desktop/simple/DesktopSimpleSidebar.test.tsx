@@ -8,7 +8,7 @@ import { DesktopViewMenuRow } from './DesktopViewMenuRow'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('@rerun/ui/foreman', () => ({ Orb: () => null }))
-vi.mock('@rerun/ui/iso-grid', () => ({ AgentBuddy: () => null, buddyMoodOfStatus: () => 'idle' }))
+vi.mock('@rerun/ui/iso-grid', () => ({ AgentBuddy: ({ mood }: { mood: string }) => <span data-mood={mood} /> }))
 
 const roots: Root[] = []
 afterEach(() => { for (const root of roots.splice(0)) act(() => { root.unmount() }); document.body.innerHTML = '' })
@@ -22,7 +22,7 @@ function mount(node: React.ReactNode) {
 }
 const agent = (id: string, name: string, patch: Partial<DesktopAgentView> = {}): DesktopAgentView => ({ id, name, description: 'Finds leads', createdAt: '', updatedAt: '', ...patch })
 
-test('lists coworkers most recently active first with one line of where each stands', async () => {
+test('lists coworkers most recently active first, each keeping its line at rest with a dot for where it stands', async () => {
     const onOpen = vi.fn(), onForeman = vi.fn(), onSearch = vi.fn(), onNew = vi.fn()
     const host = mount(<DesktopSimpleSidebar workspaceMenu={<span>menu</span>} selectedId="bo" foremanOpen={false}
         agents={[agent('ann', 'Ann'), agent('bo', 'Bo'), agent('cy', 'Cy', { enabled: false }), agent('di', 'Di'), agent('ed', 'Ed', { description: '' })]}
@@ -31,11 +31,22 @@ test('lists coworkers most recently active first with one line of where each sta
         unseenIds={['bo', 'ann', 'di']} onOpenCoworker={onOpen} onOpenForeman={onForeman} onSearch={onSearch} onNewCoworker={onNew} />)
     const tiles = [...host.querySelectorAll<HTMLButtonElement>('[data-simple-tile-id]')]
     expect(tiles.map(tile => tile.dataset.simpleTileId)).toEqual(['bo', 'ann', 'di', 'cy', 'ed'])
-    const lines = tiles.map(tile => tile.querySelector('.text-xs')?.textContent)
-    // Waiting reads its conversation, work its subject, a quiet coworker its last message, paused wins over work.
-    expect(lines).toEqual(['Approve the invoice', 'Working · Q4 prospects', 'You: Send it on Monday', 'Paused', ' '])
-    // Waiting on the person wins over a finished run nobody opened; the others carry no dot.
-    expect(tiles.map(tile => tile.querySelector<HTMLElement>('[data-tile-dot]')?.dataset.tileDot ?? null)).toEqual(['waiting', 'unseen', 'unseen', null, null])
+    const lines = tiles.map(tile => tile.querySelector('[data-tile-line]'))
+    // Each line reads as it does at rest, whatever the coworker is doing (upstream #278).
+    expect(lines.map(line => line?.textContent)).toEqual(['Approve the invoice', 'Q4 prospects', 'You: Send it on Monday', 'Finds leads', ' '])
+    expect(lines.every(line => line?.className.includes('text-muted-foreground') && !line.className.includes('orange'))).toBe(true)
+    // The dot alone tells where each stands: waiting, working, a run nobody opened, paused, nothing at rest.
+    const dots = tiles.map(tile => tile.querySelector<HTMLElement>('[data-tile-dot]'))
+    expect(dots.map(dot => dot?.dataset.tileDot ?? null)).toEqual(['waiting', 'working', 'unseen', 'paused', null])
+    expect(dots.map(dot => dot?.getAttribute('aria-label') ?? null)).toEqual(['Waiting for you', 'Working', null, 'Paused', null])
+    expect(dots[0]!.querySelector('.bg-orange-400')).not.toBeNull()
+    // Working is green and pulses; a read that failed (Di) is never shown as an error or as work.
+    expect(dots[1]!.querySelector('.bg-emerald-500')).not.toBeNull()
+    expect(dots[1]!.querySelector('.animate-ping')).not.toBeNull()
+    expect(dots[2]!.className).toContain('bg-brand')
+    expect(dots[3]!.querySelector('.bg-muted-foreground\\/40')).not.toBeNull()
+    // The buddy keeps its look at rest: asleep only when paused.
+    expect(tiles.map(tile => tile.querySelector('[data-mood]')?.getAttribute('data-mood'))).toEqual(['idle', 'idle', 'idle', 'asleep', 'idle'])
     expect(tiles[0].getAttribute('aria-current')).toBe('true')
     expect(tiles[1].getAttribute('aria-current')).toBeNull()
     await act(async () => { tiles[1].click() })
