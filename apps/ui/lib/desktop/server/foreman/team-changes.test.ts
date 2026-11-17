@@ -106,3 +106,12 @@ test('a plan item keeps the model the person chose only when that provider is co
     // What the model wrote is never kept as such.
     for (const item of items) { expect(item.provider).toBeUndefined(); expect(item.model).toBeUndefined() }
 })
+
+test('a setup that is not waiting is refused before the card, and one that could not be read is left to the app', () => {
+    const sealed = sealTeamChanges({ summary: 'Start setup', changes: [line('start_setup', { coworker: 'Tuner Developer' }), line('start_setup', { coworker: 'Server Developer' }), line('start_setup', { coworker: 'Twin Reader' })] }, {
+        ...workspace, coworkers: [{ id: 'a1', name: 'Tuner Developer', setupWaiting: false }, { id: 'a2', name: 'Server Developer', setupWaiting: true }, { id: 'a5', name: 'Twin Reader' }],
+    })
+    if (!sealed.ok) throw new Error(sealed.message)
+    expect(sealed.changes.map(change => change.coworker)).toEqual(['Server Developer', 'Twin Reader'])
+    expect(sealed.refused).toEqual(['start_setup for "Tuner Developer": this coworker has no setup waiting to start'])
+})

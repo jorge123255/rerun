@@ -31,6 +31,7 @@ import { desktopGithubProjectsInstruction, desktopGithubProjectsPendingInstructi
 import { readDesktopGithubProjects } from '../github-projects/store'
 import { desktopGithubProjects } from '../github-projects/binding'
 import { desktopTeamChangesInstruction, teamModelOptions } from './team-changes-binding'
+import { readDesktopTeamState } from './team-state'
 import { foremanIntakeMessage } from './intake'
 import { hideDesktopForemanIntakeKickoff } from './intake-history'
 import type { DesktopApprovalAnswer } from '../../approvals'
@@ -408,8 +409,8 @@ async function createBinding(runtime: DesktopRuntime) {
             const { view, companyProfile, siteProfile, githubProjects } = await intakeContext(chat, requestId, text, owner, linked.length > 0)
             // What it may propose for the team, and the providers, models and efforts it may offer. A failure to read them only leaves this out.
             const teamInstruction = await (async () => {
-                const [providers, coworkers] = await Promise.all([readDesktopProviders(runtime), listDesktopAgents(db)])
-                return desktopTeamChangesInstruction(teamModelOptions(providers.connections), coworkers.map(agent => ({ name: agent.name, enabled: agent.enabled })))
+                const providers = await readDesktopProviders(runtime)
+                return desktopTeamChangesInstruction(teamModelOptions(providers.connections), await readDesktopTeamState(runtime, db, providers.connections))
             })().catch(() => null)
             const board = await readDesktopBoardState(db)
             const name = String((await db.execute('SELECT name FROM desktop_workspace WHERE id=1')).rows[0]?.name ?? 'My workspace')

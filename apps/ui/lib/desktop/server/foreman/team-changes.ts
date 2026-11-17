@@ -25,7 +25,8 @@ function ensure(db: Client): Promise<void> {
 }
 
 export type TeamChangeWorkspace = {
-    coworkers: readonly { id: string; name: string }[]
+    /** `setupWaiting` false: nothing to start (no setup, already started, or done). Left out when it could not be read. */
+    coworkers: readonly { id: string; name: string; setupWaiting?: boolean }[]
     connections: readonly Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels' | 'codexReasoning' | 'customReasoning' | 'subscriptionModels'>[]
 }
 
@@ -60,6 +61,7 @@ export function sealTeamChanges(raw: unknown, workspace: TeamChangeWorkspace): {
             if (!line.model || ![...connection.models, ...(connection.extraModels ?? [])].includes(line.model)) { refuse('that provider does not offer this model'); continue }
         }
         if ((line.action === 'allow' || line.action === 'stop_allowing') && !line.permission) { refuse('name the permission'); continue }
+        if (line.action === 'start_setup' && who?.setupWaiting === false) { refuse('this coworker has no setup waiting to start'); continue }
         if (line.action === 'set_effort' && (!line.effort || !connectionReasoningOptions(connection as never, line.model!)?.supported.includes(line.effort))) { refuse('that model does not offer this effort'); continue }
         const identity = JSON.stringify([line.action, who?.id ?? null, line.permission ?? null, connection?.id ?? null, line.model ?? null])
         if (seen.has(identity)) continue
