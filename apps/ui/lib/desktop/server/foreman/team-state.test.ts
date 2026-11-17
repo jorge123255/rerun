@@ -72,7 +72,7 @@ test('the Chief of Staff is told the settings as they are and how to run the set
             { name: 'Ben', on: false, model: null, allowed: [], setup: 'none' },
             { name: 'Cy', on: true, model: null, allowed: null, setup: 'unknown' },
         ],
-    )
+    )!
     expect(text).toContain('{"name":"Ada","on":true,"model":"ChatGPT (Codex) · gpt-6-sol","allowed":["callAgent"],"setup":"needed"}')
     // Read, and following the workspace default; not read at all says nothing about model or permissions.
     expect(text).toContain('{"name":"Ben","on":false,"model":"workspace default","allowed":[],"setup":"not needed"}')

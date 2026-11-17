@@ -73,10 +73,17 @@ export function foremanRequestIdentityInput(chat: DesktopForemanChatRef, session
     return JSON.stringify([chat.workspaceId, chat.chatId, sessionId, guard.runId, guard.sourceMessageId, guard.toolCallId, guard.digest, ...(kind ? [kind] : [])])
 }
 
+/**
+ * The most the app may tell the Chief of Staff in one turn. The app fits what it says inside this
+ * (see `fitForemanInstructions` on the Mac): a turn over the limit is refused whole, which stops
+ * the conversation, so nothing is added to the instructions without a share of this budget.
+ */
+export const DESKTOP_FOREMAN_INSTRUCTIONS_LIMIT = 24_000
+
 export const desktopForemanTurnSchema = z.strictObject({
     binding: foremanBindingSchema.extend({ runId: z.uuid() }), sessionId: z.uuid(),
     text: z.string().max(DESKTOP_FOREMAN_TURN_TEXT_LIMIT),
-    brief: foremanBriefSchema.extend({ instructions: z.string().min(1).max(12_000), tools: z.array(z.never()).max(0), hubToken: z.never().optional() }).strict(),
+    brief: foremanBriefSchema.extend({ instructions: z.string().min(1).max(DESKTOP_FOREMAN_INSTRUCTIONS_LIMIT), tools: z.array(z.never()).max(0), hubToken: z.never().optional() }).strict(),
     question: foremanQuestionGuardSchema.optional(),
     approval: foremanQuestionGuardSchema.optional(),
     documents: desktopDocumentSendSelectionSchema.optional(),
