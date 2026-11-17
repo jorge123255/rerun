@@ -31,7 +31,7 @@ import { desktopGithubProjectsInstruction, desktopGithubProjectsPendingInstructi
 import { readDesktopGithubProjects } from '../github-projects/store'
 import { desktopGithubProjects } from '../github-projects/binding'
 import { desktopTeamChangesInstruction, teamModelOptions } from './team-changes-binding'
-import { readDesktopTeamState } from './team-state'
+import { readDesktopChiefAsks, readDesktopTeamState } from './team-state'
 import { fitForemanInstructions } from './instructions-fit'
 import { foremanIntakeMessage } from './intake'
 import { hideDesktopForemanIntakeKickoff } from './intake-history'
@@ -411,7 +411,7 @@ async function createBinding(runtime: DesktopRuntime) {
             // What it may propose for the team, and the providers, models and efforts it may offer. A failure to read them only leaves this out.
             const teamInstruction = await (async () => {
                 const providers = await readDesktopProviders(runtime)
-                return { options: teamModelOptions(providers.connections), coworkers: await readDesktopTeamState(runtime, db, providers.connections) }
+                return { options: teamModelOptions(providers.connections), coworkers: await readDesktopTeamState(runtime, db, providers.connections), chiefAsks: await readDesktopChiefAsks(db) }
             })().catch(() => null)
             const board = await readDesktopBoardState(db)
             const name = String((await db.execute('SELECT name FROM desktop_workspace WHERE id=1')).rows[0]?.name ?? 'My workspace')
@@ -423,7 +423,7 @@ async function createBinding(runtime: DesktopRuntime) {
                 desktopGithubProjectsInstruction(githubProjects),
                 stillReading ? null : desktopGithubProjectsUnreadInstruction(githubProjects),
                 stillReading ? desktopGithubProjectsPendingInstruction(linked) : null,
-                teamInstruction ? (budget: number) => desktopTeamChangesInstruction(teamInstruction.options, teamInstruction.coworkers, budget) : null,
+                teamInstruction ? (budget: number) => desktopTeamChangesInstruction(teamInstruction.options, teamInstruction.coworkers, budget, teamInstruction.chiefAsks) : null,
                 'Questions about Rerun itself must use search_docs and link the retrieved passage; do not guess features, prices or limits. Empty or unavailable documentation stays unavailable.',
                 'When the user asks to design or add coworkers, propose their jobs with show_plan. Nothing is created until they confirm the card. Never treat chat text as approval.'])
             const turn: ForemanTurn = { binding: { ...chat, runId: requestId, model }, sessionId: owner.sessionId, text, brief: { instructions, tools: [] },

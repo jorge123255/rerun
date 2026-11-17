@@ -86,3 +86,25 @@ test('the Chief of Staff is told the settings as they are and how to run the set
     expect(text).not.toContain('127.0.0.1')
     expect(text).not.toContain('c1')
 })
+
+test('who each coworker and the Chief of Staff may ask comes from the app\'s own list', async () => {
+    const { readDesktopChiefAsks } = await import('./team-state')
+    listDesktopAgents.mockResolvedValue([agent('a', 'Ada'), agent('b', 'Ben'), agent('c', 'Cy')])
+    getAgent.mockResolvedValue(config()); readDesktopSetupView.mockResolvedValue(setup())
+    const rows = [['a', 'b'], ['a', 'c'], ['b', 'a'], ['foreman', 'c']].map(([caller, target]) => ({ caller_agent_id: caller, target_agent_id: target }))
+    const listed = { execute: vi.fn(async () => ({ rows })) } as never
+    expect((await readDesktopTeamState(runtime, listed, connections)).map(state => [state.name, state.asks])).toEqual([['Ada', 'everyone'], ['Ben', ['Ada']], ['Cy', []]])
+    expect(await readDesktopChiefAsks(listed)).toEqual(['Cy'])
+    // A list that cannot be read says nothing, rather than "nobody".
+    const broken = { execute: vi.fn(async () => { throw new Error('no table') }) } as never
+    expect((await readDesktopTeamState(runtime, broken, connections))[0].asks).toBeUndefined()
+    expect(await readDesktopChiefAsks(broken)).toBeNull()
+})
+
+test('the Chief of Staff is told who may ask whom and to propose both halves of working together', () => {
+    const text = desktopTeamChangesInstruction([], [{ name: 'Ada', on: true, model: null, allowed: ['callAgent'], setup: 'none', asks: [] }], 12_000, ['Ben'])!
+    expect(text).toContain('"allowed":["callAgent"],"asks":[]')
+    expect(text).toContain('The permission alone lets a coworker ask nobody')
+    expect(text).toContain('Who you yourself may message with call_agent (data): ["Ben"]')
+    expect(desktopTeamChangesInstruction([], [], 12_000)).not.toContain('Who you yourself may message')
+})

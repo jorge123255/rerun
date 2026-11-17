@@ -19,6 +19,8 @@ export type TeamChangesPorts = {
     startSetup(agentId: string): Promise<void>
     setModel(agentId: string, connectionId: string, model: string): Promise<void>
     setEffort(connectionId: string, model: string, effort: string): Promise<void>
+    /** Adds to who a coworker, or with `null` the Chief of Staff, may ask for help. */
+    allowCalls(agentId: string | null, targetAgentIds: string[]): Promise<void>
 }
 
 const failure = (error: unknown) => (error instanceof Error && error.message ? error.message : 'This change was refused.').slice(0, 400)
@@ -33,6 +35,10 @@ export async function applyTeamChanges(ports: TeamChangesPorts, card: DesktopTea
         try {
             const id = change.agentId
             if (change.action === 'set_effort') await ports.setEffort(change.connectionId!, change.model!, change.effort!)
+            else if (change.action === 'allow_calls') {
+                if (!change.chief && !id) throw new Error('This coworker is no longer here.')
+                await ports.allowCalls(change.chief ? null : id, change.targetAgentIds ?? [])
+            }
             else if (!id) throw new Error('This coworker is no longer here.')
             else if (change.action === 'switch_on' || change.action === 'switch_off') await ports.setEnabled(id, change.action === 'switch_on')
             else if (change.action === 'allow' || change.action === 'stop_allowing') await ports.setPermission(id, change.permission!, change.action === 'allow')
@@ -69,5 +75,20 @@ export function teamChangesClient(chat: DesktopForemanChatRef): TeamChangesPorts
         },
         setModel: async (id, connectionId, model) => { await send(`${agent(id)}/model`, { action: 'coworker', connectionId, model }, 'PATCH') },
         setEffort: async (connectionId, model, effort) => { await send('/api/desktop/model-effort', { connectionId, model, effort }, 'PUT') },
+        // The same two requests the "who may it ask" list makes: read what is allowed now, then save
+        // that plus the new names, so nothing already allowed is taken away.
+        allowCalls: async (id, targetAgentIds) => {
+            let url = `/api/desktop/coworkers/${encodeURIComponent(id ?? '')}/call-targets`
+            if (id === null) {
+                const permissions = z.object({ launchNonce: z.string(), grants: z.object({ callAgent: z.boolean() }).passthrough() }).passthrough()
+                    .parse(await fetch(`/api/desktop/foreman/file-permissions?${query}`, { cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30_000) }).then(json))
+                if (!permissions.grants.callAgent) throw new Error('Turn on Call coworkers for the Chief of Staff in its permissions first.')
+                url = `/api/desktop/foreman/call-targets?${new URLSearchParams({ workspaceId: chat.workspaceId, chatId: chat.chatId, launchNonce: permissions.launchNonce })}`
+            }
+            const now = z.object({ allowedTargetIds: z.array(z.string()) }).passthrough().parse(await fetch(url, { cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30_000) }).then(json))
+            const next = [...new Set([...now.allowedTargetIds, ...targetAgentIds])]
+            if (next.length === now.allowedTargetIds.length) return
+            await send(url, { targetAgentIds: next, expectedTargetAgentIds: now.allowedTargetIds }, 'PATCH')
+        },
     }
 }
