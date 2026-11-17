@@ -1,6 +1,6 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
-import { desktopWorkspaceViewStateSchema, type DesktopWorkspaceViewChange, type DesktopWorkspaceViewState } from '../workspace-view'
+import { desktopSidebarListSchema, desktopWorkspaceViewStateSchema, type DesktopSidebarList, type DesktopSidebarListChange, type DesktopWorkspaceViewChange, type DesktopWorkspaceViewState } from '../workspace-view'
 
 export async function readDesktopWorkspaceView(db: Pick<Client, 'execute'>): Promise<DesktopWorkspaceViewState> {
     const row = (await db.execute('SELECT view,last_opened FROM desktop_workspace_view WHERE workspace_id=1')).rows[0]
@@ -15,4 +15,18 @@ export async function saveDesktopWorkspaceView(db: Client, change: DesktopWorksp
         args: [change.view ?? null, change.lastOpened ?? null],
     })
     return readDesktopWorkspaceView(db)
+}
+
+export async function readDesktopSidebarList(db: Pick<Client, 'execute'>): Promise<DesktopSidebarList> {
+    const collapsed = (await db.execute('SELECT box_id FROM desktop_sidebar_collapsed ORDER BY box_id')).rows.map(row => String(row.box_id))
+    return desktopSidebarListSchema.parse({ collapsed })
+}
+
+// One change is one transaction: a list is never left half renumbered.
+export async function saveDesktopSidebarList(db: Client, change: DesktopSidebarListChange): Promise<DesktopSidebarList> {
+    await db.batch([
+        'DELETE FROM desktop_sidebar_collapsed',
+        ...[...new Set(change.ids)].map(id => ({ sql: 'INSERT INTO desktop_sidebar_collapsed(box_id) VALUES(?)', args: [id] })),
+    ], 'write')
+    return readDesktopSidebarList(db)
 }

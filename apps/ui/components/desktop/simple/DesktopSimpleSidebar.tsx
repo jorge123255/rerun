@@ -2,23 +2,26 @@
 
 import { byRecency } from '@rerun/contracts'
 import { Orb } from '@rerun/ui/foreman'
-import { Plus, Search, Users } from 'lucide-react'
+import { Box, Plus, Search, Users } from 'lucide-react'
 import { useScrollFade } from '@rerun/ui/primitives'
 import { useMemo, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import type { BoardActivityStatus } from '@/lib/desktop/board-activity'
 import type { DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
+import { desktopSidebarSections } from '@/lib/desktop/workspace-view'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from '../DesktopApp'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopCoworkerTile } from './DesktopCoworkerTile'
+import { DesktopSidebarBoxSection, type DesktopBoxDialogKind } from './DesktopSidebarBoxSection'
 
 /**
- * The left column of the Simple view: the workspace, search, then the Chief of Staff and one tile
- * per coworker, the most recently active first.
+ * The left column of the Simple view: the workspace, search, then the Chief of Staff and the
+ * coworkers by Box (upstream #279). Without the board's Boxes to read, it falls back to one tile per
+ * coworker, the most recently active first.
  */
-export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot, unseenIds, boxes, boxOf, onDuplicate, onMoveToBox }: {
+export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot, unseenIds, boxes, boxOf, onDuplicate, onMoveToBox, collapsed, onToggleBox, onNewBox, onBoxDialog }: {
     workspaceMenu: ReactNode
     agents: DesktopAgentView[]
     statuses: Record<string, BoardActivityStatus>
@@ -38,15 +41,32 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
     // Both need the grid: a copy is placed on it, a move lands in the first free cell of the Box.
     onDuplicate?: (agentId: string) => void
     onMoveToBox?: (agentId: string, spaceId: string) => void
+    // The Boxes folded away, kept with the workspace.
+    collapsed?: readonly string[]
+    onToggleBox?: (boxId: string) => void
+    // Both open the board's own dialogs; left out where the board cannot change its Boxes.
+    onNewBox?: () => void
+    onBoxDialog?: (kind: DesktopBoxDialogKind, boxId: string) => void
     onOpenForeman?: () => void
     onSearch?: () => void
     onNewCoworker: () => void
 }) {
     const { t, language } = useDesktopLocale()
     const ordered = useMemo(() => agents.map(agent => ({ agent, latest: previews?.[agent.id] ?? null })).sort(byRecency), [agents, previews])
+    const grouped = useMemo(() => boxes ? desktopSidebarSections(agents, boxes, id => boxOf?.(id) ?? null) : null, [agents, boxes, boxOf])
+    const newBox = t('workspaceView.list.newBox')
+    const newCoworker = t('workspaceView.newCoworker')
+    const tile = (agent: DesktopAgentView) => <DesktopCoworkerTile agent={agent} status={statuses[agent.id]} latest={previews?.[agent.id] ?? null} selected={agent.id === selectedId} unseen={!!unseenIds?.includes(agent.id)} disabled={disabled}
+        onOpen={() => onOpenCoworker(agent.id)}
+        actions={onOpenCard && { onOpenCard: () => onOpenCard(agent.id), onDuplicate: onDuplicate && (() => onDuplicate(agent.id)),
+            onMoveToBox: onMoveToBox && (spaceId => onMoveToBox(agent.id, spaceId)), otherBoxes: boxes?.filter(box => box.id !== boxOf?.(agent.id)) }} />
+    const empty = <div className="flex flex-col items-center gap-3 px-3 py-10 text-center text-sm text-muted-foreground">
+        <Users className="size-6" />
+        {t('workspaceView.list.empty')}
+        <Button size="sm" disabled={disabled} onClick={onNewCoworker}><Plus className="size-4" />{newCoworker}</Button>
+    </div>
     const [listElement, setListElement] = useState<HTMLElement | null>(null)
     const listFade = useScrollFade(listElement)
-    const newCoworker = t('workspaceView.newCoworker')
 
     return <aside data-testid="desktop-simple-sidebar" className="flex h-full min-h-0 w-full flex-col">
         {/* Narrow enough that the menu's provider status folds to its icon and the workspace keeps its name. */}
@@ -58,8 +78,12 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
             </button>
         </div>}
         {inboxSlot && <div ref={inboxSlot} data-testid="desktop-simple-inbox" className="flex px-3 pt-1 empty:hidden" />}
-        <div className="flex items-center justify-between gap-2 pt-3 pr-3 pb-1 pl-5">
+        <div className="flex items-center gap-1 pt-3 pr-3 pb-1 pl-5">
             <h2 className="text-xs font-medium text-muted-foreground">{t('workspaceView.list.label')}</h2>
+            <span className="flex-1" />
+            {onNewBox && <TooltipLabeled label={newBox}>
+                <Button variant="ghost" size="icon-sm" aria-label={newBox} disabled={disabled} onClick={onNewBox}><Box className="size-4" /></Button>
+            </TooltipLabeled>}
             <TooltipLabeled label={newCoworker}>
                 <Button variant="ghost" size="icon-sm" aria-label={newCoworker} disabled={disabled} onClick={onNewCoworker}><Plus className="size-4" /></Button>
             </TooltipLabeled>
@@ -75,17 +99,15 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                     <span className="block truncate text-xs text-muted-foreground">{t('workspaceView.foreman.line')}</span>
                 </span>
             </button>}
-            {ordered.length === 0 ? <div className="flex flex-col items-center gap-3 px-3 py-10 text-center text-sm text-muted-foreground">
-                <Users className="size-6" />
-                {t('workspaceView.list.empty')}
-                <Button size="sm" disabled={disabled} onClick={onNewCoworker}><Plus className="size-4" />{newCoworker}</Button>
-            </div> : <ul className="space-y-0.5">
-                {ordered.map(({ agent, latest }) => <li key={agent.id}>
-                    <DesktopCoworkerTile agent={agent} status={statuses[agent.id]} latest={latest} selected={agent.id === selectedId} unseen={!!unseenIds?.includes(agent.id)} disabled={disabled}
-                        onOpen={() => onOpenCoworker(agent.id)}
-                        actions={onOpenCard && { onOpenCard: () => onOpenCard(agent.id), onDuplicate: onDuplicate && (() => onDuplicate(agent.id)),
-                            onMoveToBox: onMoveToBox && (spaceId => onMoveToBox(agent.id, spaceId)), otherBoxes: boxes?.filter(box => box.id !== boxOf?.(agent.id)) }} />
-                </li>)}
+            {grouped ? agents.length === 0 ? empty : <>
+                {grouped.sections.map(({ box, members }) => <DesktopSidebarBoxSection key={box.id} box={box} members={members} disabled={disabled}
+                    collapsed={!!collapsed?.includes(box.id)} onToggle={() => onToggleBox?.(box.id)}
+                    waiting={members.some(agent => agent.enabled !== false && statuses[agent.id] === 'waiting_human')}
+                    onDialog={onBoxDialog && (kind => onBoxDialog(kind, box.id))} renderTile={tile} />)}
+                {/* A coworker the board has in no Box is still listed, after the Boxes. */}
+                {grouped.loose.length > 0 && <ul data-simple-loose className="space-y-0.5">{grouped.loose.map(agent => <li key={agent.id}>{tile(agent)}</li>)}</ul>}
+            </> : ordered.length === 0 ? empty : <ul className="space-y-0.5">
+                {ordered.map(({ agent }) => <li key={agent.id}>{tile(agent)}</li>)}
             </ul>}
             </div>
         </nav>

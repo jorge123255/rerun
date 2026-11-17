@@ -40,3 +40,52 @@ export function desktopSimpleInitialOpen({ remembered, agentIds, mostRecent }: {
     if (remembered && agentIds.includes(remembered)) return remembered
     return mostRecent && agentIds.includes(mostRecent) ? mostRecent : null
 }
+
+// The Simple view's list (upstream #279): one section per Box under the Chief of Staff, an empty Box
+// kept so a coworker can be moved into it. The Boxes folded away are kept with the workspace on
+// this Mac, where upstream keeps them in the browser: the app's address changes with every launch.
+export const desktopSidebarListSchema = z.strictObject({ collapsed: z.array(z.uuid()).max(500) })
+export type DesktopSidebarList = z.infer<typeof desktopSidebarListSchema>
+export const emptyDesktopSidebarList = (): DesktopSidebarList => ({ collapsed: [] })
+
+export const desktopSidebarListChangeSchema = z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('collapsed'), ids: z.array(z.uuid()).max(500) }),
+])
+export type DesktopSidebarListChange = z.infer<typeof desktopSidebarListChangeSchema>
+
+const LIST_PATH = '/api/desktop/workspace-view/list'
+
+export async function loadDesktopSidebarList(signal?: AbortSignal): Promise<DesktopSidebarList | null> {
+    try {
+        const response = await fetch(LIST_PATH, { cache: 'no-store', signal })
+        return response.ok ? desktopSidebarListSchema.parse(await response.json()) : null
+    } catch { return null }
+}
+
+// Null when it could not be saved: the caller reads the list again rather than show what is not kept.
+export async function saveDesktopSidebarList(change: DesktopSidebarListChange): Promise<DesktopSidebarList | null> {
+    try {
+        const response = await fetch(LIST_PATH, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change) })
+        return response.ok ? desktopSidebarListSchema.parse(await response.json()) : null
+    } catch { return null }
+}
+
+// What a change makes of the list, here before the answer comes back and in the database alike.
+export function applyDesktopSidebarListChange(list: DesktopSidebarList, change: DesktopSidebarListChange): DesktopSidebarList {
+    return { ...list, collapsed: [...new Set(change.ids)] }
+}
+
+export type DesktopSidebarSection<A, B> = { box: B; members: A[] }
+
+// One section per Box in the order the Boxes were made (the board's own order), their coworkers in
+// the order they were made. A coworker the board has in no listed Box is never dropped: it follows
+// the sections in `loose`.
+export function desktopSidebarSections<A extends { id: string; name: string; createdAt?: string }, B extends { id: string }>(agents: readonly A[], boxes: readonly B[], boxOf: (agentId: string) => string | null): { sections: DesktopSidebarSection<A, B>[]; loose: A[] } {
+    const made = [...agents].sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.name.localeCompare(b.name))
+    const known = new Set(boxes.map(box => box.id))
+    const home = new Map(made.map(agent => [agent.id, boxOf(agent.id)]))
+    return {
+        sections: boxes.map(box => ({ box, members: made.filter(agent => home.get(agent.id) === box.id) })),
+        loose: made.filter(agent => { const box = home.get(agent.id); return !box || !known.has(box) }),
+    }
+}

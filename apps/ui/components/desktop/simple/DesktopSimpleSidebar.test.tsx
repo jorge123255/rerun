@@ -96,3 +96,79 @@ test('the tile menu opens the card, places a copy and moves a coworker to anothe
     expect(onMove).toHaveBeenCalledExactlyOnceWith('ann', 'support')
     expect(onCard).not.toHaveBeenCalled()
 })
+
+const BOXES = [{ id: 'sales', name: 'Sales' }, { id: 'support', name: 'Support' }, { id: 'lab', name: 'Lab' }]
+const HOME: Record<string, string> = { ann: 'support', bo: 'sales', cy: 'sales' }
+const made = (id: string, name: string, at: string, patch: Partial<DesktopAgentView> = {}) => agent(id, name, { createdAt: at, ...patch })
+
+test('lists the coworkers by Box under the Chief of Staff, an empty Box too, each in the order it was made', async () => {
+    const host = mount(<DesktopSimpleSidebar workspaceMenu={null} selectedId="cy" foremanOpen onOpenForeman={vi.fn()} onOpenCoworker={vi.fn()} onNewCoworker={vi.fn()}
+        agents={[made('cy', 'Cy', '2026-11-03'), made('ann', 'Ann', '2026-11-02'), made('bo', 'Bo', '2026-11-01'), made('di', 'Di', '2026-11-04')]}
+        statuses={{}} previews={{ cy: { title: 'Newest', updatedAt: '2026-11-13T12:00:00.000Z' } }} boxes={BOXES} boxOf={id => HOME[id] ?? null} />)
+    const list = host.querySelector('[data-testid="desktop-simple-list"]')!
+    // The Chief of Staff stays on top, then the Boxes in the board's order: recency no longer orders the list.
+    const rows = [...list.querySelectorAll<HTMLElement>('button[aria-current], [data-simple-box-toggle], [data-simple-tile-id], [data-simple-box-empty]')]
+    expect(rows[0].textContent).toContain('Chief of Staff')
+    expect(rows[0].getAttribute('aria-current')).toBe('true')
+    const sections = [...list.querySelectorAll<HTMLElement>('section[data-simple-box-id]')]
+    expect(sections.map(section => [section.getAttribute('aria-label'), section.querySelector('[data-simple-box-count]')?.textContent,
+        [...section.querySelectorAll<HTMLElement>('[data-simple-tile-id]')].map(tile => tile.dataset.simpleTileId)])).toEqual([
+        ['Sales', '2', ['bo', 'cy']],
+        ['Support', '1', ['ann']],
+        ['Lab', '0', []],
+    ])
+    expect(sections[2].querySelector('[data-simple-box-empty]')?.textContent).toBe('No coworkers')
+    // A coworker the board has in no Box is not lost: it follows the Boxes.
+    expect([...list.querySelectorAll<HTMLElement>('[data-simple-loose] [data-simple-tile-id]')].map(tile => tile.dataset.simpleTileId)).toEqual(['di'])
+    expect(list.querySelector('[data-simple-tile-id="cy"]')?.getAttribute('aria-current')).toBe('true')
+})
+
+test('a Box folds away, says so, and shows an orange dot folded when one of its coworkers waits', async () => {
+    const onToggle = vi.fn()
+    const render = (collapsed: string[]) => <DesktopSimpleSidebar workspaceMenu={null} selectedId={null} foremanOpen={false} onOpenCoworker={vi.fn()} onNewCoworker={vi.fn()}
+        agents={[made('ann', 'Ann', '1'), made('bo', 'Bo', '2'), made('cy', 'Cy', '3', { enabled: false })]} statuses={{ bo: 'waiting_human', cy: 'waiting_human' }} previews={{}}
+        boxes={BOXES} boxOf={id => HOME[id] ?? null} collapsed={collapsed} onToggleBox={onToggle} />
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    roots.push(root)
+    act(() => { root.render(render([])) })
+    const toggle = (id: string) => host.querySelector<HTMLButtonElement>(`[data-simple-box-toggle="${id}"]`)!
+    expect(toggle('sales').getAttribute('aria-expanded')).toBe('true')
+    expect(host.querySelector('[data-simple-box-waiting]')).toBeNull()
+    await act(async () => { toggle('sales').click() })
+    expect(onToggle).toHaveBeenCalledExactlyOnceWith('sales')
+    act(() => { root.render(render(['sales', 'support'])) })
+    expect(toggle('sales').getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('[data-simple-tile-id="bo"]')).toBeNull()
+    // Bo waits in Sales; Ann in Support does not, and a paused coworker never does.
+    expect(toggle('sales').querySelector('[data-simple-box-waiting]')).not.toBeNull()
+    expect(toggle('support').querySelector('[data-simple-box-waiting]')).toBeNull()
+    expect(toggle('sales').querySelector('[data-simple-box-count]')?.textContent).toBe('2')
+})
+
+test('New Box and a Box\'s menu open the board\'s dialogs, and are absent where the board cannot change its Boxes', async () => {
+    const onNewBox = vi.fn(), onBoxDialog = vi.fn()
+    const host = mount(<DesktopSimpleSidebar workspaceMenu={null} selectedId={null} foremanOpen={false} onOpenCoworker={vi.fn()} onNewCoworker={vi.fn()}
+        agents={[made('bo', 'Bo', '1')]} statuses={{}} previews={{}} boxes={BOXES} boxOf={id => HOME[id] ?? null} onNewBox={onNewBox} onBoxDialog={onBoxDialog} />)
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="New Box"]')!.click() })
+    expect(onNewBox).toHaveBeenCalledOnce()
+    const open = async () => {
+        const more = host.querySelector<HTMLButtonElement>('button[aria-label="Actions for Support"]')!
+        more.focus()
+        await act(async () => { more.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+        return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    }
+    const items = await open()
+    // Upstream's "who can access it" is left out: one person per workspace on this Mac.
+    expect(items.map(item => item.textContent)).toEqual(['Rename', 'Delete'])
+    await act(async () => { items[0].click() })
+    expect(onBoxDialog).toHaveBeenCalledExactlyOnceWith('rename', 'support')
+    await act(async () => { (await open())[1].click() })
+    expect(onBoxDialog).toHaveBeenLastCalledWith('delete', 'support')
+    const bare = mount(<DesktopSimpleSidebar workspaceMenu={null} selectedId={null} foremanOpen={false} onOpenCoworker={vi.fn()} onNewCoworker={vi.fn()}
+        agents={[made('bo', 'Bo', '1')]} statuses={{}} previews={{}} boxes={BOXES} boxOf={id => HOME[id] ?? null} />)
+    expect(bare.querySelector('button[aria-label="New Box"]')).toBeNull()
+    expect(bare.querySelector('button[aria-label="Actions for Support"]')).toBeNull()
+})

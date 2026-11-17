@@ -19,6 +19,7 @@ import { SidePanel } from '@/components/layout/SidePanel'
 import { SIDE_PANEL_GAP, loadSidePanelWidth } from '@/lib/side-panel-width'
 import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopSimpleSidebar } from './simple/DesktopSimpleSidebar'
+import { useDesktopSidebarList } from './simple/useDesktopSidebarList'
 import { setDesktopDetailsWanted } from '@/lib/desktop/simple-details'
 import { DesktopViewMenuRow } from './simple/DesktopViewMenuRow'
 import { desktopCoworkerPreviewsSchema, type DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
@@ -46,7 +47,7 @@ import { flushDesktopBrainDrafts } from '@/lib/desktop/use-brain-page-draft'
 import { createDesktopBrainPagesActions } from '@/lib/desktop/brain-pages'
 import { countDesktopBrainProposals } from '@/lib/desktop/brain-proposals'
 import { DesktopSharedFiles } from './DesktopSharedFiles'
-import { DesktopBoard } from './DesktopBoard'
+import { DesktopBoard, type DesktopBoardTileAction } from './DesktopBoard'
 import { FxBoardCameraBoundary } from './fx-repairs/FxBoardCameraBoundary'
 import { createFxCameraHttpPersistence } from '@/lib/desktop/fx-repairs/board-camera-client'
 import { useDesktopBoardState } from './useDesktopBoardState'
@@ -904,7 +905,8 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
     const [coworkerPreviews, setCoworkerPreviews] = useState<DesktopCoworkerPreviews['previews'] | null>(null)
     const [simpleInboxSlot, setSimpleInboxSlot] = useState<HTMLElement | null>(null)
     const [unseenAgents, setUnseenAgents] = useState<string[]>([])
-    const [tileAction, setTileAction] = useState<{ kind: 'copy'; agentId: string; nonce: number } | { kind: 'move'; agentId: string; spaceId: string; nonce: number } | null>(null)
+    const [tileAction, setTileAction] = useState<DesktopBoardTileAction | null>(null)
+    const sidebarList = useDesktopSidebarList(simple)
     const tileActionNonce = useRef(0)
     // The local engine does not announce a finished turn here, so the list is read again when the
     // board's activity or the open conversation changes, and every few seconds while it is on screen.
@@ -1015,6 +1017,9 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
                             boxOf={id => boardState.board?.placements.find(placed => placed.agentId === id)?.spaceId ?? null}
                             onDuplicate={initialData.board ? id => setTileAction({ kind: 'copy', agentId: id, nonce: ++tileActionNonce.current }) : undefined}
                             onMoveToBox={initialData.board ? (id, spaceId) => setTileAction({ kind: 'move', agentId: id, spaceId, nonce: ++tileActionNonce.current }) : undefined}
+                            collapsed={sidebarList.list.collapsed} onToggleBox={sidebarList.toggleBox}
+                            onNewBox={initialData.board && !boardState.error ? () => setTileAction({ kind: 'box', target: { kind: 'create' }, nonce: ++tileActionNonce.current }) : undefined}
+                            onBoxDialog={initialData.board && !boardState.error ? (kind, spaceId) => setTileAction({ kind: 'box', target: { kind, spaceId }, nonce: ++tileActionNonce.current }) : undefined}
                             onNewCoworker={() => showBoard(true)}
                             onOpenForeman={controlCenterDisabled ? undefined : () => { setRequestedPanel(null); setPanelOpen(false); engageForeman() }}
                             onSearch={() => { if (!creationAdmission.current.blocked && !controlCenterDisabled) setControlCenterOpen(true) }} />
