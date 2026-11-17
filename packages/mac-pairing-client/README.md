@@ -75,3 +75,19 @@ turn. The client follows reply text and refreshes the saved chat at completion.
 the phone was shown and the choices, and the Mac finds its saved question itself.
 Stop can cancel the exact turn sent by that approved device. The client reads
 the saved outcome so a reply that finishes first still shows as completed.
+
+## The Chief of Staff
+
+`readChief` and `openChiefChat` read the Chief of Staff's General and its task
+threads, as text, for any approved phone. While the Mac's Chief of Staff still
+asks its first-run company questions, both answer `state: 'intake'` and nothing
+else: those questions are answered on the Mac. With **Send messages** on,
+`sendToChief` writes in a conversation, in General when none is named, or starts
+a task thread (`thread: true`); `answerChief` answers (or, without `answers`,
+dismisses) the question card a conversation waits on; `readChiefTurn`,
+`streamChiefTurn` and `stopChiefTurn` follow and stop a turn this phone started.
+The Mac sends through the Chief of Staff's own path with the model it chose; the
+phone names no model, instructions, attachment or run, and the ids the Mac sees
+are made from the phone and its request. Cards that change things (a plan to
+build, team changes, a starter pack) arrive as words only, and nothing a phone
+can call settles one: they are approved on the Mac.

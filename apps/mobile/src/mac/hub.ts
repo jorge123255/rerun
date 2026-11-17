@@ -110,8 +110,12 @@ export function messagesOf(read: Pick<MacPhoneChatRead, 'messages' | 'pending' |
         parts: [{ type: 'text', text: message.content.text }],
         ...(message.createdAt ? { metadata: { createdAt: message.createdAt } } : {}),
     }))
+    // The Chief of Staff's cards that change things are words in a message of their own, after the
+    // reply that showed them: the chat would run them into the end of that reply.
+    const chief = read.cards ?? []
+    if (chief.length > 0) messages.push({ id: `cards-${messages.at(-1)?.id ?? 'chief'}`, role: 'assistant', parts: chief.map(card => ({ type: 'text', text: chiefCardText(card, words) })) })
     const { question, approval, macOnly } = read.pending ?? { question: null, approval: null }
-    const cards: ConversationMessage['parts'] = (read.cards ?? []).map(card => ({ type: 'text', text: chiefCardText(card, words) }))
+    const cards: ConversationMessage['parts'] = []
     if (approval && read.permissions?.approveRequests) cards.push({ type: 'tool-request_approval', toolCallId: approval.toolCallId, state: 'input-available', input: { approvals: approval.approvals } })
     else if (approval) cards.push({ type: 'text', text: [`**${words.approvalOnMac()}**`, ...approval.approvals.map(item => `- ${item.action}${item.detail ? `\n  ${item.detail}` : ''}`)].join('\n\n') })
     if (macOnly) cards.push({ type: 'text', text: `**${words.macOnly(macOnly.kind)}**${macOnly.summary ? `\n\n${macOnly.summary}` : ''}` })
@@ -315,9 +319,12 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
         return conversations.map(chat => conversationOf({ ...chat, agentId: FOREMAN_AGENT_ID, title: chat.title ?? '' }, statusOf(chat.id)))
     }
 
+    // The phase stays `companion` whatever the Mac says: an onboarding phase would send the whole app
+    // into the hub's own first-run questions, which a paired Mac never serves. The Chief of Staff's page
+    // reads `onboarding` on the surface and says to finish on the Mac.
     async function chiefState(signal?: AbortSignal): Promise<ForemanStateResponse> {
         const { state } = await chief(signal)
-        return { surface: state === 'intake' ? 'onboarding' : 'engine', phase: state === 'intake' ? 'discover' : 'companion', firstName: '' }
+        return { surface: state === 'intake' ? 'onboarding' : 'engine', phase: 'companion', firstName: '' }
     }
 
     async function readChiefChat(chatId: string, signal?: AbortSignal): Promise<MacPhoneChiefChat> {

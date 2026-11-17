@@ -4,7 +4,7 @@ import { desktopForeman } from '@/lib/desktop/server/foreman/binding'
 import { foremanTurn, ownedForemanChat } from '@/lib/desktop/server/foreman/chat-store'
 import { readPendingForemanRequests } from '@/lib/desktop/server/foreman/question'
 import { desktopRoute } from '@/lib/desktop/server/http'
-import { phoneChiefAction, phoneChiefChatId, phoneChiefOptions } from '@/lib/desktop/server/phone-chief-binding'
+import { phoneChiefAction, phoneChiefChatId, phoneChiefIntake, phoneChiefOptions } from '@/lib/desktop/server/phone-chief-binding'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { assertDesktopWorkspaceAdmission } from '@/lib/desktop/server/workspace-admission'
 
@@ -25,6 +25,8 @@ export async function POST(request: Request): Promise<Response> {
         if (!body.success) throw new DesktopHttpError(400, 'Answer the question.')
         const { chatId, runId, toolCallId, answers } = body.data
         const app = await desktopForeman(runtime)
+        // The first-run company questions are answered on the Mac, and nothing is answered around them.
+        if (await phoneChiefIntake(runtime, app)) throw new DesktopHttpError(409, 'Finish setting up the Chief of Staff on this Mac first.')
         const owner = await ownedForemanChat(app.db, { workspaceId: String(runtime.workspaceId), chatId })
         await assertDesktopWorkspaceAdmission(runtime)
         return phoneChiefAction(async () => {

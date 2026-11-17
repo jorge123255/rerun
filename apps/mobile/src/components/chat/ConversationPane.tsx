@@ -317,8 +317,9 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
 
     // A voice message carries the attachments picked before it, their marker after its own, as on the web.
     // A throw keeps the recording for a retry.
-    // A paired Mac takes the Chief of Staff's messages as text: no recording is offered there.
-    const voice: VoiceSender | undefined = caller && !(onMac && coworker.kind === 'foreman')
+    // A paired Mac takes the Chief of Staff's messages and answers as text: no recording is offered there.
+    const chiefOnMac = onMac && coworker.kind === 'foreman'
+    const voice: VoiceSender | undefined = caller && !chiefOnMac
         ? {
               upload: uri => uploadVoiceRecording(caller, endpoints.fileOwner(chat.sessionId), uri),
               transcribe: uri => transcribeRecording(caller, uri),
@@ -440,7 +441,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
                                             coworkerName={coworker.name}
                                             webUrl={webUrl}
                                             upload={canAttach && caller ? attachment => uploadChatFile(caller, coworker.id, attachment.uri, attachment.name) : undefined}
-                                            transcribe={caller ? uri => transcribeRecording(caller, uri) : undefined}
+                                            transcribe={caller && !chiefOnMac ? uri => transcribeRecording(caller, uri) : undefined}
                                             onAnswer={text => send(text)}
                                             onDismiss={() => {
                                                 setDismissedCallId(pending.toolCallId)

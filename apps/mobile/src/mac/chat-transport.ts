@@ -71,8 +71,29 @@ const pause = (ms: number, signal?: AbortSignal) =>
 // only ever grows. The saved chat, read once the stream ends, is what stays on screen.
 export function replyStream(client: MacClient, hub: MacHub, turn: Turn, { messageId, signal }: { messageId?: string; signal?: AbortSignal }): ReadableStream<UIMessageChunk> {
     const sent = turnOf(client, turn)
+    // The chat lets go of the stream when the person stops the reply: what the Mac still sends after
+    // that, and the stream's own ending, go nowhere.
+    let released = false
     return new ReadableStream<UIMessageChunk>({
-        async start(controller) {
+        cancel() {
+            released = true
+        },
+        async start(stream) {
+            const controller = {
+                enqueue(chunk: UIMessageChunk) {
+                    if (!released) stream.enqueue(chunk)
+                },
+                close() {
+                    if (released) return
+                    released = true
+                    stream.close()
+                },
+                error(error: unknown) {
+                    if (released) return
+                    released = true
+                    stream.error(error)
+                },
+            }
             let shown = 0
             let replayed = 0
             let open = false
@@ -93,7 +114,7 @@ export function replyStream(client: MacClient, hub: MacHub, turn: Turn, { messag
             controller.enqueue(messageId ? { type: 'start', messageId } : { type: 'start' })
             try {
                 let misses = 0
-                while (!signal?.aborted) {
+                while (!signal?.aborted && !released) {
                     // A stream the Mac cuts, or cannot open, is not the end of the turn: its status says.
                     await sent.stream(onFrame, signal).catch(() => {})
                     if (signal?.aborted) break
