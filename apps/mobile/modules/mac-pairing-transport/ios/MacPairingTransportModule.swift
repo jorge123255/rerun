@@ -97,6 +97,8 @@ private final class PinnedSession: NSObject, URLSessionDataDelegate {
   // Read and written on the delegate queue only.
   private var running: [Int: Running] = [:]
   private var tasks: [String: URLSessionTask] = [:]
+  // Why the last certificate check failed, for the error the person sees.
+  private var lastTrustProblem: String?
 
   init(pin: String) {
     self.pin = pin
@@ -132,14 +134,27 @@ private final class PinnedSession: NSObject, URLSessionDataDelegate {
   private func trusted(_ trust: SecTrust, host: String) -> Bool {
     guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let leaf = chain.first else { return false }
     let digest = SHA256.hash(data: SecCertificateCopyData(leaf) as Data).map { String(format: "%02x", $0) }.joined()
-    guard digest == pin else { return false }
+    guard digest == pin else { lastTrustProblem = "the Mac's certificate is not the one in the code"; return false }
     // The pinned certificate is the only anchor: the evaluation then checks its dates and that it
     // was issued for the address the phone asked for.
     guard SecTrustSetPolicies(trust, SecPolicyCreateSSL(true, host as CFString)) == errSecSuccess,
       SecTrustSetAnchorCertificates(trust, [leaf] as CFArray) == errSecSuccess,
       SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess
-    else { return false }
-    return SecTrustEvaluateWithError(trust, nil)
+    else { lastTrustProblem = "the certificate could not be set as the only anchor"; return false }
+    var failure: CFError?
+    if SecTrustEvaluateWithError(trust, &failure) { lastTrustProblem = nil; return true }
+    let strict = failure.map { CFErrorCopyDescription($0) as String } ?? "unknown"
+    // A real iPhone holds a server certificate to rules the Mac's own certificate does not have to
+    // meet (it is not issued by anyone: the phone knows it by the fingerprint in the code it
+    // scanned, checked above). The fingerprint is what proves this is that Mac. So when only the
+    // web's rules fail, the certificate's dates and signature are still checked, without them.
+    var basicFailure: CFError?
+    if SecTrustSetPolicies(trust, SecPolicyCreateBasicX509()) == errSecSuccess, SecTrustEvaluateWithError(trust, &basicFailure) {
+      lastTrustProblem = nil
+      return true
+    }
+    lastTrustProblem = "\(strict) / \(basicFailure.map { CFErrorCopyDescription($0) as String } ?? "unknown")"
+    return false
   }
 
   func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
@@ -191,7 +206,8 @@ private final class PinnedSession: NSObject, URLSessionDataDelegate {
     switch call.call {
     case .buffered(let promise):
       if let error {
-        promise.reject("ERR_MAC_PAIRING_REQUEST", error.localizedDescription)
+        let code = (error as NSError).code
+        promise.reject("ERR_MAC_PAIRING_REQUEST", "\(error.localizedDescription) (\(code))" + (lastTrustProblem.map { " Certificate: \($0)" } ?? ""))
       } else {
         promise.resolve(["status": call.status, "body": String(data: call.data, encoding: .utf8) ?? ""])
       }
