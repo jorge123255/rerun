@@ -1025,6 +1025,12 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
                             onDuplicate={initialData.board ? id => setTileAction({ kind: 'copy', agentId: id, nonce: ++tileActionNonce.current }) : undefined}
                             onMoveToBox={initialData.board ? (id, spaceId) => setTileAction({ kind: 'move', agentId: id, spaceId, nonce: ++tileActionNonce.current }) : undefined}
                             collapsed={sidebarList.list.collapsed} onToggleBox={sidebarList.toggleBox}
+                            onArrange={drop => {
+                                if (drop.kind === 'boxes') sidebarList.orderBoxes(drop.writes)
+                                else if (drop.kind === 'agents') sidebarList.orderAgents(drop.boxId, drop.writes)
+                                // Its rank in the Box it lands in is kept first, then the board moves it there.
+                                else if (initialData.board) { sidebarList.arriveIn(drop.agentId, drop.boxId, drop.writes); setTileAction({ kind: 'move', agentId: drop.agentId, spaceId: drop.boxId, nonce: ++tileActionNonce.current }) }
+                            }}
                             onNewBox={initialData.board && !boardState.error ? () => setTileAction({ kind: 'box', target: { kind: 'create' }, nonce: ++tileActionNonce.current }) : undefined}
                             onBoxDialog={initialData.board && !boardState.error ? (kind, spaceId) => setTileAction({ kind: 'box', target: { kind, spaceId }, nonce: ++tileActionNonce.current }) : undefined}
                             onNewCoworker={() => showBoard(true)}

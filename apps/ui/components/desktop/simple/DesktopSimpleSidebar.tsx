@@ -9,19 +9,20 @@ import { Button } from '@/components/ui/button'
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import type { BoardActivityStatus } from '@/lib/desktop/board-activity'
 import type { DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
-import { desktopSidebarSections, type DesktopSidebarList } from '@/lib/desktop/workspace-view'
+import { desktopSidebarSections, type DesktopSidebarDrop, type DesktopSidebarList } from '@/lib/desktop/workspace-view'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from '../DesktopApp'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopCoworkerTile } from './DesktopCoworkerTile'
-import { DesktopSidebarBoxSection, type DesktopBoxDialogKind } from './DesktopSidebarBoxSection'
+import { DesktopSidebarBoxList } from './DesktopSidebarBoxList'
+import type { DesktopBoxDialogKind } from './DesktopSidebarBoxSection'
 
 /**
  * The left column of the Simple view: the workspace, search, then the Chief of Staff and the
  * coworkers by Box (upstream #279). Without the board's Boxes to read, it falls back to one tile per
  * coworker, the most recently active first.
  */
-export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot, unseenIds, boxes, boxOf, onDuplicate, onMoveToBox, collapsed, order, onToggleBox, onNewBox, onBoxDialog }: {
+export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot, unseenIds, boxes, boxOf, onDuplicate, onMoveToBox, collapsed, order, onToggleBox, onNewBox, onBoxDialog, onArrange }: {
     workspaceMenu: ReactNode
     agents: DesktopAgentView[]
     statuses: Record<string, BoardActivityStatus>
@@ -49,6 +50,9 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
     // Both open the board's own dialogs; left out where the board cannot change its Boxes.
     onNewBox?: () => void
     onBoxDialog?: (kind: DesktopBoxDialogKind, boxId: string) => void
+    // The list was dragged: where Boxes or coworkers now sit, or a coworker dropped in another Box
+    // (which also needs onMoveToBox). Left out, nothing can be picked up.
+    onArrange?: (drop: DesktopSidebarDrop) => void
     onOpenForeman?: () => void
     onSearch?: () => void
     onNewCoworker: () => void
@@ -102,10 +106,9 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
                 </span>
             </button>}
             {grouped ? agents.length === 0 ? empty : <>
-                {grouped.sections.map(({ box, members }) => <DesktopSidebarBoxSection key={box.id} box={box} members={members} disabled={disabled}
-                    collapsed={!!collapsed?.includes(box.id)} onToggle={() => onToggleBox?.(box.id)}
-                    waiting={members.some(agent => agent.enabled !== false && statuses[agent.id] === 'waiting_human')}
-                    onDialog={onBoxDialog && (kind => onBoxDialog(kind, box.id))} renderTile={tile} />)}
+                <DesktopSidebarBoxList sections={grouped.sections} order={order} collapsed={collapsed ?? []} disabled={disabled}
+                    waitingIn={members => members.some(agent => agent.enabled !== false && statuses[agent.id] === 'waiting_human')}
+                    onToggle={boxId => onToggleBox?.(boxId)} onDialog={onBoxDialog} renderTile={tile} onDrop={onArrange} canMoveBetweenBoxes={!!onMoveToBox} />
                 {/* A coworker the board has in no Box is still listed, after the Boxes. */}
                 {grouped.loose.length > 0 && <ul data-simple-loose className="space-y-0.5">{grouped.loose.map(agent => <li key={agent.id}>{tile(agent)}</li>)}</ul>}
             </> : ordered.length === 0 ? empty : <ul className="space-y-0.5">

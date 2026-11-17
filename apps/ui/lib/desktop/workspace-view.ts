@@ -165,3 +165,57 @@ export function desktopSidebarStale(list: DesktopSidebarList, boxIds: readonly s
         }).map(([id]) => id),
     }
 }
+
+// Dragging the list (upstream #281, #283). One id space for the drag: a Box by its header, a
+// coworker by its tile, a Box again as the place a coworker is dropped into (its whole section,
+// folded or empty included).
+export const desktopSidebarDragId = {
+    box: (id: string) => `box:${id}`,
+    agent: (id: string) => `agent:${id}`,
+    drop: (id: string) => `drop:${id}`,
+    idOf: (dragId: string | number) => String(dragId).slice(String(dragId).indexOf(':') + 1),
+    kindOf: (dragId: string | number) => String(dragId).slice(0, String(dragId).indexOf(':')),
+}
+
+export type DesktopSidebarDrop =
+    | { kind: 'boxes'; writes: DesktopSidebarOrderWrite[] }
+    | { kind: 'agents'; boxId: string; writes: DesktopSidebarOrderWrite[] }
+    // Into another Box: the ranks of that Box, the dragged coworker's among them, and the move itself.
+    | { kind: 'move'; agentId: string; boxId: string; writes: DesktopSidebarOrderWrite[] }
+
+function moved<T>(items: readonly T[], from: number, to: number): T[] {
+    const next = [...items]
+    next.splice(to, 0, ...next.splice(from, 1))
+    return next
+}
+
+// What a drop asks for, or null when it changes nothing. A Box takes its place among the others. A
+// coworker takes the place of the coworker it is dropped on, in its Box or another; dropped on
+// another Box (its name, an empty or folded one) it joins that Box's end; dropped on the name of
+// its own Box or between two tiles it stays where it was.
+export function desktopSidebarDrop(sections: readonly DesktopSidebarSection<{ id: string }, { id: string }>[], list: Pick<DesktopSidebarList, 'boxes' | 'agents'> | undefined, activeId: string, overId: string | null): DesktopSidebarDrop | null {
+    if (!overId) return null
+    const { idOf, kindOf } = desktopSidebarDragId
+    if (kindOf(activeId) === 'box') {
+        const boxes = sections.map(section => section.box)
+        const from = boxes.findIndex(box => box.id === idOf(activeId))
+        const to = boxes.findIndex(box => box.id === idOf(overId))
+        if (from < 0 || to < 0 || from === to) return null
+        const others = moved(boxes, from, to).filter(box => box.id !== idOf(activeId)).map(box => ({ id: box.id, order: list?.boxes[box.id] }))
+        return { kind: 'boxes', writes: desktopSidebarOrderWrites(others, idOf(activeId), to) }
+    }
+    const agentId = idOf(activeId)
+    const overAgent = kindOf(overId) === 'agent'
+    const source = sections.find(section => section.members.some(member => member.id === agentId))
+    const target = overAgent ? sections.find(section => section.members.some(member => member.id === idOf(overId))) : sections.find(section => section.box.id === idOf(overId))
+    if (!source || !target) return null
+    const overIndex = overAgent ? target.members.findIndex(member => member.id === idOf(overId)) : target.members.length
+    const rank = (member: { id: string }) => ({ id: member.id, order: desktopAgentRank(list, member.id, target.box.id) })
+    if (source.box.id === target.box.id) {
+        if (!overAgent) return null
+        const from = source.members.findIndex(member => member.id === agentId)
+        if (from === overIndex) return null
+        return { kind: 'agents', boxId: source.box.id, writes: desktopSidebarOrderWrites(moved(source.members, from, overIndex).filter(member => member.id !== agentId).map(rank), agentId, overIndex) }
+    }
+    return { kind: 'move', agentId, boxId: target.box.id, writes: desktopSidebarOrderWrites(target.members.map(rank), agentId, overIndex) }
+}
