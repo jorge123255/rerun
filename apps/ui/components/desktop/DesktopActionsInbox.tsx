@@ -1,9 +1,11 @@
 'use client'
 
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { Fragment, startTransition, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useReducedMotion } from 'motion/react'
 import { ChromePill } from '@rerun/ui/chrome'
 import { AttentionBuddy, ATTENTION_STATUS_META } from '@rerun/ui/inbox'
 import { EmptyState } from '@rerun/ui/primitives'
+import { AnimatedSize, StepTransition, useStepDirection } from '@rerun/ui/steps'
 import { shortRelativeTime } from '@rerun/i18n/format'
 import { desktopLocaleTag } from '@/lib/desktop/locale'
 import { useDesktopLocale } from './DesktopLocale'
@@ -12,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import type { DesktopCompletionItem } from '@/lib/desktop/completed-actions'
 import type { DesktopConversationHit } from '@/lib/desktop/chat-search'
 import type { DesktopPendingInboxItem } from '@/lib/desktop/pending-inbox'
+import { DESKTOP_PEEK_KINDS } from '@/lib/desktop/pending-peek'
 import { desktopInboxBadge } from '@/lib/desktop/notification-bridge'
 import { AlertCircleIcon, BellIcon, CheckCheckIcon, InboxIcon, Loader2Icon, RefreshCcwIcon, TriangleAlertIcon, XIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -19,6 +22,7 @@ import { isDesktopQuitting } from '@/lib/desktop/draft-writes'
 import type { DesktopAgentView } from './DesktopApp'
 import { useDesktopCompletions, type DesktopCompletionsController } from './useDesktopCompletions'
 import { useDesktopNotificationPrefs } from '@/lib/desktop/use-notification-prefs'
+import { DesktopInboxPeekCard, type DesktopInboxPeekEntry } from './DesktopInboxPeekCard'
 import { DesktopInboxRowMenu } from './DesktopInboxRowMenu'
 import { useDesktopPendingInbox, type DesktopPendingInboxRead } from './useDesktopPendingInbox'
 
@@ -34,6 +38,11 @@ const KIND_STATUS: Record<DesktopPendingInboxItem['kind'], string> = {
     'tool-install': 'awaiting_approval',
     info: 'awaiting_ack',
 }
+// Upstream #323: more than the tallest list shows. The rest of a long inbox mounts once the card is
+// on screen, so its rows never cut into the card's opening.
+const FIRST_SCREEN_ROWS = 12
+const REST_OF_ROWS_DELAY_MS = 300
+
 export type DesktopActionsInboxProps = {
     agents?: readonly Pick<DesktopAgentView, 'id' | 'name' | 'enabled'>[]
     /** Navigation only: opens the exact coworker/session, never answers, approves or marks handled. */
@@ -151,6 +160,41 @@ function DoneRow({ item, onOpen, onMarkRead, menu }: { menu?: ReactNode; item: D
     )
 }
 
+// Upstream #323 (`InboxSections`): mounting every row of a long inbox at once froze the card's
+// opening. The first screen comes with the card, the rest in one go once it has finished opening.
+// Back from a peek with the list scrolled, every row is needed at once.
+function InboxRows({ pending, done, startWithAllRows, renderPending, renderDone }: {
+    pending: DesktopPendingInboxItem[]; done: DesktopCompletionItem[]; startWithAllRows: boolean
+    renderPending: (item: DesktopPendingInboxItem) => ReactNode; renderDone: (item: DesktopCompletionItem) => ReactNode
+}) {
+    const { t } = useDesktopLocale()
+    const [allRows, setAllRows] = useState(startWithAllRows || pending.length + done.length <= FIRST_SCREEN_ROWS)
+    useEffect(() => {
+        if (allRows) return
+        const timer = setTimeout(() => startTransition(() => setAllRows(true)), REST_OF_ROWS_DELAY_MS)
+        return () => clearTimeout(timer)
+    }, [allRows])
+    const budget = allRows ? Infinity : FIRST_SCREEN_ROWS
+    const shownPending = pending.slice(0, budget)
+    const shownDone = done.slice(0, Math.max(0, budget - shownPending.length))
+    return (
+        <>
+            {shownPending.length > 0 && (
+                <section aria-label={t('actions.needsYou')}>
+                    <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.needsYou')}</h3>
+                    {shownPending.map(renderPending)}
+                </section>
+            )}
+            {shownDone.length > 0 && (
+                <section aria-label={t('actions.done')} className={cn(pending.length > 0 && 'mt-1 border-t border-border pt-1')}>
+                    <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.done')}</h3>
+                    {shownDone.map(renderDone)}
+                </section>
+            )}
+        </>
+    )
+}
+
 function PillContent({ status, items, doneCount, unavailable, failed, open, hasMore }: { status: DesktopPendingInboxRead; items: DesktopPendingInboxItem[]; doneCount: number; unavailable: boolean; failed: boolean; open: boolean; hasMore: boolean }) {
     const { t } = useDesktopLocale()
     const count = items.length
@@ -216,10 +260,12 @@ function PillContent({ status, items, doneCount, unavailable, failed, open, hasM
  * The Actions inbox for the Mac app: pending questions and action approvals from the desktop
  * pending inbox (`/api/desktop/pending-inbox`, the shared attention projection minus the inbox's
  * own read receipts), plus finished runs from the desktop completion store
- * (`/api/desktop/completions`). It reuses the original inbox rows, labels and empty state. Opening
- * a row only navigates to the coworker/session where the existing chat cards answer, approve or
- * decline; marking pending read is explicit and never answers; a Done row is additionally
- * acknowledged with the exact completion IDs it displayed.
+ * (`/api/desktop/completions`). It reuses the original inbox rows, labels and empty state. A row
+ * that waits on a question or an approval opens its peek inside the card (upstream #273-#288): the
+ * request is read there and may be answered with the conversation's own cards, through the routes
+ * those cards post to. Opening a peek reads only. Any other row only navigates to the
+ * coworker/session where the existing chat cards answer; marking pending read is explicit and never
+ * answers; a Done row is additionally acknowledged with the exact completion IDs it displayed.
  */
 export function DesktopActionsInbox(props: DesktopActionsInboxProps & { completions?: DesktopCompletionsController }) {
     return props.completions
@@ -242,6 +288,17 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
     const setInboxBadge = workspaceId && launchNonce ? desktopInboxBadge() : undefined
     const whileHidden = typeof setInboxBadge === 'function'
     const [rowMenuOpen, setRowMenuOpen] = useState(false)
+    // The request being read inside the card. It keeps what its row showed, so the card stays
+    // whole after the row has left the list (answered here, or in its conversation).
+    const [peeked, setPeeked] = useState<DesktopInboxPeekEntry | null>(null)
+    if (!open && peeked) setPeeked(null)
+    const reducedMotion = useReducedMotion()
+    const direction = useStepDirection(peeked ? 1 : 0)
+    // Back from a peek, the list is where it was left; a card opened afresh starts at its top.
+    const listScroll = useRef(0)
+    const [listEl, setListEl] = useState<HTMLDivElement | null>(null)
+    useEffect(() => { if (!open) listScroll.current = 0 }, [open])
+    useLayoutEffect(() => { if (listEl) listEl.scrollTop = listScroll.current }, [listEl])
     const { ruleOf, ready: prefsReady, loading: prefsLoading, changeCoworkerRule } = useDesktopNotificationPrefs(open && !!workspaceId && !!onOpenNotificationSettings)
     const change = useCallback((next: boolean) => { onOpenChange?.(next) }, [onOpenChange])
     // Original WorkspaceInbox keeps its collapsed pill current. Observe while visible even when
@@ -254,6 +311,8 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
     const pendingInbox = useDesktopPendingInbox(open, agents?.map(agent => agent.id), true, whileHidden)
     const { status, items: received, unavailableAgentIds: unavailable, retry, readError: pendingReadError, markRead, markAllRead: markPendingAllRead } = pendingInbox
     const roster = useMemo(() => agents ? new Map(agents.map(agent => [agent.id, agent])) : null, [agents])
+    // A coworker that left the roster takes its open request with it: nothing can reopen it.
+    if (peeked && roster && !roster.has(peeked.agentId)) setPeeked(null)
     const items = useMemo(() => received.flatMap(item => {
         if (!roster) return [item]
         const agent = roster.get(item.agentId)
@@ -285,6 +344,12 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
             if (!open || isDesktopQuitting() || !lifetime.current.mounted || lifetime.current.generation !== generation) return
             const current = latest.current.items.find(row => row.id === item.id && row.agentId === item.agentId && row.sessionId === item.sessionId)
             if (!current) return
+            // A question or an approval is read in place. Reading marks nothing and answers nothing.
+            if (DESKTOP_PEEK_KINDS.has(current.kind)) {
+                setPeeked({ id: current.id, agentId: current.agentId, agentName: current.agentName, agentEnabled: current.agentEnabled !== false, sessionId: current.sessionId,
+                    status: KIND_STATUS[current.kind], title: current.title, updatedAt: current.requestedAt ?? current.updatedAt })
+                return
+            }
             // Navigation only. Retained handlers cannot revive a deleted owner or old request.
             change(false)
             latest.current.onOpenConversation?.({ id: current.sessionId, agentId: current.agentId, agentName: current.agentName, title: current.title })
@@ -305,6 +370,15 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
         },
         [change, completions.markRead, generation, open]
     )
+
+    const openPeekConversation = useCallback(() => {
+        if (!peeked || !open || isDesktopQuitting() || !lifetime.current.mounted) return
+        setPeeked(null)
+        change(false)
+        latest.current.onOpenConversation?.({ id: peeked.sessionId, agentId: peeked.agentId, agentName: peeked.agentName, title: peeked.title })
+    }, [change, open, peeked])
+    const backToList = useCallback(() => setPeeked(null), [])
+    const closeFromPeek = useCallback(() => change(false), [change])
 
     // Mark-all covers exactly the rows on screen at confirmation opening — the pending item ids
     // and the done completion ids alike — never a newer arrival. Like the original inbox, the
@@ -350,7 +424,8 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
 
     // An outside press or Escape folds the card; the card's own clicks stay its own.
     useEffect(() => {
-        if (!open || confirmAllOpen || rowMenuOpen) return
+        // A half-written answer is not lost to a click elsewhere: a peek leaves by its own buttons.
+        if (!open || confirmAllOpen || rowMenuOpen || peeked) return
         const onPointerDown = (event: globalThis.PointerEvent) => {
             if (rootRef.current?.contains(event.target as Node)) return
             change(false)
@@ -367,7 +442,7 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
             document.removeEventListener('pointerdown', onPointerDown)
             document.removeEventListener('keydown', onKeyDown)
         }
-    }, [open, confirmAllOpen, rowMenuOpen, change, closeToPill])
+    }, [open, confirmAllOpen, rowMenuOpen, peeked, change, closeToPill])
 
     const failed = status === 'failed'
     const doneCount = doneItems.reduce((sum, item) => sum + item.count, 0)
@@ -397,7 +472,17 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
     return (
         <div ref={rootRef} className={cn('relative flex flex-col items-start', className)}>
             {open && (
-                <div id={cardId} role="region" aria-label={t('actions.region')} className="absolute bottom-full z-10 mb-2 flex w-[min(24rem,100cqw)] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+                <div id={cardId} role="region" aria-label={t('actions.region')} className="absolute bottom-full z-10 mb-2 overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+                    {/* Upstream #288: the list and a request slide past each other, the card resizing around them. */}
+                    <AnimatedSize axis="both" transition={reducedMotion ? { duration: 0 } : undefined}>
+                    <StepTransition stepKey={peeked ? `peek:${peeked.id}` : 'list'} direction={reducedMotion ? 0 : direction}>
+                    {peeked ? (
+                        <div className="w-[min(26rem,100cqw)]">
+                            <DesktopInboxPeekCard key={peeked.id} entry={peeked} waiting={items.some(item => item.id === peeked.id)}
+                                onBack={backToList} onClose={closeToPill} onAnswered={closeFromPeek} onOpenConversation={openPeekConversation} />
+                        </div>
+                    ) : (
+                    <div className="flex w-[min(24rem,100cqw)] flex-col">
                     <div className="flex items-center justify-between gap-3 border-b border-border px-4 pt-3 pb-2">
                         <div className="flex items-baseline gap-2">
                             <h2 className="text-base font-semibold text-foreground">{t('actions.title')}</h2>
@@ -468,7 +553,7 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
                         </div>
                     )}
 
-                    <div className="max-h-[min(22rem,50dvh)] overflow-y-auto overscroll-contain px-2 py-2">
+                    <div ref={setListEl} onScroll={event => { listScroll.current = event.currentTarget.scrollTop }} className="max-h-[min(22rem,50dvh)] overflow-y-auto overscroll-contain px-2 py-2">
                         {checking && items.length === 0 && doneItems.length === 0 ? (
                             <div role="status" className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
                                 <Loader2Icon className="size-4 animate-spin" /> {t('actions.checkingPending')}
@@ -498,24 +583,9 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
                         ) : items.length === 0 && doneItems.length === 0 && !doneFailed && !anyPartial && !hasMore && !completions.loadingMore ? (
                             <EmptyState icon={InboxIcon} title={t('actions.emptyTitle')} description={t('actions.emptyDescription')} className="py-8" />
                         ) : (
-                            <>
-                                {items.length > 0 && (
-                                    <section aria-label={t('actions.needsYou')}>
-                                        <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.needsYou')}</h3>
-                                        {sorted.map(item => (
-                                            <ActionRow key={item.id} item={item} onOpen={openItem} onMarkRead={markRead} menu={rowMenu(item)} />
-                                        ))}
-                                    </section>
-                                )}
-                                {doneItems.length > 0 && (
-                                    <section aria-label={t('actions.done')} className={cn(items.length > 0 && 'mt-1 border-t border-border pt-1')}>
-                                        <h3 className="px-2 pt-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t('actions.done')}</h3>
-                                        {doneItems.map(item => (
-                                            <DoneRow key={item.id} item={item} onOpen={openDone} onMarkRead={completions.markRead} menu={rowMenu(item)} />
-                                        ))}
-                                    </section>
-                                )}
-                            </>
+                            <InboxRows pending={sorted} done={doneItems} startWithAllRows={listScroll.current > 0}
+                                renderPending={item => <ActionRow key={item.id} item={item} onOpen={openItem} onMarkRead={markRead} menu={rowMenu(item)} />}
+                                renderDone={item => <DoneRow key={item.id} item={item} onOpen={openDone} onMarkRead={completions.markRead} menu={rowMenu(item)} />} />
                         )}
                         {(completions.nextCursor || completions.loadingMore) && !completions.windowFull && (
                             <div className="px-2 py-2">
@@ -531,6 +601,10 @@ function DesktopActionsInboxView({ agents, onOpenConversation, visibleSessionId,
                             </div>
                         )}
                     </div>
+                    </div>
+                    )}
+                    </StepTransition>
+                    </AnimatedSize>
                 </div>
             )}
             <ChromePill
