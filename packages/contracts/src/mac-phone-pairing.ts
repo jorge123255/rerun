@@ -144,5 +144,25 @@ export const macPhoneTurnSchema = z.object({ status: z.enum(['running', 'done', 
 export const macPhoneReplyFrameSchema = z.union([z.object({ reset: z.literal(true) }), z.object({ delta: z.string() })])
 export type MacPhoneReplyFrame = z.infer<typeof macPhoneReplyFrameSchema>
 
+// GET /workspaces/:workspace/inbox: the Mac's Actions inbox. `state` says whether the row waits on a
+// question, on an approval, on something only the Mac settles, or is a finished result. `id` is the
+// Mac's to take apart: POST /workspaces/:workspace/inbox/read `{ ids }` marks rows read by it, by the
+// Mac's own rule, and needs the send permission. Reading a waiting row never answers it.
+export const macPhoneInboxItemSchema = z.object({
+    id: z.string().min(3).max(8200),
+    state: z.enum(['question', 'approval', 'on-mac', 'done']),
+    agentId: savedId,
+    agentName: z.string(),
+    sessionId: savedId,
+    sessionIds: z.array(savedId),
+    title: z.string(),
+    message: z.string().nullable(),
+    updatedAt: z.string(),
+    count: z.number().int().positive(),
+})
+export const macPhoneInboxSchema = z.object({ items: z.array(macPhoneInboxItemSchema), partial: z.boolean().optional() })
+export type MacPhoneInboxItem = z.infer<typeof macPhoneInboxItemSchema>
+export const macPhoneInboxReadSchema = z.object({ ids: z.array(z.string().min(3).max(8200)).min(1).max(500) }).strict()
+
 // Every refusal is `{ error: code }`. A phone that is not approved, or was removed, gets `unauthorized`.
 export const macPhoneErrorSchema = z.object({ error: z.string() })

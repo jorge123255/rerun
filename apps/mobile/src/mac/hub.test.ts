@@ -46,8 +46,23 @@ describe('the hub paths a paired Mac answers', () => {
         const boxes = boxSchema.array().parse(await hub.api('/api/v1/boxes'))
         expect(agents.every(agent => agent.spaceId === boxes[0].id)).toBe(true)
         expect(meSchema.parse(await hub.api('/api/v1/me')).workspace).toMatchObject({ id: 7, subscribed: true, role: 'member' })
-        expect(inboxSchema.parse(await hub.api('/api/v1/inbox')).items).toEqual([])
         expect(agentViewSchema.parse(await hub.api('/api/v1/agents/ada')).agent.name).toBe('Ada')
+    })
+
+    it('lists the Mac\'s inbox, and marks read the rows the app names by their conversations', async () => {
+        const row = (id: string, state: string, sessionIds: string[]) => ({ id, state, agentId: 'ada', agentName: 'Ada', sessionId: sessionIds[0], sessionIds, title: 'T', message: null, updatedAt: '2026-11-17T10:00:00.000Z', count: sessionIds.length })
+        const readInbox = jest.fn(async () => ({ items: [row('p:q1', 'question', ['s1']), row('p:x1', 'on-mac', ['s2']), row('d:g1', 'done', ['s9', 's8']), row('d:g2', 'done', ['s7'])] }))
+        const markInboxRead = jest.fn(async () => ({ marked: 1 }))
+        const { hub } = setup({ readInbox, markInboxRead } as never)
+        const inbox = inboxSchema.parse(await hub.api('/api/v1/inbox'))
+        expect(inbox.items.map(item => [item.id, item.status, item.count])).toEqual([['p:q1', 'awaiting_question', 1], ['p:x1', 'waiting_human', 1], ['d:g1', 'done', 2], ['d:g2', 'done', 1]])
+
+        await hub.api('/api/v1/inbox/read', { method: 'POST', body: { sessionIds: ['s8', 'unknown'] } })
+        expect(markInboxRead).toHaveBeenLastCalledWith(['d:g1'], undefined)
+        await hub.api('/api/v1/inbox/read', { method: 'POST', body: { sessionIds: ['nothing-listed'] } })
+        expect(markInboxRead).toHaveBeenCalledTimes(1)
+        await hub.api('/api/v1/inbox/read', { method: 'POST', body: { all: true } })
+        expect(markInboxRead).toHaveBeenLastCalledWith(['p:q1', 'p:x1', 'd:g2'], undefined)
     })
 
     it('reads a chat by its id alone, finding its coworker', async () => {

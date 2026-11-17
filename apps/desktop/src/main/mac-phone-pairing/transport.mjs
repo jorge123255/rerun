@@ -4,7 +4,7 @@ import { createServer } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { API_PREFIX, CREDENTIAL_CLAIM_TTL_MS, DEVICE_STATUS, ERRORS, LOOPBACK_HOST, PROTOCOL_VERSION, SERVICE_NAME } from './protocol.mjs'
 import { hashSecret, hashesEqual, randomSecret } from './crypto.mjs'
-import { readWorkspaceChats, readWorkspaceReply, sendWorkspaceMessage, stopWorkspaceTurn } from './workspace-reads.mjs'
+import { callWorkspace, readWorkspaceChats, readWorkspaceReply, sendWorkspaceMessage, stopWorkspaceTurn } from './workspace-reads.mjs'
 import { assertDeviceWorkspace, hiddenWorkspaceError } from './workspace-access.mjs'
 import { publicDevice } from './store.mjs'
 
@@ -41,6 +41,17 @@ function send(response, status, body) {
 function fail(response, code, status = 401) {
     send(response, status, { error: code })
 }
+
+// What a phone may ask for beyond coworkers and their chats, by method and name under its workspace.
+// Each is served by the Mac app's route of the same name, and only to a phone that holds `needs`.
+// Anything not listed here does not exist for a phone.
+const RESOURCES = new Map([
+    ['GET inbox', { to: 'inbox' }],
+    // Marking a row read changes the Mac's own inbox: a phone that only reads changes nothing.
+    ['POST inbox/read', { to: 'inbox', needs: 'sendMessages' }],
+])
+const RESOURCE_PATH = /^\/workspaces\/([^/]+)\/([a-z-]+(?:\/[a-z-]+)?)$/
+const REFUSALS = { sendMessages: 'send_not_allowed', approveRequests: 'approve_not_allowed' }
 
 function validDecisions(approval) {
     if (!approval || typeof approval !== 'object' || Array.isArray(approval) || Object.keys(approval).length !== 2) return false
@@ -219,6 +230,41 @@ export function createPairingTransport({
         return send(response, 200, { ...common, macId: installId, fingerprint, credential: claim.credential })
     }
 
+    async function resource(request, response, rawWorkspaceId, spec) {
+        const presented = hashSecret(BEARER.exec(request.headers.authorization ?? '')?.[1])
+        const device = await authenticate(presented)
+        if (!device) return fail(response, await removed(presented) ? ERRORS.revoked : ERRORS.unauthorized)
+        if (!WORKSPACE.test(rawWorkspaceId)) return fail(response, ERRORS.not_found, 404)
+        const workspaceId = Number(rawWorkspaceId)
+        const current = getRuntime()
+        const permitted = candidate => !spec.needs || (Boolean(tls) && candidate[spec.needs] === true)
+        // Revocation, a switch turned off and a workspace change can all land while the app answers:
+        // the phone is checked again under the queue those changes share before anything is released.
+        const recheck = async () => {
+            const authorized = await authenticate(presented)
+            if (!authorized || authorized.deviceId !== device.deviceId) { fail(response, ERRORS.unauthorized); return false }
+            if (!permitted(authorized)) { fail(response, REFUSALS[spec.needs], 403); return false }
+            await workspaceFor(authorized, workspaceId, current)
+            return true
+        }
+        const release = result => result.failure ? fail(response, result.failure.code, result.failure.status) : send(response, 200, result.payload)
+        try {
+            await workspaceFor(device, workspaceId, current)
+            if (!permitted(device)) return fail(response, REFUSALS[spec.needs], 403)
+            if (request.method === 'GET') {
+                const result = await callWorkspace(current, { resource: spec.to })
+                return await exclusive(async () => { if (await recheck()) release(result) })
+            }
+            const body = await readBody(request, spec.limit ?? BODY_LIMIT)
+            if (!body) return fail(response, 'invalid_request', 400)
+            return await exclusive(async () => { if (await recheck()) release(await callWorkspace(current, { resource: spec.to, method: request.method, body })) })
+        } catch (error) {
+            if (error.code === ERRORS.not_found) fail(response, ERRORS.not_found, 404)
+            else if (error.code === ERRORS.unauthorized) fail(response, ERRORS.unauthorized)
+            else fail(response, 'unavailable', 502)
+        }
+    }
+
     async function handle(request, response) {
         // This bridge is for the phone client. Require the literal bound authority and
         // deny browser-origin requests so a web page cannot treat it as a CORS API.
@@ -243,6 +289,10 @@ export function createPairingTransport({
             const body = await readBody(request)
             return body ? exclusive(() => claimStatus(response, body)) : fail(response, ERRORS.unauthorized)
         }
+
+        const named = path.startsWith(API_PREFIX) && RESOURCE_PATH.exec(path.slice(API_PREFIX.length))
+        const spec = named && RESOURCES.get(`${request.method} ${named[2]}`)
+        if (spec) return resource(request, response, named[1], spec)
 
         const route = path.startsWith(API_PREFIX) && /^\/workspaces\/([^/]+)\/coworkers(?:\/([^/]+)\/chats(?:\/([^/]+)(?:\/turns\/([^/]+)(\/stream)?)?)?)?$/.exec(path.slice(API_PREFIX.length))
         if (!route) return fail(response, ERRORS.not_found, 404)

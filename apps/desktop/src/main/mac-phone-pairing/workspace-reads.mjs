@@ -63,3 +63,28 @@ export async function stopWorkspaceTurn(runtime, target) {
     void response.body?.cancel().catch(() => {})
     return response.status === 409 ? { code: 'turn_blocked', status: 409 } : { code: 'unavailable', status: 502 }
 }
+
+// One of the phone's other resources, served by the Mac app's own route of the same name under
+// /api/desktop/phone-pairing. The app's answer is handed back as it is when it is a success; a
+// refusal is reduced to a code, so nothing the app says about itself reaches the phone.
+export async function callWorkspace(runtime, { resource, method = 'GET', body, query }) {
+    if (!runtime?.app?.origin || !runtime.app.sessionToken) throw hiddenWorkspaceError()
+    const address = new URL('/api/desktop/phone-pairing/' + resource, runtime.app.origin)
+    for (const [name, value] of Object.entries(query ?? {})) address.searchParams.set(name, value)
+    const mutation = method !== 'GET'
+    const response = await fetch(address, {
+        method, redirect: 'error', signal: AbortSignal.timeout(8500),
+        headers: { Cookie: `rerun-desktop-session=${runtime.app.sessionToken}`, Accept: 'application/json', ...(mutation && { Origin: runtime.app.origin, 'Content-Type': 'application/json' }) },
+        ...(mutation && { body: JSON.stringify(body ?? {}) }),
+    })
+    if (response.ok) return { payload: await response.json() }
+    void response.body?.cancel().catch(() => {})
+    switch (response.status) {
+        case 400: return { failure: { code: 'invalid_request', status: 400 } }
+        case 403: return { failure: { code: 'not_allowed', status: 403 } }
+        case 404: throw hiddenWorkspaceError()
+        case 409: return { failure: { code: 'conflict', status: 409 } }
+        case 413: return { failure: { code: 'too_large', status: 413 } }
+        default: return { failure: { code: 'unavailable', status: 502 } }
+    }
+}

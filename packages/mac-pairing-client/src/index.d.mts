@@ -63,6 +63,8 @@ export function createMacPairingClient(options: {
     stopSentTurn(coworkerId: string, chatId: string, requestId: string, signal?: AbortSignal): Promise<void>
     readSentTurn(coworkerId: string, chatId: string, requestId: string, signal?: AbortSignal): Promise<{ status: 'running' | 'done' | 'error' | 'cancelled' }>
     streamSentTurn(coworkerId: string, chatId: string, requestId: string, onFrame: (frame: MacReplyFrame) => void, signal?: AbortSignal): Promise<void>
+    readInbox(signal?: AbortSignal): Promise<unknown>
+    markInboxRead(ids: string[], signal?: AbortSignal): Promise<unknown>
     readMacSession(): Promise<MacSession | null>
     clearMacSession(): Promise<void>
 }

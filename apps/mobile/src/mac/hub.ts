@@ -1,5 +1,5 @@
-import type { AgentConversationsOverview, AgentModels, AgentView, BoardAgent, Box, Conversation, ConversationMessage, Inbox, Me, SessionStatus } from '@rerun/contracts'
-import { macPhoneChatReadSchema, macPhoneChatsSchema, macPhoneCoworkersSchema, type MacPhoneChat, type MacPhoneChatRead, type MacPhoneCoworker } from '@rerun/mac-contracts/mac-phone-pairing'
+import type { AgentConversationsOverview, AgentModels, AgentView, BoardAgent, Box, Conversation, ConversationMessage, Inbox, InboxItem, Me, SessionStatus } from '@rerun/contracts'
+import { macPhoneChatReadSchema, macPhoneChatsSchema, macPhoneCoworkersSchema, macPhoneInboxSchema, type MacPhoneChat, type MacPhoneInboxItem, type MacPhoneChatRead, type MacPhoneCoworker } from '@rerun/mac-contracts/mac-phone-pairing'
 
 import type { MacClient } from './client'
 import type { MacLink } from './session'
@@ -111,6 +111,13 @@ export function messagesOf(read: MacPhoneChatRead, words: MacWords = ENGLISH): C
     const last = messages.at(-1)
     if (last?.role === 'assistant') return [...messages.slice(0, -1), { ...last, parts: [...last.parts, ...cards] }]
     return [...messages, { id: `pending-${(question ?? approval)?.toolCallId ?? 'mac'}`, role: 'assistant', parts: cards }]
+}
+
+const INBOX_STATUS = { question: 'awaiting_question', approval: 'awaiting_approval', 'on-mac': 'waiting_human', done: 'done' } as const
+
+// A row of the Mac's Actions inbox, as the app's inbox lists one.
+export function inboxItemOf(item: MacPhoneInboxItem): InboxItem {
+    return { id: item.id, sessionId: item.sessionId, sessionIds: item.sessionIds, agentId: item.agentId, agentName: item.agentName, status: INBOX_STATUS[item.state], title: item.title, message: item.message, updatedAt: item.updatedAt, count: item.count }
 }
 
 export function waitingOf(read: MacPhoneChatRead): SessionStatus | null {
@@ -254,6 +261,24 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
         await stopped
     }
 
+    // The app marks rows read by their conversations, the Mac by the rows themselves: the rows last
+    // listed are kept to tell which ones were meant.
+    let listed: MacPhoneInboxItem[] = []
+
+    async function inbox(signal?: AbortSignal): Promise<Inbox> {
+        listed = macPhoneInboxSchema.parse(await ask(() => client.readInbox(signal))).items
+        return { items: listed.map(inboxItemOf), running: running.size }
+    }
+
+    async function markInboxRead(body: unknown, signal?: AbortSignal): Promise<void> {
+        const asked = body as { all?: boolean; sessionIds?: string[] }
+        const sessions = new Set(asked.sessionIds ?? [])
+        const ids = listed.filter(item => asked.all === true || item.sessionIds.some(id => sessions.has(id))).map(item => item.id)
+        if (ids.length === 0) return
+        await ask(() => client.markInboxRead(ids, signal))
+        listed = listed.filter(item => !ids.includes(item.id))
+    }
+
     const models: AgentModels = { groups: [], pinned: null, resolved: null, boxDefault: null }
     const box: Box = { id: MAC_BOX_ID, name: 'Mac', createdAt: null, managed: false, access: 'use' }
     const nothing = () => undefined
@@ -264,8 +289,8 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
         { method: 'GET', pattern: /^\/api\/v1\/workspaces$/, answer: () => [macMe(link).workspace] },
         { method: 'GET', pattern: /^\/api\/v1\/members$/, answer: () => [] },
         { method: 'GET', pattern: /^\/api\/v1\/boxes$/, answer: () => [box] },
-        { method: 'GET', pattern: /^\/api\/v1\/inbox$/, answer: (): Inbox => ({ items: [], running: running.size }) },
-        { method: 'POST', pattern: /^\/api\/v1\/inbox\/read$/, answer: nothing },
+        { method: 'GET', pattern: /^\/api\/v1\/inbox$/, answer: (_, { signal }) => inbox(signal) },
+        { method: 'POST', pattern: /^\/api\/v1\/inbox\/read$/, answer: (_, { body, signal }) => markInboxRead(body, signal) },
         { method: 'GET', pattern: /^\/api\/v1\/agents$/, answer: async (_, { signal }) => (await coworkers(signal)).map(coworker => boardAgentOf(coworker, link.workspaceId)) },
         { method: 'GET', pattern: /^\/api\/v1\/agents\/conversations$/, answer: (_, { signal }) => overview(signal) },
         { method: 'GET', pattern: new RegExp(`^/api/v1/agents/${id}$`), answer: ([agentId], { signal }) => agentView(agentId, signal) },

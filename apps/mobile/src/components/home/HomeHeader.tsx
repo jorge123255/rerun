@@ -22,8 +22,8 @@ export function HomeHeader({ inboxCount, onInbox, onNewCoworker }: HomeHeaderPro
 
             <View style={{ flex: 1 }} />
 
-            {/* A paired Mac serves its coworkers and their chats: they are made, and their inbox read, on the Mac. */}
-            {!onMac && <InboxButton count={inboxCount} onPress={onInbox} />}
+            <InboxButton count={inboxCount} onPress={onInbox} />
+            {/* A paired Mac serves its coworkers, their chats and its inbox: coworkers are made on the Mac. */}
             {!onMac && <GlassButton symbol="plus" label={t('newCoworker')} onPress={onNewCoworker} />}
         </View>
     )
