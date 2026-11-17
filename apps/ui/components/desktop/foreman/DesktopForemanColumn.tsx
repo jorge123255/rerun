@@ -469,7 +469,7 @@ export function DesktopForemanColumn({
                     </div>}
                     {!intake && !pendingStarter && sessionId && messages.length > 0 && <DesktopForemanTeamChanges chat={chat} refreshKey={`${messages.length}:${String(!!streaming)}`} />}
                     {!intake && !pendingStarter && <DesktopForemanGithubProjects github={github} chat={chat} onSend={send} sendDisabled={!!streaming || !!pendingSend || retryingSend || pendingRequest}
-                        refreshKey={`${messages.length}:${String(!!streaming)}`} />}
+                        refreshKey={`${messages.length}:${String(!!streaming)}:${foreman.build?.buildId ?? ''}:${foreman.build?.status ?? ''}`} />}
                     {/* Said while the links are still in the box, so it is clear they will be read. */}
                     {!intake && !pendingStarter && draftRepositories > 0 && <p data-foreman-github-hint role="status" className="mx-3 mt-2 text-[11px] text-muted-foreground">
                         {draftRepositories === 1 ? '1 GitHub repository' : `${draftRepositories} GitHub repositories`} will be read when you send. Nothing is cloned or run.
