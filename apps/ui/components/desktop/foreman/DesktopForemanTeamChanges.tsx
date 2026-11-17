@@ -68,7 +68,7 @@ export function DesktopForemanTeamChanges({ chat, refreshKey, ports: given }: {
             <div className="flex flex-wrap items-center gap-2 px-3 py-2">
                 {card.state === 'shown' ? <>
                     <Button type="button" size="sm" data-team-changes-apply loading={busy} disabled={busy || chosen.size === 0}
-                        onClick={() => act(() => applyTeamChanges(ports, card, answer?.github ?? null, chosen))}>
+                        onClick={() => act(() => applyTeamChanges(ports, card, chosen))}>
                         {chosen.size === card.changes.length ? `Apply all ${chosen.size}` : `Apply ${chosen.size} of ${card.changes.length}`}
                     </Button>
                     <Button type="button" size="sm" variant="ghost" data-team-changes-dismiss disabled={busy} onClick={() => act(() => ports.settle(card.id, 'dismissed', []))}>Dismiss</Button>

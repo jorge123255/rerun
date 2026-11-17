@@ -89,7 +89,11 @@ export function desktopGithubToolAccess(toolName: string, server?: DesktopGithub
  * deleting a branch, a file or a repository. Read from the name the call is held under, which may
  * join several inner tools with "+".
  */
+/** The app's own two acts on a coworker's repository (desktop-repository-workspace.ts): a pull request and a comment are asked about every time. */
+export const DESKTOP_REPOSITORY_ASKING_TOOLS = ['repo_publish', 'repo_comment'] as const
+
 export function desktopGithubAlwaysAsks(heldTool: string): boolean {
+    if ((DESKTOP_REPOSITORY_ASKING_TOOLS as readonly string[]).includes(heldTool)) return true
     return heldTool.split('+').some(name => { const action = githubAction(name); return !!action && accessOf(action) === 'write' && alwaysAsksAction(action) })
 }
 

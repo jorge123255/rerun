@@ -92,7 +92,11 @@ it('tells the Chief of Staff how to name each coworker\'s repository and what to
     // Said once and briefly: how the team gets GitHub, and that every change asks first.
     expect(rules).toContain('write one short line per project naming its coworkers')
     expect(rules).toContain('Give GitHub to the team')
-    expect(rules).toContain('every change to a repository asks the user first')
+    expect(rules).toContain('a pull request or a comment asks the user first, every time')
+    expect(rules).toContain('with no GitHub app or token to connect')
+    // A project starts small, and the reviewer answers on another provider when there is one.
+    expect(rules).toContain('usually a developer and a code reviewer')
+    expect(rules).toContain('so the review is independent')
     expect(rules).toContain('do not repeat those two sentences')
     expect(rules).toContain('at most 12 Boxes and 16 coworkers')
     // Nothing is promised or attached, and the intake token stays with the intake.

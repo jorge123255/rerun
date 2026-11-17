@@ -4,7 +4,6 @@ import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopForeman } from '@/lib/desktop/server/foreman/binding'
 import { ownedForemanChat } from '@/lib/desktop/server/foreman/chat-store'
 import { readDesktopTeamChanges, settleDesktopTeamChanges } from '@/lib/desktop/server/foreman/team-changes'
-import { readDesktopTeamGithubTarget } from '@/lib/desktop/server/foreman/team-changes-binding'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
 
@@ -22,9 +21,7 @@ export function GET(request: Request) {
         if (chat.data.workspaceId !== String(runtime.workspaceId)) throw new DesktopHttpError(404, 'Conversation not found.')
         const { db } = await desktopForeman(runtime)
         await ownedForemanChat(db, chat.data)
-        const changes = await readDesktopTeamChanges(db, chat.data)
-        const needsGithub = changes?.state === 'shown' && changes.changes.some(change => change.action === 'give_github')
-        return Response.json({ changes, github: needsGithub ? await readDesktopTeamGithubTarget(runtime) : null }, { headers })
+        return Response.json({ changes: await readDesktopTeamChanges(db, chat.data) }, { headers })
     })
 }
 
@@ -38,6 +35,6 @@ export function POST(request: Request) {
         await ownedForemanChat(db, parsed.data.chat)
         const changes = await settleDesktopTeamChanges(db, parsed.data.chat, parsed.data.settle)
         if (!changes) throw new DesktopHttpError(404, 'These changes are no longer here.')
-        return Response.json({ changes, github: null }, { headers })
+        return Response.json({ changes }, { headers })
     })
 }

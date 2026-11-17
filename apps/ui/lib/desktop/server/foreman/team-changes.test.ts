@@ -15,7 +15,6 @@ const workspace: TeamChangeWorkspace = {
         { id: 'mac-chatgpt', name: 'ChatGPT (Codex)', provider: 'codex', connected: true, models: ['gpt-6-sol', 'gpt-6-luna'], extraModels: [], codexReasoning: { 'gpt-6-sol': { supported: ['low', 'high'], default: 'low' } } },
         { id: 'off', name: 'Claude', provider: 'claude', connected: false, models: ['claude-opus-5-5'], extraModels: [] },
     ] as never,
-    github: { connect: true, alsoGives: ['Gmail'] },
 }
 const line = (action: string, extra: Record<string, unknown> = {}) => ({ action, ...extra })
 
@@ -33,12 +32,12 @@ test('each line is resolved to a real coworker, permission and model, in the app
     expect(sealed.refused).toEqual([])
     expect(sealed.changes.map(change => [change.key, change.agentId, change.label])).toEqual([
         ['change-0', 'a1', 'Switch on Tuner Developer'], ['change-1', 'a1', 'Allow Tuner Developer: Call coworkers'],
-        ['change-2', 'a2', 'Give Server Developer your GitHub sign-in'], ['change-3', 'a2', 'Start Server Developer\'s setup'],
+        ['change-2', 'a2', 'Let Server Developer work on its GitHub repository'], ['change-3', 'a2', 'Start Server Developer\'s setup'],
         ['change-4', 'a2', 'Set Server Developer to answer with ChatGPT (Codex) · gpt-6-luna'], ['change-5', null, 'Set ChatGPT (Codex) · gpt-6-sol to high effort'],
         ['change-6', 'a1', 'Allow Tuner Developer: Change GitHub repositories'],
     ])
     // What reaches further than its words is said under the line.
-    expect(sealed.changes[2]!.caution).toContain('It also reaches Gmail')
+    expect(sealed.changes[2]!.caution).toContain('no app from the Vault is given')
     expect(sealed.changes[5]!.caution).toContain('wherever this model runs')
     expect(sealed.changes[6]!.caution).toContain('still asks you first')
     expect(sealed.changes[4]).toMatchObject({ connectionId: 'mac-chatgpt', model: 'gpt-6-luna' })
@@ -61,7 +60,6 @@ test('a line that names nobody real, an unconnected provider, an unknown model o
     ])
     // A permission that reaches the Mac itself cannot even be named.
     expect(sealTeamChanges({ summary: 'x', changes: [line('allow', { coworker: 'Tuner Developer', permission: 'localMcpStdio' })] }, workspace).ok).toBe(false)
-    expect(sealTeamChanges({ summary: 'x', changes: [line('give_github', { coworker: 'Tuner Developer' })] }, { ...workspace, github: null })).toMatchObject({ changes: [], refused: ['give_github for "Tuner Developer": GitHub is not signed in in the Vault'] })
 })
 
 test('only connected providers, their models and efforts are offered, with no address or key', () => {
