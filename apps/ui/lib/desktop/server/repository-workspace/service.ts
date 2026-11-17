@@ -131,8 +131,17 @@ export function createRepositoryWorkspace(ports: RepositoryWorkspacePorts) {
         const parts: string[] = []
         const top = (await readdir(tree, { withFileTypes: true }).catch(() => [])).filter(entry => entry.name !== '.git').sort((a, b) => a.name.localeCompare(b.name))
         parts.push(`Top folder: ${top.slice(0, 80).map(entry => entry.isDirectory() ? `${entry.name}/` : entry.name).join(', ')}`)
-        const workflows = await readdir(join(tree, '.github', 'workflows')).catch(() => [])
-        parts.push(workflows.length ? `GitHub checks (workflows): ${workflows.slice(0, 20).join(', ')}` : 'GitHub checks: this repository has no workflow files, so a pull request is not built or tested by GitHub.')
+        // Whether GitHub builds or tests a pull request here is read from the workflow files' own triggers: a
+        // workflow that only runs by hand or on a tag checks nothing, and a coworker must not wait for it.
+        const workflows = (await readdir(join(tree, '.github', 'workflows')).catch(() => [])).filter(name => /\.ya?ml$/i.test(name)).sort().slice(0, 20)
+        const onPullRequests: string[] = []
+        for (const name of workflows) {
+            const body = (await readFile(join(tree, '.github', 'workflows', name), 'utf8').catch(() => '')).slice(0, 60_000)
+            if (workflowRunsOnPullRequests(body)) onPullRequests.push(name)
+        }
+        parts.push(onPullRequests.length ? `GitHub checks on a pull request: ${onPullRequests.join(', ')}. Read their result with repo_github "/actions/runs" after publishing.`
+            : workflows.length ? `GitHub checks: none runs on a pull request (the workflow files here, ${workflows.join(', ')}, are started by hand or by something else). A pull request is not built or tested by GitHub: say so, and do not wait for a result.`
+            : 'GitHub checks: this repository has no workflow files, so a pull request is not built or tested by GitHub.')
         const budget = (used: number) => Math.max(0, LIMITS.maxBriefChars - used)
         for (const name of ['AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README']) {
             const used = parts.join('\n\n').length
@@ -304,7 +313,7 @@ export function createRepositoryWorkspace(ports: RepositoryWorkspacePorts) {
                 url = existing && existing.code === 0 ? /https:\/\/github\.com\/[^\s]+\/pull\/\d+/.exec(existing.stdout)?.[0] ?? null : null
             }
             return url
-                ? { published: true, branch, pullRequest: url, note: 'The pull request is open. Nothing is merged. GitHub\'s checks, if the repository has any, now run on it: read them with repo_github "/actions/runs?per_page=5" before saying the change works.' }
+                ? { published: true, branch, pullRequest: url, note: 'The pull request is open. Nothing is merged. Whether GitHub builds or tests it is in the brief repo_prepare gave you: if a check runs on a pull request, read its result with repo_github "/actions/runs?per_page=5" before saying the change works; if none does, say the change is not built or tested.' }
                 : { published: true, branch, pullRequest: null, note: `The branch is on GitHub but the pull request could not be opened. Give the user this link to open it: ${compare}` }
         }),
 
@@ -334,6 +343,24 @@ export function createRepositoryWorkspace(ports: RepositoryWorkspacePorts) {
     }
 }
 export type RepositoryWorkspace = ReturnType<typeof createRepositoryWorkspace>
+
+/** Whether a workflow file lists a pull request among its triggers, in any of the three ways YAML lets `on` be written. Comments are ignored. */
+export function workflowRunsOnPullRequests(body: string): boolean {
+    const lines = body.split('\n').map(line => line.replace(/\s+#.*$/, '').replace(/^#.*$/, ''))
+    const start = lines.findIndex(line => /^(?:on|'on'|"on"|true)\s*:/.test(line))
+    if (start < 0) return false
+    const trigger = /\bpull_request(?:_target)?\b/
+    const inline = lines[start]!.replace(/^[^:]*:/, '')
+    if (inline.trim()) return trigger.test(inline)
+    for (const line of lines.slice(start + 1)) {
+        if (!line.trim()) continue
+        // The block ends at the next key that starts in the first column.
+        if (/^\S/.test(line)) break
+        // Only a key of `on` itself counts: two spaces in, or a list item.
+        if (/^\s{1,4}(?:-\s*)?['"]?pull_request(?:_target)?['"]?\s*:?\s*$/.test(line) || /^\s{1,4}['"]?pull_request(?:_target)?['"]?\s*:/.test(line)) return true
+    }
+    return false
+}
 
 /** A GitHub answer without what a coworker never needs: the dozens of link fields, ids and avatars. People are kept as their login. */
 export function slimGithub(value: unknown, depth = 0): unknown {
