@@ -56,7 +56,8 @@ describe('InboxSurface opened as a pill', () => {
         act(() => vi.advanceTimersByTime(100))
         expect(rows()).toBeLessThanOrEqual(12)
 
-        act(() => vi.runAllTimers())
+        // Not runAllTimers: this tree's rows draw a buddy, whose blink timer re-arms for as long as one is mounted.
+        act(() => vi.advanceTimersByTime(1000))
         expect(rows()).toBe(NEEDS + HEADS)
         expect(section('Heads-ups')).not.toBeNull()
     })
