@@ -18,7 +18,7 @@ export function desktopBackgroundRead(input: RequestInfo | URL, init?: RequestIn
     if (coworkerVault) return Response.json({ agentId: coworkerVault[1], attached: [], available: [] })
     if (url.pathname === '/api/desktop/workspace-view') return Response.json({ view: null, lastOpened: null })
     // The Simple view's list: no Box folded away, nothing arranged.
-    if (url.pathname === '/api/desktop/workspace-view/list') return Response.json({ collapsed: [] })
+    if (url.pathname === '/api/desktop/workspace-view/list') return Response.json({ collapsed: [], boxes: {}, agents: {} })
     // Model settings ask whether the workspace default follows a Rerun preset; here, none is chosen.
     if (url.pathname === '/api/desktop/settings/default-preset') return Response.json({ tier: null, presets: [] })
     // A coworker's tool permissions ask what its screen still needs on this Mac; here, nothing.

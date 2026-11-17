@@ -906,7 +906,15 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
     const [simpleInboxSlot, setSimpleInboxSlot] = useState<HTMLElement | null>(null)
     const [unseenAgents, setUnseenAgents] = useState<string[]>([])
     const [tileAction, setTileAction] = useState<DesktopBoardTileAction | null>(null)
-    const sidebarList = useDesktopSidebarList(simple)
+    const boardSpaces = boardState.board?.spaces, boardPlacements = boardState.board?.placements
+    const simpleBoxes = useMemo(() => boardSpaces?.map(space => ({ id: space.id, name: space.name })), [boardSpaces])
+    const simpleHomes = useMemo(() => {
+        const placed = new Map(boardPlacements?.map(placement => [placement.agentId, placement.spaceId]))
+        return Object.fromEntries(agents.map(agent => [agent.id, placed.get(agent.id) ?? null]))
+    }, [boardPlacements, agents])
+    const simpleBoxOf = useCallback((id: string) => simpleHomes[id] ?? null, [simpleHomes])
+    const simpleBoxIds = useMemo(() => simpleBoxes?.map(box => box.id) ?? null, [simpleBoxes])
+    const sidebarList = useDesktopSidebarList({ enabled: simple, boxIds: simpleBoxIds, homes: simpleHomes })
     const tileActionNonce = useRef(0)
     // The local engine does not announce a finished turn here, so the list is read again when the
     // board's activity or the open conversation changes, and every few seconds while it is on screen.
@@ -1013,8 +1021,7 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
                             selectedId={panelOpen ? selectedAgentId : null} foremanOpen={foremanEngaged && foremanOpen && !panelOpen}
                             disabled={creationNavigationBlocked || workspaceDialogActive || quitting}
                             onOpenCoworker={id => selectCoworker(id)} onOpenCard={openBoardCoworkerSettings} inboxSlot={setSimpleInboxSlot} unseenIds={unseenAgents}
-                            boxes={boardState.board?.spaces.map(space => ({ id: space.id, name: space.name }))}
-                            boxOf={id => boardState.board?.placements.find(placed => placed.agentId === id)?.spaceId ?? null}
+                            boxes={simpleBoxes} boxOf={simpleBoxOf} order={sidebarList.list}
                             onDuplicate={initialData.board ? id => setTileAction({ kind: 'copy', agentId: id, nonce: ++tileActionNonce.current }) : undefined}
                             onMoveToBox={initialData.board ? (id, spaceId) => setTileAction({ kind: 'move', agentId: id, spaceId, nonce: ++tileActionNonce.current }) : undefined}
                             collapsed={sidebarList.list.collapsed} onToggleBox={sidebarList.toggleBox}

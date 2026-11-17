@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import type { BoardActivityStatus } from '@/lib/desktop/board-activity'
 import type { DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
-import { desktopSidebarSections } from '@/lib/desktop/workspace-view'
+import { desktopSidebarSections, type DesktopSidebarList } from '@/lib/desktop/workspace-view'
 import { cn } from '@/lib/utils'
 import type { DesktopAgentView } from '../DesktopApp'
 import { useDesktopLocale } from '../DesktopLocale'
@@ -21,7 +21,7 @@ import { DesktopSidebarBoxSection, type DesktopBoxDialogKind } from './DesktopSi
  * coworkers by Box (upstream #279). Without the board's Boxes to read, it falls back to one tile per
  * coworker, the most recently active first.
  */
-export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot, unseenIds, boxes, boxOf, onDuplicate, onMoveToBox, collapsed, onToggleBox, onNewBox, onBoxDialog }: {
+export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews, selectedId, foremanOpen, disabled = false, onOpenCoworker, onOpenCard, onOpenForeman, onSearch, onNewCoworker, inboxSlot, unseenIds, boxes, boxOf, onDuplicate, onMoveToBox, collapsed, order, onToggleBox, onNewBox, onBoxDialog }: {
     workspaceMenu: ReactNode
     agents: DesktopAgentView[]
     statuses: Record<string, BoardActivityStatus>
@@ -43,6 +43,8 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
     onMoveToBox?: (agentId: string, spaceId: string) => void
     // The Boxes folded away, kept with the workspace.
     collapsed?: readonly string[]
+    // Where someone dragged the Boxes and their coworkers; absent, things follow the order they were made.
+    order?: Pick<DesktopSidebarList, 'boxes' | 'agents'>
     onToggleBox?: (boxId: string) => void
     // Both open the board's own dialogs; left out where the board cannot change its Boxes.
     onNewBox?: () => void
@@ -53,7 +55,7 @@ export function DesktopSimpleSidebar({ workspaceMenu, agents, statuses, previews
 }) {
     const { t, language } = useDesktopLocale()
     const ordered = useMemo(() => agents.map(agent => ({ agent, latest: previews?.[agent.id] ?? null })).sort(byRecency), [agents, previews])
-    const grouped = useMemo(() => boxes ? desktopSidebarSections(agents, boxes, id => boxOf?.(id) ?? null) : null, [agents, boxes, boxOf])
+    const grouped = useMemo(() => boxes ? desktopSidebarSections(agents, boxes, id => boxOf?.(id) ?? null, order) : null, [agents, boxes, boxOf, order])
     const newBox = t('workspaceView.list.newBox')
     const newCoworker = t('workspaceView.newCoworker')
     const tile = (agent: DesktopAgentView) => <DesktopCoworkerTile agent={agent} status={statuses[agent.id]} latest={previews?.[agent.id] ?? null} selected={agent.id === selectedId} unseen={!!unseenIds?.includes(agent.id)} disabled={disabled}
