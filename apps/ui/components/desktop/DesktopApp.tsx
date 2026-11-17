@@ -21,6 +21,8 @@ import { DesktopWorkspaceMenu } from './DesktopWorkspaceMenu'
 import { DesktopSimpleSidebar } from './simple/DesktopSimpleSidebar'
 import { useDesktopSidebarList } from './simple/useDesktopSidebarList'
 import { setDesktopDetailsWanted } from '@/lib/desktop/simple-details'
+import { AppBootCover } from '@/components/layout/AppBootCover'
+import { useAppBootStore, useHoldAppBoot } from '@/stores/app-boot.store'
 import { DesktopViewMenuRow } from './simple/DesktopViewMenuRow'
 import { desktopCoworkerPreviewsSchema, type DesktopCoworkerPreviews } from '@/lib/desktop/coworker-previews'
 import { desktopSimpleInitialOpen, loadDesktopWorkspaceView, resolveDesktopWorkspaceView, saveDesktopWorkspaceView, type DesktopWorkspaceView } from '@/lib/desktop/workspace-view'
@@ -940,10 +942,19 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
     // Once each time the Simple view comes up with nothing open: the coworker open last on this Mac,
     // else the most recently active one.
     const simpleRestored = useRef(false)
+    // One loader over the whole app until it can show itself in one go (upstream #284). On the Mac the
+    // board is in the page the server sent, so what the cover waits for is the saved view (else the
+    // board would flash before the Simple view takes its place), then in the Simple view its list and
+    // the coworker it reopens; the open chat holds it on while it reads its conversation. Capped at
+    // 2.5 s by AppBootCover, and lifted once per launch.
+    const [simpleOpened, setSimpleOpened] = useState(false)
+    useEffect(() => { useAppBootStore.getState().setBoardReady(viewLoaded) }, [viewLoaded])
+    useHoldAppBoot(simple && (coworkerPreviews === null || !simpleOpened))
     useEffect(() => {
         if (!simple) { simpleRestored.current = false; return }
         if (simpleRestored.current || coworkerPreviews === null || !viewLoaded) return
         simpleRestored.current = true
+        setSimpleOpened(true)
         if (panelOpen || foremanOpen) return
         const mostRecent = agents.map(agent => ({ id: agent.id, latest: coworkerPreviews[agent.id] ?? null })).sort(byRecency)[0]?.id ?? null
         const initial = desktopSimpleInitialOpen({ remembered: simpleLastOpened.current, agentIds: agents.map(agent => agent.id), mostRecent })
@@ -1178,6 +1189,7 @@ export function DesktopApp({ initialData, usageWaits }: { initialData: DesktopBo
                     requestDesktopGettingStartedReopen()
                 } : undefined}
                 onModelSettings={openSettings} onBackToBoard={() => showBoard()} />
+            <AppBootCover />
         </main>
     )
 }
@@ -1208,6 +1220,8 @@ function CoworkerChat({ cardBeside, agent, workspaceId, attention, overview, req
         .map(item => [item.sessionId, item.summary])), [agent.id, attention.items])
     const [bootstrap, setBootstrap] = useState<{ layout: DesktopTabLayout | null } | null>(null)
     const [sessionReadFailed, setSessionReadFailed] = useState(false)
+    // In the Simple view the boot cover stays on while the open coworker's conversations are read.
+    useHoldAppBoot(!!cardBeside && selected && (!bootstrap || !sessions) && !sessionReadFailed)
     const [checkedRequest, setCheckedRequest] = useState<DesktopChatRequest | null>(null)
     const url = `/api/desktop/agents/${encodeURIComponent(agent.id)}/sessions`
     const sessionRead = useRef<AbortController | null>(null)

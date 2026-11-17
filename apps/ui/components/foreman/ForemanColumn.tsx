@@ -45,6 +45,7 @@ import { agentFileRawUrl, foremanFileRawUrl, sharedFileRawUrl } from '@/lib/file
 import { type ForemanPlacement, dockedForemanSide } from '@/lib/foreman-layout'
 import { browserPermission } from '@/lib/notifications/browser'
 import { intakePreviewPlan, type ForemanIntake } from '@/lib/onboarding/intake'
+import { useHoldAppBoot } from '@/stores/app-boot.store'
 import { useBoardCoverStore } from '@/stores/board-cover.store'
 import { useForemanStore } from '@/stores/foreman.store'
 import { useTemplateFlowStore } from '@/stores/template-flow.store'
@@ -69,6 +70,7 @@ export function ForemanColumn({ open, placement }: { open: boolean | null; place
     const gated = isAnonymous && pendingIntake !== null && !intakeOpen
     const { messages, sendMessage, status, error, stop, regenerate, retryLastTurn, answerWidget, dismissWidget, pendingWidget, restoreDone, composerBackend, backend, contextStats, runError, reconnecting, activeRunId } = useForemanChat()
     const busy = status === 'submitted' || status === 'streaming' || reconnecting
+    useHoldAppBoot(open !== false && !guided && !restoreDone)
 
     // Ce que le board dessine à gauche pendant tout le tunnel. L'organisation vit dans le transcript
     // et non dans un state à nous, donc elle survit à « Looks good », au checkout et au rechargement.

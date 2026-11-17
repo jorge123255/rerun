@@ -24,6 +24,7 @@ import { AgentBuddy } from '@rerun/ui/iso-grid'
 import { Message, MessageContent, Suggestion, Suggestions } from '@rerun/ui/chat'
 import { FloatingPill } from '@/components/agent/sheet/floating'
 import { setDesktopDetailsWanted, useDesktopDetailsWanted } from '@/lib/desktop/simple-details'
+import { useHoldAppBoot } from '@/stores/app-boot.store'
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton, type ConversationHandle } from '@/components/ai-elements/conversation'
 import { bringBlockIn, useArriveByTop } from '@/hooks/useArriveByTop'
 import { DesktopArrive, useDesktopLiveGate } from './panel-motion/DesktopArrive'
@@ -740,6 +741,8 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const historyGeneration = historyRead.current.generation
 
     const ready = history.id === sessionId && !history.error
+    // In the Simple view the boot cover stays on while the conversation on screen is read (upstream #284).
+    useHoldAppBoot(!!cardBeside && active && history.id !== sessionId)
     const runInFlight = !busy && engineRunning.id === sessionId && engineRunning.running
     const generating = busy || runInFlight
     useEffect(() => {
