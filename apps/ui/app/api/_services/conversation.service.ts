@@ -1,6 +1,7 @@
 import { AuthorizationError, assertAgentInWorkspace, assertSessionInWorkspace, type WorkspaceContext } from '@/app/api/_auth/ownership'
 import { createSessionRow, getSessionEngineContext, lastRunError, listSessionRuns, readUsageSeed, resolveAgentTarget, type SessionUsageSeed, updateSessionStatus } from '@/app/api/_services/chat.service'
 import { type HistoryMessage, transformEngineMessages } from '@/lib/chat/engine-history'
+import { pendingRequestPeek, type PendingRequestPeek } from '@/lib/chat/pending-request-peek'
 import { ATTENTION_NOTIFICATION_COLUMNS, attentionDetailsOf, attentionNotificationsFilter } from '@/lib/notifications/attention-details'
 import { sanitizeIlike } from '@/lib/search/ilike'
 import { cancelRun, getSession, getSessionMessages, listRuns, listSessions, listSkillProposals } from '@/lib/engine/client'
@@ -292,6 +293,11 @@ export async function readSessionMessages(sessionId: string): Promise<HistoryMes
 
     const messages = await getSessionMessages(ctx.conn, ctx.engineAgentId, ctx.engineSessionId)
     return transformEngineMessages(messages)
+}
+
+// What the conversation waits on, read the way the chat would read it when opened.
+export async function readPendingRequest(sessionId: string): Promise<PendingRequestPeek> {
+    return pendingRequestPeek(await readSessionMessages(sessionId))
 }
 
 export type SessionSnapshot = {
