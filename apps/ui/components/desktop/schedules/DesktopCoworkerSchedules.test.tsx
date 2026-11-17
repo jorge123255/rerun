@@ -6,6 +6,19 @@ import { loadMessages } from '@rerun/i18n/messages'
 import { desktopMessages } from '@/lib/desktop/locale'
 import { DesktopLocale } from '../DesktopLocale'
 vi.mock('@/lib/desktop/use-schedule-tool-notices', () => ({ useDesktopScheduleToolNotices: () => null }))
+// The shared routine list animates its rows in; happy-dom rejects an animation cancelled by the next render.
+vi.mock('motion/react', async original => {
+    const actual = await original<typeof import('motion/react')>()
+    const { createElement, forwardRef } = await import('react')
+    const plain = (tag: string) => forwardRef<HTMLElement, Record<string, unknown>>(({ children, ...props }, ref) =>
+        createElement(tag, { ...Object.fromEntries(Object.entries(props).filter(([name]) => !actual.isValidMotionProp(name))), ref }, children as ReactNode))
+    const elements = new Map<string, ReturnType<typeof plain>>()
+    const element = (tag: string) => { if (!elements.has(tag)) elements.set(tag, plain(tag)); return elements.get(tag)! }
+    return { ...actual, AnimatePresence: ({ children }: { children: ReactNode }) => <>{children}</>, motion: new Proxy(actual.motion, { get(target, key, receiver) {
+        if (key === 'create') return (tag: unknown) => typeof tag === 'string' ? element(tag) : tag
+        return typeof key === 'string' && key !== 'then' ? element(key) : Reflect.get(target, key, receiver)
+    } }) }
+})
 vi.mock('@/components/ui/panel-steps', () => ({ PanelSteps: ({ children }: { children: ReactNode }) => <>{children}</> }))
 vi.mock('@/components/agent/RunModelField', () => ({
     RunModelField: ({ value, onChange }: { value: { connectionId: string | null; model: string | null }; onChange: (next: { connectionId: string | null; model: string | null }) => void }) => <div data-testid="routine-model" data-connection={value.connectionId ?? ''} data-model={value.model ?? ''}>
@@ -40,10 +53,13 @@ beforeEach(() => {
     container = document.createElement('div'); document.body.append(container); root = createRoot(container)
 })
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals() })
-const render = () => act(async () => { root.render(<DesktopCoworkerSchedules agentId="alice" onOpenSession={vi.fn()} />) })
+// The list is the one the Chief of Staff's routines use (upstream #318): its paused routines sit in a
+// folded group, opened here so a test reads every row.
+const showPaused = () => act(async () => { container.querySelector<HTMLButtonElement>('button[aria-expanded="false"]:not([aria-haspopup])')?.click() })
+const render = async () => { await act(async () => { root.render(<DesktopCoworkerSchedules agentId="alice" onOpenSession={vi.fn()} />) }); await showPaused() }
 const button = (label: string) => [...container.querySelectorAll('button')].find(node => node.textContent?.trim() === label)!
-const row = (name: string) => [...container.querySelectorAll('button')].find(node => node.textContent?.includes(name))!
-const refresh = () => act(async () => { button('Refresh').click() })
+const row = (name: string) => [...container.querySelectorAll<HTMLElement>('[role="button"]')].find(node => node.textContent?.includes(name))!
+const refresh = async () => { await act(async () => { button('Refresh').click() }); await showPaused() }
 function deferred() {
     let resolve!: (value: Response) => void
     const promise = new Promise<Response>(done => { resolve = done })
@@ -60,7 +76,10 @@ test('uses the selected language for the coworker list, editor and saved run sta
     }
     await act(async () => root.render(<DesktopLocale initial={language}><DesktopCoworkerSchedules agentId="alice" onOpenSession={vi.fn()} /></DesktopLocale>))
     expect(container.textContent).toContain('1 tâche planifiée')
-    expect(container.textContent).toContain('en pause')
+    // A paused routine sits in the folded « En pause » group of the shared list.
+    expect(container.querySelector('button[aria-expanded="false"]:not([aria-haspopup])')?.textContent).toContain('En pause')
+    expect(row('Saved daily')).toBeUndefined()
+    await showPaused()
     expect(container.textContent).toContain('Dernier résultat : ' + language.messages.routines.status.done)
     await act(async () => { row('Saved daily').click() })
     expect(container.textContent).toContain('Modifier la tâche')
@@ -236,6 +255,7 @@ test('Test Run uses the reviewed revision for a paused routine after setup', asy
         return Response.json([task('daily', { enabled: false })])
     }
     await act(async () => { root.render(<DesktopCoworkerSchedules agentId="alice" onOpenSession={onOpenSession} />) })
+    await showPaused()
     await act(async () => { row('Saved daily').click() })
     expect(button('Test Run').disabled).toBe(false)
     await act(async () => { button('Test Run').click() })
@@ -416,4 +436,58 @@ test('the editor lists what the last run did, already settled when it is opened'
     expect(list.dataset.routineChecklist).toBe('settled')
     expect([...list.querySelectorAll('[data-routine-step]')].map(step => step.textContent)).toEqual(['DoneCollect the numbers', 'BlockedSend the report · no access to the sheet'])
     expect(container.textContent).toContain('Last result: Done · 1 done, 1 blocked: no access to the sheet')
+})
+
+test('draws the list the Chief of Staff\'s routines use: grouped by next run, the paused folded, no coworker face or name, the last run under the rule', async () => {
+    const chat = { agentId: 'alice', sessionId: 'result', engineSessionId: 'engine-result', tabUid: 'schedule:result', title: 'Daily', runId: 'run' }
+    respond = async () => Response.json([
+        task('daily', { lastResult: { status: 'done', runId: chat.runId, chat } }),
+        task('weekly', { cron: '0 9 * * 1' }),
+        task('resting', { enabled: false }),
+    ])
+    await act(async () => { root.render(<DesktopCoworkerSchedules agentId="alice" onOpenSession={vi.fn()} />) })
+    // One heading per period, then « Paused » folded with its count: the paused routine is not on screen yet.
+    const headings = [...container.querySelectorAll('section h3, section button[aria-expanded]:not([aria-haspopup])')].map(node => node.textContent)
+    expect(headings.at(-1)).toBe('Paused1')
+    expect(headings.length).toBeGreaterThan(1)
+    expect(row('Saved resting')).toBeUndefined()
+    // Every row is this coworker's: neither its face nor its name is repeated on each.
+    expect(container.querySelector('[data-buddy-still], [data-buddy-motion]')).toBeNull()
+    expect(row('Saved daily').textContent).toContain('Every day at 8:00 AM')
+    expect(row('Saved daily').textContent).not.toContain('alice')
+    // The last run stays under the rule.
+    expect(row('Saved daily').querySelector('[data-routine-footer]')!.textContent).toBe('Last result: Done')
+    expect(row('Saved weekly').querySelector('[data-routine-footer]')!.textContent).toBe('Last result: Not run yet')
+    // Each row has the switch and the menu of the shared list.
+    expect(row('Saved daily').querySelector('[role="switch"]')!.getAttribute('aria-label')).toBe('Pause Saved daily')
+    expect(row('Saved daily').querySelector('button[aria-haspopup="menu"]')!.getAttribute('aria-label')).toContain('Saved daily')
+    await showPaused()
+    expect(row('Saved resting').querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
+})
+
+test('the switch pauses a routine the way the Chief of Staff\'s list does, and the list is read again', async () => {
+    const mutations: Array<Record<string, unknown>> = []
+    let paused = false, reads = 0
+    respond = async (url, init) => {
+        if (url === '/api/desktop/workspace/routines' && init?.method === 'POST') {
+            const body = JSON.parse(String(init.body)); mutations.push(body); paused = !body.enabled
+            return Response.json({ routine: { agentId: 'alice', slug: 'daily', name: 'Saved daily', description: '', body: 'Return a short report.', cron: '0 8 * * *', runAt: null, timezone: 'America/Chicago',
+                enabled: body.enabled, revision: 'b'.repeat(64), frequency: 'Every day at 8:00 AM', nextRunAt: null, runningSince: null, setupPending: false } })
+        }
+        reads++
+        return Response.json([task('daily', { enabled: !paused, ...(paused && { revision: 'b'.repeat(64) }) })])
+    }
+    await render()
+    expect(reads).toBe(1)
+    await act(async () => { row('Saved daily').querySelector<HTMLButtonElement>('[role="switch"]')!.click() })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    expect(mutations).toEqual([{ action: 'toggle', agentId: 'alice', slug: 'daily', expectedRevision: revision, requestId: expect.any(String), enabled: false }])
+    expect(reads).toBe(2)
+    // Just switched off, the row keeps its place instead of dropping at once into the folded group.
+    expect(row('Saved daily').querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
+    expect(row('Saved daily').querySelector('[role="switch"]')!.getAttribute('aria-label')).toBe('Resume Saved daily')
+    // Clicking the row still opens this coworker's own editor.
+    await act(async () => { row('Saved daily').click() })
+    expect(container.textContent).toContain('Edit')
+    expect(container.querySelector('input[aria-label="Name"]')).toBeTruthy()
 })
