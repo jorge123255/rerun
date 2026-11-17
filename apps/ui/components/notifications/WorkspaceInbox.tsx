@@ -188,14 +188,17 @@ export function WorkspaceInbox() {
     const detailClassName = peeking ? 'w-[min(420px,calc(100cqw-2rem))]' : undefined
 
     let detail: ReactNode = null
+    let detailKey: string | undefined
     if (view !== null && view !== 'hub' && 'peek' in view) {
         const { peek } = view
+        detailKey = peek.entry.id
         detail = (
             <InboxPeek
                 key={peek.entry.id}
                 peek={peek}
                 anchor="bottom"
                 onClose={() => setView(null)}
+                onBack={() => setView('hub')}
                 onOpenConversation={() => openPeekConversation(peek)}
             />
         )
@@ -203,12 +206,14 @@ export function WorkspaceInbox() {
         const { notification } = view
         const row = rowOf(notification)
         const { agentId, engineSessionId, engineRunId } = notification
+        detailKey = notification.id
         detail = (
             <InboxDetailCard
                 entry={entryOf(notification)}
                 message={notification.message}
                 total={items.length}
                 onClose={() => setView(null)}
+                onBack={() => setView('hub')}
                 onSeeAll={() => setView('hub')}
                 onOpenConversation={
                     agentId
@@ -250,6 +255,7 @@ export function WorkspaceInbox() {
             // A half-written answer is not lost to a click elsewhere, nor to a portaled picker or tooltip.
             keepOpen={rowMenuOpen || peeking}
             detail={detail}
+            detailKey={detailKey}
             detailClassName={detailClassName}
         />
     )
@@ -275,7 +281,7 @@ export function InboxSurface({ items, onMarkAllRead, keepOpen = false, ...props 
     )
 }
 
-function InboxPeek({ peek, anchor, onClose, onOpenConversation }: { peek: Peek; anchor: 'bottom' | 'top'; onClose: () => void; onOpenConversation: () => void }) {
+function InboxPeek({ peek, anchor, onClose, onBack, onOpenConversation }: { peek: Peek; anchor: 'bottom' | 'top'; onClose: () => void; onBack: () => void; onOpenConversation: () => void }) {
     const { peek: state, answer } = useInboxPeek(peek.target)
-    return <InboxPeekCard entry={peek.entry} peek={state} anchor={anchor} onAnswer={answer} onClose={onClose} onOpenConversation={onOpenConversation} />
+    return <InboxPeekCard entry={peek.entry} peek={state} anchor={anchor} onAnswer={answer} onClose={onClose} onBack={onBack} onOpenConversation={onOpenConversation} />
 }
