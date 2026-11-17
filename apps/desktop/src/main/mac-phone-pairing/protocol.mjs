@@ -21,6 +21,7 @@ export const DEVICE_STATUS = Object.freeze({
 
 export const ERRORS = Object.freeze({
     unauthorized: 'unauthorized',
+    revoked: 'revoked',
     invalid_offer: 'invalid_offer',
     not_found: 'not_found',
     disabled: 'disabled',

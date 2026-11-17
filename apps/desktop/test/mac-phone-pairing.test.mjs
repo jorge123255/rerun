@@ -606,7 +606,7 @@ test('revocation takes effect immediately and still holds after a reload from di
     const { client, pending } = await pairedClient(first.service)
     assert.equal((await client.listCoworkers()).coworkers[0].id, AGENT.id)
     await first.service.revokeDevice(pending.deviceId)
-    await assert.rejects(() => client.listCoworkers(), error => error.message === 'unauthorized')
+    await assert.rejects(() => client.listCoworkers(), error => error.message === 'revoked' && error.status === 401)
     await first.service.stop()
 
     const second = createService(t, root, { workspace })
@@ -614,7 +614,7 @@ test('revocation takes effect immediately and still holds after a reload from di
     assert.equal(restored.phoneAccessEnabled, true)
     assert.equal(restored.listening, true)
     assert.equal(restored.devices[0].status, 'revoked')
-    await assert.rejects(() => client.listCoworkers(), error => error.message === 'unauthorized')
+    await assert.rejects(() => client.listCoworkers(), error => error.message === 'revoked' && error.status === 401)
     await second.service.stop()
 })
 

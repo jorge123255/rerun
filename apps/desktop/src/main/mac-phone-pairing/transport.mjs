@@ -129,6 +129,14 @@ export function createPairingTransport({
             && device.credentialIssued !== false && hashesEqual(device.credentialHash, presented)) ?? null
     }
 
+    // A phone the person removed is told so, once it proves it held that phone's token: it can then
+    // forget the Mac instead of asking forever. Anyone else learns nothing more than `unauthorized`.
+    async function removed(presented) {
+        if (!presented || !(await enabled())) return false
+        const store = await getStore()
+        return store.devices.some(device => inScope(device) && device.status === DEVICE_STATUS.revoked && hashesEqual(device.credentialHash, presented))
+    }
+
     async function workspaceFor(device, requested, current) {
         await assertDeviceWorkspace({
             dataRoot, installId, device, requestedWorkspaceId: requested, selectedWorkspaceId: current?.workspaceId,
@@ -225,7 +233,7 @@ export function createPairingTransport({
         if (!sending && !stopping && request.method !== 'GET') return fail(response, ERRORS.not_found, 404)
         const presented = hashSecret(BEARER.exec(request.headers.authorization ?? '')?.[1])
         const device = await authenticate(presented)
-        if (!device) return fail(response, ERRORS.unauthorized)
+        if (!device) return fail(response, await removed(presented) ? ERRORS.revoked : ERRORS.unauthorized)
         if (!WORKSPACE.test(rawWorkspaceId) || (agentId && !ID.test(agentId)) || (chatId && !ID.test(chatId)) || (requestId && !UUID.test(requestId))) {
             return fail(response, ERRORS.not_found, 404)
         }

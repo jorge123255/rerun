@@ -4,7 +4,10 @@ import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { readDesktopHistory, startDesktopChat, startDesktopPhoneConversation } from '@/lib/desktop/server/engine'
 import { desktopRoute } from '@/lib/desktop/server/http'
 import type { DesktopRuntime } from '@/lib/desktop/server/runtime'
+import { readDesktopApproval } from '@/lib/desktop/server/approvals'
+import { phonePendingCards } from '@/lib/desktop/server/phone-pending'
 import { phoneReplyStream } from '@/lib/desktop/server/phone-reply'
+import { readDesktopQuestion } from '@/lib/desktop/server/questions'
 import { withDesktopSecretSessionTransition } from '@/lib/desktop/server/secret-requests/lifecycle'
 import { engineOf } from '@/lib/desktop/server/settings'
 import { findDesktopAgent, findDesktopSession, listDesktopAgents, listDesktopSessions } from '@/lib/desktop/server/store'
@@ -79,7 +82,12 @@ export async function GET(request: Request): Promise<Response> {
             return text ? [{ id: message.id, role: message.role, createdAt: message.metadata?.createdAt,
                 content: { type: 'text', text } }] : []
         })
-        return Response.json({ chat: { id: savedId, agentId, title, createdAt, updatedAt, kind, acceptsMessages: agent.enabled }, messages }, options)
+        // A request the chat waits on. A failed read hides the card and keeps the chat readable.
+        const [question, approval] = await Promise.all([
+            readDesktopQuestion(runtime, chatId).then(view => view.question, () => null),
+            readDesktopApproval(runtime, chatId).then(view => view.approval, () => null),
+        ])
+        return Response.json({ chat: { id: savedId, agentId, title, createdAt, updatedAt, kind, acceptsMessages: agent.enabled }, messages, pending: phonePendingCards(question, approval) }, options)
     })
 }
 
