@@ -193,7 +193,7 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
         if (!existing && !target.enabled) return { text: `Coworker "${target.name}" is switched off and cannot be called.`, snapshot: null }
         if (!existing && (!target.callable || target.publicAgentId === auth.caller.publicAgentId || ancestors.includes(target.publicAgentId))) {
             const loop = target.publicAgentId === auth.caller.publicAgentId || ancestors.includes(target.publicAgentId)
-            return { text: loop ? `Coworker calls cannot loop back to ${target.name}.` : `Coworker "${target.name}" is not allowed for this coworker.`, snapshot: null }
+            return { text: loop ? `Coworker calls cannot loop back to ${target.name}.` : `Coworker "${target.name}" is not allowed for this coworker. The person chooses who it may ask, in its Tools under Call coworkers, or by asking the Chief of Staff to set the team up.`, snapshot: null }
         }
 
         const now = deps.now()
@@ -266,7 +266,7 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
             const auth = await deps.authorize(input)
             const allowed = auth.ok && auth.caller.publicAgentId === currentRow.parentAgentId && auth.caller.publicSessionId === currentRow.parentSessionId &&
                 auth.caller.targets.some(item => item.publicAgentId === target.publicAgentId && item.engineAgentId === target.engineAgentId && item.enabled && item.callable)
-            if (!allowed) throw new Error(!auth.ok ? auth.reason : `Coworker "${target.name}" is not allowed for this coworker.`)
+            if (!allowed) throw new Error(!auth.ok ? auth.reason : `Coworker "${target.name}" is not allowed for this coworker. The person chooses who it may ask, in its Tools under Call coworkers, or by asking the Chief of Staff to set the team up.`)
             const prepared = await deps.prepareTarget({
                 caller: { engineAgentId: input.engineAgentId, engineSessionId: input.engineSessionId, engineRunId: input.engineRunId },
                 target: { publicAgentId: target.publicAgentId, engineAgentId: target.engineAgentId },

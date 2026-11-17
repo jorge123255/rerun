@@ -115,3 +115,34 @@ test('a setup that is not waiting is refused before the card, and one that could
     expect(sealed.changes.map(change => change.coworker)).toEqual(['Server Developer', 'Twin Reader'])
     expect(sealed.refused).toEqual(['start_setup for "Tuner Developer": this coworker has no setup waiting to start'])
 })
+
+test('who may be asked is resolved to real coworkers, for a coworker, for everyone and for the Chief of Staff', () => {
+    const sealed = sealTeamChanges({ summary: 'Let them work together', changes: [
+        line('allow_calls', { coworker: 'Tuner Developer', targets: ['server developer'] }),
+        line('allow_calls', { coworker: 'Server Developer', targets: ['everyone'] }),
+        line('allow_calls', { coworker: 'Chief of Staff', targets: ['Tuner Developer', 'Tuner Developer'] }),
+        line('allow_calls', { coworker: 'Tuner Developer', targets: ['Nobody Here'] }),
+        line('allow_calls', { coworker: 'Tuner Developer', targets: ['Twin'] }),
+        line('allow_calls', { coworker: 'Tuner Developer' }),
+        line('allow_calls', { coworker: 'Tuner Developer', targets: ['Tuner Developer'] }),
+    ] }, workspace)
+    if (!sealed.ok) throw new Error(sealed.message)
+    expect(sealed.changes.map(change => [change.label, change.agentId, change.chief, change.targetAgentIds])).toEqual([
+        ['Let Tuner Developer ask Server Developer for help', 'a1', false, ['a2']],
+        ['Let Server Developer ask Tuner Developer, Twin, twin for help', 'a2', false, ['a1', 'a3', 'a4']],
+        ['Let the Chief of Staff ask Tuner Developer for help', null, true, ['a1']],
+    ])
+    expect(sealed.refused).toEqual([
+        'allow_calls for "Tuner Developer": "Nobody Here" is not the name of exactly one other coworker',
+        'allow_calls for "Tuner Developer": "Twin" is not the name of exactly one other coworker',
+        'allow_calls for "Tuner Developer": name who may be asked, or "everyone"',
+        'allow_calls for "Tuner Developer": "Tuner Developer" is not the name of exactly one other coworker',
+    ])
+})
+
+test('a card kept before the new line existed is still read', async () => {
+    const { desktopTeamChangesSchema } = await import('@rerun/contracts')
+    const old = { id: 'ftc_12345678', summary: 's', state: 'shown', createdAt: 'now', changes: [{ key: 'change-0', action: 'switch_on', agentId: 'a1', coworker: 'Dev', permission: null, connectionId: null, model: null, effort: null, label: 'Switch on Dev', caution: null, result: null }] }
+    const parsed = desktopTeamChangesSchema.parse(old)
+    expect(parsed.changes[0]).toMatchObject({ targetAgentIds: null, chief: false })
+})

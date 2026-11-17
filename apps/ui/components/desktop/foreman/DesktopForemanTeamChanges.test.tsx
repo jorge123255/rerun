@@ -11,7 +11,7 @@ let root: Root | undefined
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; document.body.replaceChildren() })
 const chat = { workspaceId: '1', chatId: 'fmc_teamcard00001' }
 const change = (key: string, label: string, extra: Partial<DesktopTeamChange> = {}): DesktopTeamChange => ({
-    key, action: 'switch_on', agentId: key, coworker: 'Dev', permission: null, connectionId: null, model: null, effort: null, label, caution: null, result: null, ...extra,
+    key, action: 'switch_on', agentId: key, coworker: 'Dev', permission: null, connectionId: null, model: null, effort: null, targetAgentIds: null, chief: false, label, caution: null, result: null, ...extra,
 })
 function fake(card: DesktopTeamChanges | null) {
     const state = { answer: { changes: card } as TeamChangesAnswer, calls: [] as string[] }
