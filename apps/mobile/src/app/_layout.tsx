@@ -1,11 +1,11 @@
 import { useFonts } from 'expo-font'
 import { DarkTheme, DefaultTheme, router, Stack, ThemeProvider, usePathname } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { StatusBar } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
-import { AuthProvider, useAuth } from '@/auth/AuthProvider'
+import { AuthProvider as HubAuthProvider, useAuth } from '@/auth/AuthProvider'
 import { BuddyClock } from '@/components/buddy/motion'
 import { AiConsent } from '@/components/consent/AiConsent'
 import { NoPlan } from '@/components/home/NoPlan'
@@ -18,9 +18,11 @@ import { WaitlistNotice } from '@/components/onboarding/widgets/TeamCards'
 import { SystemDialogHost } from '@/components/ui/system-dialogs'
 import { UpdateRequired } from '@/components/update/UpdateRequired'
 import { useUpdateRequired } from '@/components/update/useUpdateRequired'
+import { macLink } from '@/config/environment'
 import { MediaViewerHost } from '@/components/viewer/MediaViewerHost'
 import { InboxProvider } from '@/data/InboxProvider'
 import { I18nProvider } from '@/i18n/I18nProvider'
+import { MacAuthProvider } from '@/mac/MacAuthProvider'
 import { useAiConsent } from '@/lib/ai-consent'
 import { posthog } from '@/lib/analytics'
 import { MockStore } from '@/mocks/store'
@@ -50,7 +52,9 @@ function App() {
     const { route, reload } = useOnboardingRoute()
     const settled = signedIn && me !== null
     const aiConsent = useAiConsent(session?.user.id ?? null)
-    const consentKnown = !signedIn || aiConsent.state !== 'loading'
+    // The consent names the providers Rerun Cloud sends to. A paired Mac runs on its owner's own
+    // providers, chosen on the Mac: there is nothing for the phone to agree to.
+    const consentKnown = !signedIn || !!macLink || aiConsent.state !== 'loading'
     // The first coworker the onboarding started, opened once the app has taken over from it.
     const [lead, setLead] = useState<LeadStarted | null>(null)
     const pushTarget = usePushTarget()
@@ -91,7 +95,7 @@ function App() {
             <BuddyClock>
                 {updateRequired ? (
                     <UpdateRequired />
-                ) : signedIn && aiConsent.state === 'needed' ? (
+                ) : signedIn && !macLink && aiConsent.state === 'needed' ? (
                     <OnboardingShell>
                         <AiConsent onAgree={aiConsent.grant} onDecline={() => void signOut()} />
                     </OnboardingShell>
@@ -168,6 +172,11 @@ function App() {
             </BuddyClock>
         </ThemeProvider>
     )
+}
+
+// Paired with a Mac, the person is whoever the Mac's owner approved: there is no account to read.
+function AuthProvider({ children }: { children: ReactNode }) {
+    return macLink ? <MacAuthProvider link={macLink}>{children}</MacAuthProvider> : <HubAuthProvider>{children}</HubAuthProvider>
 }
 
 export default function RootLayout() {

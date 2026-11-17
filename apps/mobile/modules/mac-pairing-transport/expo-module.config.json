@@ -1,0 +1,9 @@
+{
+    "platforms": ["apple", "android"],
+    "apple": {
+        "modules": ["MacPairingTransportModule"]
+    },
+    "android": {
+        "modules": ["expo.modules.macpairingtransport.MacPairingTransportModule"]
+    }
+}

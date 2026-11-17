@@ -2,8 +2,11 @@ import { DefaultChatTransport, isTextUIPart, type HttpChatTransportInitOptions, 
 import { fetch as expoFetch } from 'expo/fetch'
 import type { RefObject } from 'react'
 
-import { clientHeader, hubHeaders } from '@/api/client'
+import { clientHeader, hubHeaders, macHub } from '@/api/client'
 import { environment } from '@/config/environment'
+import { translatorFor } from '@/i18n/translator'
+import { createMacChatTransport } from '@/mac/chat-transport'
+import { macClient } from '@/mac/client'
 
 import type { ChatEndpoints } from './endpoints'
 
@@ -74,6 +77,7 @@ class ChatTransport extends DefaultChatTransport<UIMessage> {
 // The hub streams the engine's UI message stream as it comes; expo/fetch is the fetch that hands a
 // React Native app the body as a stream. A send names the run in a response header.
 export function createChatTransport(link: ChatLink) {
+    if (macHub) return createMacChatTransport(link, macClient, macHub, problem => translatorFor('mobileAuth')(`mac.send.${problem}`), lastUserText)
     const headers = () => {
         const caller = link.callerRef.current
         return hubHeaders(clientHeader, { accessToken: caller?.accessToken, workspaceId: caller?.workspaceId })

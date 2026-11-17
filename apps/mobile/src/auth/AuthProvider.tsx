@@ -17,7 +17,7 @@ import { registerDevice, unregisterDevice } from '@/notifications/push'
 // instead of moving the account's default under the web session.
 const WORKSPACE_KEY = 'rerun.workspace-id'
 
-type AuthState = {
+export type AuthState = {
     // False until the stored session has been read: the app shows nothing rather than flash sign-in.
     ready: boolean
     session: Session | null
@@ -28,7 +28,7 @@ type AuthState = {
     signOut: () => Promise<void>
 }
 
-const AuthContext = createContext<AuthState | null>(null)
+export const AuthContext = createContext<AuthState | null>(null)
 
 async function storedWorkspaceId(): Promise<number | null> {
     const raw = await SecureStore.getItemAsync(WORKSPACE_KEY)

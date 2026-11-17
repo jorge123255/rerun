@@ -31,6 +31,7 @@ import { GLASS_BUTTON_SIZE } from '@/components/ui/GlassButton'
 import { PillButton } from '@/components/ui/PillButton'
 import { loadTranscript } from '@/data/local-cache'
 import { useInbox } from '@/data/InboxProvider'
+import { onMac } from '@/config/environment'
 import { useBoard } from '@/data/useBoard'
 import { setBadge } from '@/notifications/push'
 import { layoutTransition as layout } from '@/theme/motion'
@@ -132,7 +133,7 @@ export function HomeScreen({ sidebar = false }: { sidebar?: boolean }) {
                         </Animated.View>
                     )}
 
-                    {board.state === 'ready' && !foremanPinned && (
+                    {board.state === 'ready' && !foremanPinned && !onMac && (
                         <Animated.View key="foreman" layout={layout} entering={fill.playing ? fill.rowEntering(0) : FadeIn.duration(180)} exiting={FadeOut.duration(120)}>
                             <ForemanRow last={foreman} selected={openAgentId === FOREMAN_AGENT_ID} onPress={openForeman} pin={{ pinned: false, onToggle: () => pins.pin(FOREMAN_AGENT_ID) }} />
                         </Animated.View>

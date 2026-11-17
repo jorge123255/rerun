@@ -54,7 +54,11 @@
         "deleteFailedMessage": "Tente de novo daqui a pouco.",
         "leaveServerTitle": "Sair de {host}?",
         "leaveServerMessage": "Você será desconectado, e o Rerun reabre no Rerun Cloud.",
-        "leaveServer": "Sair"
+        "leaveServer": "Sair",
+        "disconnectMac": "Desconectar do Mac",
+        "leaveMacTitle": "Desconectar deste Mac?",
+        "leaveMacMessage": "Este telefone esquece o Mac. Para removê-lo de vez, remova-o também em Conectar iPhone no seu Mac.",
+        "leaveMac": "Desconectar"
     },
     "workspace": {
         "untitled": "Meu workspace",

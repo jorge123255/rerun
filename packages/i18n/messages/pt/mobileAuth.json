@@ -8,7 +8,8 @@
         "or": "Ou",
         "welcome": "Boas-vindas ao Rerun",
         "ownServer": "Usar seu próprio servidor",
-        "useCloud": "Usar o Rerun Cloud"
+        "useCloud": "Usar o Rerun Cloud",
+        "connectMac": "Conectar a este Mac"
     },
     "back": "Voltar",
     "phone": {
@@ -96,5 +97,34 @@
             "not-rerun": "Este endereço não é um servidor Rerun.",
             "outdated": "Atualize este servidor Rerun para usá-lo pelo app."
         }
+    },
+    "mac": {
+        "title": "Conectar a este Mac",
+        "hint": "No Rerun no seu Mac, escolha Arquivo e depois Conectar iPhone. Permita o emparelhamento local, escolha sua rede e crie uma solicitação de emparelhamento.",
+        "scan": "Escanear código QR",
+        "typeInstead": "Digitar o código",
+        "code": "Código de emparelhamento",
+        "connect": "Conectar",
+        "waiting": "Aprove este telefone no seu Mac",
+        "waitingHint": "O Rerun no seu Mac mostra este telefone em Aguardando aprovação.",
+        "cancel": "Cancelar",
+        "cameraDenied": "Permita o acesso à câmera nos Ajustes para escanear o código, ou digite-o.",
+        "problems": {
+            "invalid": "Este não é um código de emparelhamento do Rerun.",
+            "expired": "Este código expirou ou já foi usado. Crie um novo no seu Mac.",
+            "unreachable": "Não foi possível acessar seu Mac. Verifique se este telefone está na mesma rede.",
+            "unsupported": "Esta versão do app não consegue se conectar a um Mac na rede local.",
+            "declined": "O pedido foi recusado no seu Mac, ou o tempo acabou.",
+            "off": "O acesso de telefones está desativado no seu Mac."
+        },
+        "send": {
+            "sendOff": "Este telefone pode ler as conversas, mas não enviar. No seu Mac, abra Conectar iPhone e ative Enviar mensagens para ele.",
+            "busy": "Este colega ainda está trabalhando. Tente de novo em instantes.",
+            "coworkerOff": "Este colega está desativado no seu Mac.",
+            "removed": "Seu Mac não aceita mais este telefone. Abra Conectar iPhone no seu Mac para verificar.",
+            "unreachable": "Não foi possível acessar seu Mac."
+        },
+        "pickCoworker": "Escolha um colega para abrir as conversas dele.",
+        "approvalOnMac": "Aguardando sua aprovação no seu Mac"
     }
 }

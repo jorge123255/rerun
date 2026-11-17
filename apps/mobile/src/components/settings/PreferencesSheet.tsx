@@ -8,14 +8,14 @@ import { useLocale, useTranslations } from 'use-intl'
 
 import { appBuild } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
-import { askToDeleteAccount, askToLeaveServer, contactSupport, initialsOf } from '@/components/home/account-actions'
+import { askToDeleteAccount, askToLeaveMac, askToLeaveServer, contactSupport, initialsOf } from '@/components/home/account-actions'
 import { useGroupMode, type GroupMode } from '@/components/home/useGroupMode'
 import { workspaceLabel } from '@/components/home/workspace-logos'
 import { AppText } from '@/components/ui/AppText'
 import { GlassButton, GLASS_BUTTON_SIZE } from '@/components/ui/GlassButton'
 import { Card, Section, SectionTitle, Separator, SettingsRow } from '@/components/ui/GroupedList'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
-import { environment, onCustomServer, webHost } from '@/config/environment'
+import { environment, onCustomServer, onMac, webHost } from '@/config/environment'
 import { track } from '@/lib/analytics'
 import { usePushPermission } from '@/notifications/usePushPermission'
 import { useAppearancePreference, type AppearancePreference } from '@/theme/appearance'
@@ -90,8 +90,12 @@ export function PreferencesSheet() {
                 </View>
                 <Separator />
                 <SettingsRow label={t('workspace')} value={workspaceLabel(me?.workspace)} />
-                <Separator />
-                <SettingsRow label={t('aiProviders')} onPress={openAiProviders} />
+                {!onMac && (
+                    <>
+                        <Separator />
+                        <SettingsRow label={t('aiProviders')} onPress={openAiProviders} />
+                    </>
+                )}
             </Card>
 
             <View style={{ gap: spacing.sm }}>
@@ -113,7 +117,7 @@ export function PreferencesSheet() {
             </Section>
 
             <Section title={t('support')}>
-                {!onCustomServer && (
+                {!onCustomServer && !onMac && (
                     <>
                         <SettingsRow label={t('contactSupport')} onPress={() => contactSupport(user)} />
                         <Separator />
@@ -126,7 +130,12 @@ export function PreferencesSheet() {
 
             <Section title={t('about')}>
                 <SettingsRow label={t('version')} value={version} />
-                {onCustomServer ? (
+                {onMac ? (
+                    <>
+                        <Separator />
+                        <SettingsRow testID="row-mac" label={t('mac')} value={webHost} />
+                    </>
+                ) : onCustomServer ? (
                     <>
                         <Separator />
                         <SettingsRow testID="row-server" label={t('server')} value={webHost} onPress={() => askToLeaveServer(signOut)} />
@@ -141,15 +150,13 @@ export function PreferencesSheet() {
                 )}
             </Section>
 
-            <Section>
-                <SettingsRow label={t('signOut')} onPress={signOut} />
-            </Section>
+            <Section>{onMac ? <SettingsRow testID="row-disconnect-mac" label={t('disconnectMac')} onPress={() => askToLeaveMac(signOut)} /> : <SettingsRow label={t('signOut')} onPress={signOut} />}</Section>
 
-            <Pressable onPress={() => session && askToDeleteAccount(session.access_token, signOut)} accessibilityRole="button" hitSlop={spacing.md} style={({ pressed }) => ({ alignSelf: 'center', opacity: pressed ? 0.5 : 1 })}>
+            {!onMac && <Pressable onPress={() => session && askToDeleteAccount(session.access_token, signOut)} accessibilityRole="button" hitSlop={spacing.md} style={({ pressed }) => ({ alignSelf: 'center', opacity: pressed ? 0.5 : 1 })}>
                 <AppText variant="footnote" tone="destructive">
                     {t('deleteAccount')}
                 </AppText>
-            </Pressable>
+            </Pressable>}
         </ScrollView>
     )
 }

@@ -3,6 +3,7 @@ import { useEffect, useEffectEvent } from 'react'
 import { AppState } from 'react-native'
 
 import { supabase } from '@/auth/supabase'
+import { onMac } from '@/config/environment'
 
 const MAX_RETRY_MS = 15_000
 
@@ -19,7 +20,7 @@ const MAX_RETRY_MS = 15_000
  * nothing yet. `listen` declares the `.on()` of each channel opened, bound to `changed`, which always
  * reaches the latest `reload`.
  */
-export function useLiveReload(topic: string | null, listen: (channel: RealtimeChannel, changed: () => void) => void, reload: () => void) {
+function useRealtimeReload(topic: string | null, listen: (channel: RealtimeChannel, changed: () => void) => void, reload: () => void) {
     const onListen = useEffectEvent(listen)
     const onChange = useEffectEvent(reload)
 
@@ -72,3 +73,27 @@ export function useLiveReload(topic: string | null, listen: (channel: RealtimeCh
         }
     }, [topic])
 }
+
+const MAC_POLL_MS = 8000
+
+// A paired Mac has no Realtime: the rows are read again every few seconds while the screen is open and
+// the app in front, and when it comes back to the foreground.
+function usePolledReload(topic: string | null, _listen: (channel: RealtimeChannel, changed: () => void) => void, reload: () => void) {
+    const onChange = useEffectEvent(reload)
+
+    useEffect(() => {
+        if (!topic) return
+        const timer = setInterval(() => {
+            if (AppState.currentState === 'active') onChange()
+        }, MAC_POLL_MS)
+        const foreground = AppState.addEventListener('change', state => {
+            if (state === 'active') onChange()
+        })
+        return () => {
+            clearInterval(timer)
+            foreground.remove()
+        }
+    }, [topic])
+}
+
+export const useLiveReload = onMac ? usePolledReload : useRealtimeReload

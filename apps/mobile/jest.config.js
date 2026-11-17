@@ -14,9 +14,13 @@ const shared = {
     }
 }
 
+// @rerun/mac-pairing-client ships as ES modules in .mjs files, which the preset leaves untransformed:
+// they go through the same Babel transform as the app's own sources.
+function withMjs(platform) {
+    const preset = require(`jest-expo/${platform}/jest-preset`)
+    return { ...shared, "displayName": platform, "preset": `jest-expo/${platform}`, "transform": { "\\.mjs$": preset.transform["\\.[jt]sx?$"] } }
+}
+
 module.exports = {
-    "projects": [
-        { ...shared, "displayName": "ios", "preset": "jest-expo/ios" },
-        { ...shared, "displayName": "android", "preset": "jest-expo/android" }
-    ]
+    "projects": [withMjs("ios"), withMjs("android")]
 }

@@ -1,10 +1,11 @@
 import * as Updates from 'expo-updates'
 
 import { readCustomServer, type CustomServer } from '@/config/custom-server'
+import { readMacLink, type MacLink } from '@/mac/session'
 import { PRODUCTION, STAGING } from '@rerun/cloud-mobile/environments'
 
 export type Environment = {
-    name: 'production' | 'staging' | 'local' | 'custom'
+    name: 'production' | 'staging' | 'local' | 'custom' | 'mac'
     apiUrl: string
     supabaseUrl: string
     supabasePublishableKey: string
@@ -25,15 +26,25 @@ export function environmentForChannel(channel: string | null): Environment {
     }
 }
 
-// A server the person picked in the app, their own Rerun, comes before the one the build was made for.
-export function environmentAtLaunch(channel: string | null, custom: CustomServer | null): Environment {
+// A Mac has no Supabase: the client is built for an address nothing answers at and is never asked.
+const NO_SUPABASE = { supabaseUrl: 'http://127.0.0.1:9', supabasePublishableKey: 'not-used-on-a-mac' }
+
+// A Mac the phone is paired with comes first, then a server the person picked in the app, their own
+// Rerun, then the one the build was made for.
+export function environmentAtLaunch(channel: string | null, custom: CustomServer | null, mac: MacLink | null = null): Environment {
+    if (mac) return { name: 'mac', apiUrl: mac.origin, ...NO_SUPABASE }
     if (custom) return { name: 'custom', ...custom }
     return environmentForChannel(channel)
 }
 
-export const environment = environmentAtLaunch(Updates.channel, readCustomServer())
+export const macLink = readMacLink()
+
+export const environment = environmentAtLaunch(Updates.channel, readCustomServer(), macLink)
+
+// Paired with the Mac app on the local network: no account, no hub, one workspace.
+export const onMac = environment.name === 'mac'
 
 export const onCustomServer = environment.name === 'custom'
 
 // Where a person is sent to do what the app does not: rerun.build, or their own server.
-export const webHost = onCustomServer ? new URL(environment.apiUrl).host : 'rerun.build'
+export const webHost = onCustomServer || onMac ? new URL(environment.apiUrl).host : 'rerun.build'

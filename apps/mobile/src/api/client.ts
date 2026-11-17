@@ -1,9 +1,12 @@
 import { CLIENT_HEADER, formatClientHeader } from '@rerun/contracts'
 import * as Application from 'expo-application'
 
-import { environment } from '@/config/environment'
+import { environment, macLink } from '@/config/environment'
 import { translatorFor } from '@/i18n/translator'
 import { clientPlatform } from '@/lib/client-platform'
+import { macClient } from '@/mac/client'
+import { createMacHub } from '@/mac/hub'
+import { leaveMac } from '@/mac/session'
 
 const WORKSPACE_HEADER = 'x-workspace-id'
 
@@ -59,4 +62,7 @@ export const appBuild = Number(Application.nativeBuildVersion ?? 0)
 
 export const clientHeader = formatClientHeader({ platform: clientPlatform, version: Application.nativeApplicationVersion ?? '0.0.0', build: appBuild })
 
-export const api = createApiClient({ baseUrl: environment.apiUrl, clientHeader })
+// Paired with a Mac, the same calls are answered by the Mac's phone listener (see src/mac/hub.ts).
+export const macHub = macLink ? createMacHub({ client: macClient, link: macLink, fail: (status, message, body) => new ApiError(status, message, body), onRevoked: () => void leaveMac(), approvalTitle: () => translatorFor('mobileAuth')('mac.approvalOnMac') }) : null
+
+export const api: ReturnType<typeof createApiClient> = macHub ? macHub.api : createApiClient({ baseUrl: environment.apiUrl, clientHeader })

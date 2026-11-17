@@ -136,8 +136,9 @@ export function StartStep({ layout }: { layout: StartLayout }) {
         <>
             <StepTitle title={t('start.title')} />
             {layout === 'phone-first' ? <PhoneFirst /> : <Choices />}
-            <View style={{ alignItems: 'center' }}>
+            <View style={{ alignItems: 'center', gap: spacing.md }}>
                 <TextLink label={t('start.ownServer')} onPress={() => goTo({ name: 'server' })} />
+                <TextLink label={t('start.connectMac')} onPress={() => goTo({ name: 'mac' })} />
             </View>
         </>
     )

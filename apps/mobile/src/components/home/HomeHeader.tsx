@@ -5,6 +5,7 @@ import { AccountMenu } from '@/components/home/AccountMenu'
 import { HOME_GUTTER } from '@/components/home/CoworkerRow'
 import { InboxButton } from '@/components/home/InboxButton'
 import { GlassButton } from '@/components/ui/GlassButton'
+import { onMac } from '@/config/environment'
 import { spacing } from '@/theme/tokens'
 
 type HomeHeaderProps = {
@@ -21,8 +22,9 @@ export function HomeHeader({ inboxCount, onInbox, onNewCoworker }: HomeHeaderPro
 
             <View style={{ flex: 1 }} />
 
-            <InboxButton count={inboxCount} onPress={onInbox} />
-            <GlassButton symbol="plus" label={t('newCoworker')} onPress={onNewCoworker} />
+            {/* A paired Mac serves its coworkers and their chats: they are made, and their inbox read, on the Mac. */}
+            {!onMac && <InboxButton count={inboxCount} onPress={onInbox} />}
+            {!onMac && <GlassButton symbol="plus" label={t('newCoworker')} onPress={onNewCoworker} />}
         </View>
     )
 }

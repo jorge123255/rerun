@@ -54,7 +54,11 @@
         "deleteFailedMessage": "Try again in a moment.",
         "leaveServerTitle": "Leave {host}?",
         "leaveServerMessage": "You will be signed out, and Rerun reopens on Rerun Cloud.",
-        "leaveServer": "Leave"
+        "leaveServer": "Leave",
+        "disconnectMac": "Disconnect from Mac",
+        "leaveMacTitle": "Disconnect from this Mac?",
+        "leaveMacMessage": "This phone forgets the Mac. To remove it for good, also remove it under Connect iPhone on your Mac.",
+        "leaveMac": "Disconnect"
     },
     "workspace": {
         "untitled": "My workspace",

@@ -9,6 +9,8 @@ export type SignInStep =
     | { name: 'phone' }
     | { name: 'email' }
     | { name: 'server' }
+    // Pairing with the Mac app on the local network: no account, the Mac's owner approves the phone.
+    | { name: 'mac' }
     // `resendIn` is what the hub said is left of a code sent earlier.
     | { name: 'code'; method: 'phone'; channel: PhoneChannel; resendIn?: number }
     | { name: 'code'; method: 'email' }

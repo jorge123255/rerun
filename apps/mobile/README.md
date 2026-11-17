@@ -2,7 +2,9 @@
 
 The Rerun app for iPhone, iPad and Android, built with Expo and Expo Router. It talks to a hub
 (`apps/ui`) through its `/api/v1` routes and signs in with Supabase, like the web app. It shares
-`@rerun/contracts`, `@rerun/db` (types only) and `@rerun/i18n` with the rest of the monorepo.
+`@rerun/contracts`, `@rerun/db` (types only) and `@rerun/i18n` with the rest of the monorepo. In this
+fork `@rerun/contracts` resolves to `packages/hub-contracts`, upstream's contracts as the app was
+written against them; the Mac app's own contracts are `@rerun/mac-contracts` here.
 
 ## Run it
 
@@ -34,6 +36,37 @@ At launch, `src/config/environment.ts` picks the server:
 
 A self-hosted install needs nothing in the build: people type its address in the app. See
 `apps/docs/self-host/mobile.mdx`.
+
+## Paired with the Mac app
+
+**Connect to This Mac** on the sign-in screen pairs the phone with the Rerun Mac app on the same
+network, with no account and no hub. On the Mac: **File → Connect iPhone…**, allow local pairing, pick
+the network address, create a pairing offer. On the phone: scan the QR code, or paste the code under
+it. The Mac then lists the phone under *Waiting for approval*; once approved there, the app restarts
+on the Mac. Sending is off until **Send messages** is turned on for the phone in the same Mac window.
+
+How it is built (`src/mac/`):
+
+- `@rerun/mac-pairing-client` speaks the Mac's phone listener (`/api/mac-pairing/v1`); the wire shapes
+  are `@rerun/mac-contracts/mac-phone-pairing` (`packages/contracts/src/mac-phone-pairing.ts`).
+- The listener serves HTTPS with a certificate the Mac made for itself. `modules/mac-pairing-transport`
+  (Swift and Kotlin) only talks to a server presenting the certificate named in the offer. Without
+  that module (Expo Go, the tests) pairing over the network is refused.
+- `session.ts` reads the pairing at launch, like the custom server: `environment.name` is `mac`, and
+  `MacAuthProvider` stands in for the Supabase session. The phone's token lives in the Keychain under
+  `rerun.mac-pairing.session`, apart from `rerun.server` and from a hub's session.
+- `hub.ts` answers the `/api/v1` paths the Home and the chat read with what the Mac serves, and
+  `chat-transport.ts` sends through the Mac and follows the reply. `useLiveReload` polls instead of
+  listening to Realtime.
+
+What a paired Mac serves: the coworkers of the one workspace the phone was approved for, their saved
+chats as text, a new conversation, a message, the live text of the reply to a message the phone sent,
+stop, and the question or approval a chat waits on. A question is answered from the phone (it is a
+message); an approval is shown and decided on the Mac. Not served, and hidden or answered "not
+available": the Foreman, the inbox, new coworkers, files and attachments, voice, routines, apps, AI
+providers, search, feedback, push.
+
+A build with no hub configured (`EXPO_PUBLIC_*` unset) still opens, so it can pair with a Mac.
 
 ## Build profiles
 

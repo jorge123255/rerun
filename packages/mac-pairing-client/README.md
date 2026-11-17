@@ -10,8 +10,11 @@ minutes and can be redeemed once. After approval on the Mac, the client can
 list coworkers and read their saved chats in that workspace. Approvals survive
 restart on the same endpoint and revocation takes effect immediately.
 
-The stock iPhone app still needs a Mac pairing screen and a native TLS adapter.
-Its existing server picker requires a Rerun hub with Supabase authentication.
+The phone app in `apps/mobile` uses this package: **Connect to This Mac** on its
+sign-in screen takes the offer (scanned or pasted), and its native module
+`modules/mac-pairing-transport` is the pinned TLS adapter described below. Its
+other sign-in paths still require a Rerun hub with Supabase authentication.
+See `apps/mobile/README.md`, "Paired with the Mac app".
 
 ## Why the stock iPhone app cannot sign in to the Mac unmodified
 

@@ -63,6 +63,13 @@
       ],
       "expo-font",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Rerun uses the camera to attach a photo to a message, and to scan the code your Mac shows when you connect to it.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "Rerun uses your photo library to attach photos to a message.",

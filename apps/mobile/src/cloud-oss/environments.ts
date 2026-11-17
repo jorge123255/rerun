@@ -7,7 +7,9 @@ function hubOf(name: Environment['name']): Environment {
         name,
         apiUrl: process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000',
         supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? 'http://127.0.0.1:54421',
-        supabasePublishableKey: process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? '',
+        // Never empty: the Supabase client refuses an empty key as the app starts, and a build with no
+        // hub at all still has to open, to pair with a Mac.
+        supabasePublishableKey: process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'no-hub-configured',
     }
 }
 

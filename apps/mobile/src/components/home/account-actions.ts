@@ -38,6 +38,13 @@ export async function askToLeaveServer(signOut: () => Promise<void>) {
     await switchServer(null)
 }
 
+// Forgets the Mac on this phone. The custom server and a hub's session are other keys, left alone.
+export async function askToLeaveMac(signOut: () => Promise<void>) {
+    const t = translatorFor('mobileHome')
+    const confirmed = await confirm(t('account.leaveMacTitle'), t('account.leaveMacMessage'), t('account.leaveMac'), t('account.cancel'))
+    if (confirmed) await signOut()
+}
+
 // Same rule as the web: a workspace only this account holds and that still bills stops the deletion,
 // and is named so it can be cancelled first.
 export async function askToDeleteAccount(accessToken: string, signOut: () => Promise<void>) {

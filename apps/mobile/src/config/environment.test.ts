@@ -27,6 +27,14 @@ describe('environmentAtLaunch', () => {
         expect(environmentAtLaunch('production', custom)).toEqual({ name: 'custom', ...custom })
     })
 
+    it('puts a paired Mac before both, with no Supabase project behind it', () => {
+        const mac = { origin: 'https://192.168.1.74:52000', certificateFingerprint: 'a'.repeat(64), macId: 'mac-1', workspaceId: 1, deviceId: 'device-1', credential: 'C'.repeat(43) }
+        const environment = environmentAtLaunch('production', custom, mac)
+        expect(environment).toMatchObject({ name: 'mac', apiUrl: mac.origin })
+        expect(environment.supabaseUrl).not.toBe(custom.supabaseUrl)
+        expect(JSON.stringify(environment)).not.toContain(mac.credential)
+    })
+
     it('falls back on the update channel when no server was picked', () => {
         expect(environmentAtLaunch('production', null)).toBe(PRODUCTION)
     })

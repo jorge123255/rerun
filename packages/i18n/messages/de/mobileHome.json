@@ -54,7 +54,11 @@
         "deleteFailedMessage": "Versuch es gleich noch mal.",
         "leaveServerTitle": "{host} verlassen?",
         "leaveServerMessage": "Du wirst abgemeldet, und Rerun öffnet sich wieder mit Rerun Cloud.",
-        "leaveServer": "Verlassen"
+        "leaveServer": "Verlassen",
+        "disconnectMac": "Vom Mac trennen",
+        "leaveMacTitle": "Von diesem Mac trennen?",
+        "leaveMacMessage": "Dieses Telefon vergisst den Mac. Um es endgültig zu entfernen, entferne es auch unter iPhone verbinden auf deinem Mac.",
+        "leaveMac": "Trennen"
     },
     "workspace": {
         "untitled": "Mein Workspace",

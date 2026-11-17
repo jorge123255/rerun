@@ -9,6 +9,7 @@ import { useSignInFlow } from '@/components/auth/SignInFlow'
 import { CodeStep } from '@/components/auth/steps/CodeStep'
 import { EmailStep } from '@/components/auth/steps/EmailStep'
 import { PhoneStep } from '@/components/auth/steps/PhoneStep'
+import { MacStep } from '@/components/auth/steps/MacStep'
 import { ServerStep } from '@/components/auth/steps/ServerStep'
 import { StartStep, type StartLayout } from '@/components/auth/steps/StartStep'
 import { FORM_COLUMN_MAX_WIDTH } from '@/components/layout/split'
@@ -122,6 +123,7 @@ export function SignInSheet({ startLayout = 'phone-first' }: { startLayout?: Sta
                                 {step.name === 'phone' && <PhoneStep />}
                                 {step.name === 'email' && <EmailStep />}
                                 {step.name === 'server' && <ServerStep />}
+                                {step.name === 'mac' && <MacStep />}
                                 {step.name === 'code' && <CodeStep step={step} />}
                             </Animated.View>
                         </View>

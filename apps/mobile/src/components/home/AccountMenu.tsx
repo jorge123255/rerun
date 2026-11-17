@@ -4,12 +4,12 @@ import { useState } from 'react'
 import { useTranslations } from 'use-intl'
 
 import { useAuth } from '@/auth/AuthProvider'
-import { contactSupport, initialsOf } from '@/components/home/account-actions'
+import { askToLeaveMac, contactSupport, initialsOf } from '@/components/home/account-actions'
 import { WorkspaceSubmenu } from '@/components/home/WorkspaceMenu'
 import { AppText } from '@/components/ui/AppText'
 import { Icon } from '@/components/ui/Icon'
 import { CircleTrigger, MenuItem, NativeMenu } from '@/components/ui/NativeMenu'
-import { onCustomServer } from '@/config/environment'
+import { onCustomServer, onMac } from '@/config/environment'
 import { useTheme } from '@/theme/theme'
 
 export function AccountMenu() {
@@ -39,8 +39,8 @@ export function AccountMenu() {
         >
             <WorkspaceSubmenu />
             <MenuItem label={t('account.preferences')} icon="settings" onPress={() => router.push('/settings')} />
-            {!onCustomServer && <MenuItem label={t('account.contactSupport')} icon="message-circle" onPress={() => contactSupport(me?.user)} />}
-            <MenuItem label={t('account.signOut')} icon="log-out" destructive onPress={signOut} />
+            {!onCustomServer && !onMac && <MenuItem label={t('account.contactSupport')} icon="message-circle" onPress={() => contactSupport(me?.user)} />}
+            {onMac ? <MenuItem label={t('account.disconnectMac')} icon="log-out" destructive onPress={() => askToLeaveMac(signOut)} /> : <MenuItem label={t('account.signOut')} icon="log-out" destructive onPress={signOut} />}
         </NativeMenu>
     )
 }

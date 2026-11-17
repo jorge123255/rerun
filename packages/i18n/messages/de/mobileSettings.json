@@ -24,7 +24,9 @@
         "environment": "Umgebung",
         "signOut": "Abmelden",
         "deleteAccount": "Konto löschen",
-        "server": "Server"
+        "server": "Server",
+        "mac": "Mac",
+        "disconnectMac": "Vom Mac trennen"
     },
     "notifications": {
         "title": "Benachrichtigungen",
