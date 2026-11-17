@@ -125,3 +125,18 @@ test('GitHub pages are read only for the coworker\'s own repository, slimmed, an
     expect(calls[1]).toEqual({ args: ['api', '--method', 'POST', '-H', 'Accept: application/vnd.github+json', '/repos/acme/tuner/issues/3/comments', '--input', '-'], input: '{"body":"@file-looking text and $(danger)"}' })
     expect(slimGithub({ a: { b: { url: 'x', html_url: 'y', _links: {}, name: 'n' } } })).toEqual({ a: { b: { html_url: 'y', name: 'n' } } })
 })
+
+test('a repository that contains links gives a copy with no false changes, and the links are not followed', async () => {
+    // Add a link to the repository itself, as real projects have.
+    const seed = join(dir, 'seed')
+    await symlink('README.md', join(seed, 'readme-link'))
+    await symlink('/etc/hosts', join(seed, 'outside-link'))
+    sh(seed, 'add', '-A'); sh(seed, 'commit', '--quiet', '-m', 'links'); sh(seed, 'push', '--quiet', remote, 'main')
+    const space = workspace()
+    await space.prepare(dev, repository, { topic: 'links' })
+    expect((await space.status(dev, repository)).changed).toBe(0)
+    // In the copy a link is a small text file naming its target: reading it never opens the target.
+    expect((await space.read(dev, repository, { path: 'outside-link' })).text).toBe('/etc/hosts')
+    await space.write(dev, repository, { path: 'note.txt', content: 'x\n' })
+    expect((await space.status(dev, repository)).files).toEqual([{ path: 'note.txt', added: 1, removed: 0 }])
+})
