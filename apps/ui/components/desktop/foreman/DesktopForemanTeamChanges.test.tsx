@@ -14,12 +14,12 @@ const change = (key: string, label: string, extra: Partial<DesktopTeamChange> = 
     key, action: 'switch_on', agentId: key, coworker: 'Dev', permission: null, connectionId: null, model: null, effort: null, label, caution: null, result: null, ...extra,
 })
 function fake(card: DesktopTeamChanges | null) {
-    const state = { answer: { changes: card, github: null } as TeamChangesAnswer, calls: [] as string[] }
+    const state = { answer: { changes: card } as TeamChangesAnswer, calls: [] as string[] }
     const ports = {
         read: async () => state.answer,
         settle: async (id, kind, results) => {
             state.calls.push(`settle ${kind} ${results.map(result => result.key).join(',')}`)
-            state.answer = { github: null, changes: { ...card!, state: kind, changes: card!.changes.map(item => { const result = results.find(row => row.key === item.key); return result ? { ...item, result: { ok: result.ok, message: result.message } } : item }) } }
+            state.answer = { changes: { ...card!, state: kind, changes: card!.changes.map(item => { const result = results.find(row => row.key === item.key); return result ? { ...item, result: { ok: result.ok, message: result.message } } : item }) } }
             return state.answer
         },
         setEnabled: async (id, enabled) => { if (id === 'change-1') throw new Error('This coworker is being deleted.'); state.calls.push(`enabled ${id} ${enabled}`) },

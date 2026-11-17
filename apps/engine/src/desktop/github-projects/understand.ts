@@ -74,7 +74,7 @@ export function readGithubProjectsAnswer(value: unknown, shown: readonly Shown[]
         const stack = Array.isArray(raw.stack)
             ? [...new Set(raw.stack.flatMap(item => oneLine(item, DESKTOP_GITHUB_PROJECT_LIMITS.stackItem) ?? []))].slice(0, DESKTOP_GITHUB_PROJECT_LIMITS.stackItems) : []
         const roles = Array.isArray(raw.roles)
-            ? DESKTOP_GITHUB_PROJECT_ROLES.filter(role => (raw.roles as unknown[]).includes(role)).slice(0, 4) as DesktopGithubProjectRole[] : []
+            ? DESKTOP_GITHUB_PROJECT_ROLES.filter(role => (raw.roles as unknown[]).includes(role)).slice(0, 2) as DesktopGithubProjectRole[] : []
         projects.push({
             id, kind,
             purpose: oneLine(raw.purpose, DESKTOP_GITHUB_PROJECT_LIMITS.purpose),

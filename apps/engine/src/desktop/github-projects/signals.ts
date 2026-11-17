@@ -131,13 +131,15 @@ export function detectProjectBuild(data: DesktopGithubRepositoryData): string | 
     return parts.slice(0, 4).join('; ').slice(0, DESKTOP_GITHUB_PROJECT_LIMITS.build)
 }
 
+// A project starts with two coworkers: one who does the work and one who checks it. More than
+// that was a crowd nobody had asked for; the owner ticks further roles in the review, or asks.
 const DEFAULT_ROLES: Record<DesktopGithubProjectKind, DesktopGithubProjectRole[]> = {
-    'ios-app': ['developer', 'qa-tester', 'release-manager'],
-    'android-app': ['developer', 'qa-tester', 'release-manager'],
-    'web-app': ['developer', 'qa-tester', 'code-reviewer'],
-    'backend-service': ['developer', 'code-reviewer', 'qa-tester'],
-    library: ['developer', 'code-reviewer', 'docs-writer'],
-    cli: ['developer', 'code-reviewer', 'docs-writer'],
+    'ios-app': ['developer', 'code-reviewer'],
+    'android-app': ['developer', 'code-reviewer'],
+    'web-app': ['developer', 'code-reviewer'],
+    'backend-service': ['developer', 'code-reviewer'],
+    library: ['developer', 'code-reviewer'],
+    cli: ['developer', 'code-reviewer'],
     infrastructure: ['developer', 'code-reviewer'],
     other: ['developer', 'code-reviewer'],
 }

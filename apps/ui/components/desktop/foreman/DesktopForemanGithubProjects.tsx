@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@/components/ui/icon'
 import type { DesktopIntakeGithubController } from '@/lib/desktop/foreman-intake/use-desktop-intake-github'
-import { githubTeamAccessClient, githubTeamReady, giveGithubToTeam, type DesktopGithubTeamAccess, type GithubTeamAccessPorts } from '@/lib/desktop/github-team-access'
+import { githubTeamAccessClient, giveGithubToTeam, type DesktopGithubTeamAccess, type GithubTeamAccessPorts } from '@/lib/desktop/github-team-access'
 import { BoxIcon, ChevronDownIcon, ChevronUpIcon } from '@/lib/icons'
 import { DesktopIntakeGithubProjects } from './intake/DesktopIntakeGithubProjects'
 
@@ -20,8 +20,8 @@ export const DESKTOP_GITHUB_UPDATE_PROPOSAL = 'I changed the GitHub projects in 
  *
  * Two things the review alone could not do sit here too. After an edit, Update the proposal asks
  * the Chief of Staff for a new card, so the owner does not have to describe the edit in words.
- * And once coworkers exist for these projects, Give GitHub to the team assigns the GitHub sign-in
- * to all of them in one step, after saying exactly what that gives.
+ * And once coworkers exist for these projects, Give GitHub to the team lets all of them work on
+ * their repository in one step, after saying exactly what that gives.
  */
 export function DesktopForemanGithubProjects({ github, chat, onSend, sendDisabled, refreshKey, accessPorts }: {
     github: DesktopIntakeGithubController
@@ -59,7 +59,7 @@ export function DesktopForemanGithubProjects({ github, chat, onSend, sendDisable
         setGiving(true); setNotice(null)
         giveGithubToTeam(ports).then(result => {
             setAccess(result.access); setAsking(false)
-            setNotice(result.failed ? `${result.failed} ${result.failed === 1 ? 'coworker was' : 'coworkers were'} not given GitHub. ${result.message ?? ''}`.trim() : null)
+            setNotice(result.failed ? `${result.failed} ${result.failed === 1 ? 'coworker was' : 'coworkers were'} not given their repository. ${result.message ?? ''}`.trim() : null)
         }).catch(error => setNotice(error instanceof Error && error.message ? error.message : 'GitHub could not be given to the team.')).finally(() => setGiving(false))
     }, [ports])
 
@@ -69,7 +69,8 @@ export function DesktopForemanGithubProjects({ github, chat, onSend, sendDisable
         ? `${read} GitHub ${read === 1 ? 'project' : 'projects'} read`
         : `${read} of ${projects.length} GitHub projects read`
     const team = access?.team ?? []
-    const ready = team.filter(githubTeamReady).length
+    const ready = team.filter(member => member.ready).length
+    const host = access?.host
     const count = (value: number) => `${value} ${value === 1 ? 'coworker' : 'coworkers'}`
     return (
         <section data-foreman-github-projects aria-label="GitHub projects" className="mx-3 mt-2 rounded-lg border bg-muted/30 text-xs">
@@ -86,21 +87,19 @@ export function DesktopForemanGithubProjects({ github, chat, onSend, sendDisable
             </div>}
             {team.length > 0 && <div data-foreman-github-access className="border-t px-3 py-2">
                 {ready === team.length
-                    ? <p className="text-muted-foreground">All {count(team.length)} of these projects can use GitHub. Every change to a repository still asks you first.</p>
-                    : !access?.via
-                        ? <p className="text-muted-foreground">{ready} of {count(team.length)} can use GitHub. Sign in to GitHub in the Vault, then give it to the team here.</p>
+                    ? <p className="text-muted-foreground">All {count(team.length)} of these projects can work on their repository. A pull request or a comment still asks you first, every time.</p>
+                    : host && !host.directBuild
+                        ? <p className="text-muted-foreground">{ready} of {count(team.length)} can work on their repository. That needs the direct Mac build of Rerun.</p>
                         : !asking
                             ? <div className="flex flex-wrap items-center gap-2">
-                                <p className="min-w-0 flex-1 text-muted-foreground">{ready} of {count(team.length)} can use GitHub.</p>
+                                <p className="min-w-0 flex-1 text-muted-foreground">{ready} of {count(team.length)} can work on their repository.</p>
                                 <Button type="button" size="sm" variant="outline" data-foreman-github-give onClick={() => { setAsking(true); setNotice(null) }}>Give GitHub to the team</Button>
                             </div>
                             : <div className="space-y-2">
                                 <p className="leading-relaxed">
-                                    {access.via === 'composio-connect'
-                                        ? <>This assigns your Composio sign-in to {count(team.length - ready)} and turns on Custom MCP servers for them. {access.alsoGives.length > 0
-                                            ? <>Composio hands out every app you signed in to together, so they will also reach {access.alsoGives.join(', ')}. </> : null}</>
-                                        : <>This assigns your GitHub account to {count(team.length - ready)}. </>}
-                                    Sending, posting and changes to a repository still ask you first. You can take it back in the Vault.
+                                    This lets {count(team.length - ready)} read and edit a copy of their own repository, kept by Rerun on this Mac and fetched with this Mac’s GitHub sign-in, which they never see.
+                                    Nothing from the repository is run on your Mac, and a pull request or a comment asks you first, every time. No app from the Vault is given to them.
+                                    {host && !host.gh ? ' The GitHub command line (gh) is not installed on this Mac: they can edit the code, but reading issues and opening pull requests need it.' : ''}
                                 </p>
                                 <div className="flex gap-2">
                                     <Button type="button" size="sm" data-foreman-github-give-confirm loading={giving} disabled={giving} onClick={give}>Give access</Button>

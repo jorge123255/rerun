@@ -27,8 +27,6 @@ function ensure(db: Client): Promise<void> {
 export type TeamChangeWorkspace = {
     coworkers: readonly { id: string; name: string }[]
     connections: readonly Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels' | 'codexReasoning' | 'customReasoning' | 'subscriptionModels'>[]
-    /** How the GitHub sign-in reaches a coworker here, for the caution on a give_github line; null when GitHub is not signed in. */
-    github: { connect: boolean; alsoGives: string[] } | null
 }
 
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
@@ -63,7 +61,6 @@ export function sealTeamChanges(raw: unknown, workspace: TeamChangeWorkspace): {
         }
         if ((line.action === 'allow' || line.action === 'stop_allowing') && !line.permission) { refuse('name the permission'); continue }
         if (line.action === 'set_effort' && (!line.effort || !connectionReasoningOptions(connection as never, line.model!)?.supported.includes(line.effort))) { refuse('that model does not offer this effort'); continue }
-        if (line.action === 'give_github' && !workspace.github) { refuse('GitHub is not signed in in the Vault'); continue }
         const identity = JSON.stringify([line.action, who?.id ?? null, line.permission ?? null, connection?.id ?? null, line.model ?? null])
         if (seen.has(identity)) continue
         seen.add(identity)
@@ -74,8 +71,7 @@ export function sealTeamChanges(raw: unknown, workspace: TeamChangeWorkspace): {
             : line.action === 'switch_off' ? [`Switch off ${name}`, null]
             : line.action === 'allow' ? [`Allow ${name}: ${desktopTeamChangePermissionLabel(line.permission!)}`, line.permission === 'githubWrite' ? 'Every change to a repository still asks you first.' : null]
             : line.action === 'stop_allowing' ? [`Stop allowing ${name}: ${desktopTeamChangePermissionLabel(line.permission!)}`, null]
-            : line.action === 'give_github' ? [`Give ${name} your GitHub sign-in`, workspace.github!.connect
-                ? `Assigns your Composio sign-in and turns on Custom MCP servers.${workspace.github!.alsoGives.length ? ` It also reaches ${workspace.github!.alsoGives.join(', ')}.` : ''}` : null]
+            : line.action === 'give_github' ? [`Let ${name} work on its GitHub repository`, 'A copy kept on this Mac; no app from the Vault is given. A pull request or a comment asks you first, every time.']
             : line.action === 'start_setup' ? [`Start ${name}'s setup`, 'Runs one conversation turn on its model.']
             : line.action === 'set_model' ? [`Set ${name} to answer with ${model}`, null]
             : [`Set ${model} to ${line.effort} effort`, 'Applies wherever this model runs, not to one coworker.']

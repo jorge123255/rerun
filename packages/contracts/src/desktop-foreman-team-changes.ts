@@ -7,7 +7,7 @@ import { desktopRerunToolCatalog } from './desktop-tool-grants.js'
 // Nothing here is a tool that grants, switches or starts anything by itself.
 
 /** The permissions a proposal may name. Anything that reaches the Mac itself is left to the person. */
-export const DESKTOP_TEAM_CHANGE_PERMISSIONS = ['mcp', 'services', 'callAgent', 'githubWrite', 'webSearch', 'webFetch', 'teamRead', 'schedule', 'skills', 'memoryRecall', 'memoryWrite'] as const
+export const DESKTOP_TEAM_CHANGE_PERMISSIONS = ['mcp', 'services', 'callAgent', 'githubWrite', 'repositoryWorkspace', 'webSearch', 'webFetch', 'teamRead', 'schedule', 'skills', 'memoryRecall', 'memoryWrite'] as const
 export type DesktopTeamChangePermission = (typeof DESKTOP_TEAM_CHANGE_PERMISSIONS)[number]
 export const desktopTeamChangePermissionLabel = (id: DesktopTeamChangePermission): string => desktopRerunToolCatalog.find(row => row.id === id)?.label ?? id
 

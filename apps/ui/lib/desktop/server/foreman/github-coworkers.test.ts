@@ -73,11 +73,11 @@ test('the first instructions carry the role starting point and the linked projec
     const install = firstInstall(openflixDev!, null)
     expect(install).toContain('GitHub repository Acme/OpenFlix')
     // It looks at its own tools first, and names both ways the owner can give it GitHub.
-    expect(install).toContain('look at your tools first')
+    expect(install).toContain('Look at your tools first')
+    expect(install).toContain('call repo_prepare')
     expect(install).toContain('Give GitHub to the team')
-    expect(install).toContain('the entry named "composio"')
-    expect(install).toContain('attach nothing yourself')
-    expect(install).toContain('Change GitHub repositories')
+    expect(install).toContain('never ask for one')
+    expect(install).toContain('asks the user first, every time')
     // The read-only token the intake used is never offered, named or pointed at.
     for (const text of [soul, install]) expect(text).not.toMatch(/github-read|read-only token|tool service|Settings, Tool services|ghp_|github_pat_/i)
     // A coworker with no accepted repository gets none of it.
