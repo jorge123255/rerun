@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { TooltipLabeled } from '@/components/ui/tooltip'
 import { listDesktopForemanConversations } from '@/lib/desktop/foreman-client/runtime-client'
 import { messageDayLabel, messageTime } from '@rerun/i18n/format'
+import { ScrollFade } from '@rerun/ui/primitives'
 import { cn } from '@/lib/utils'
 import { useDesktopLocale } from '../DesktopLocale'
 
@@ -201,26 +202,28 @@ export function DesktopForemanHistory({ conversations, waiting = false, disabled
                             <Button type="button" aria-label={t('foreman.close')} variant="ghost" size="icon-sm" onClick={() => setOpen(false)}><X className="size-4" /></Button>
                         </div>
                     </div>
-                    <div className="min-h-0 space-y-0.5 overflow-y-auto px-2 pb-2">
-                        <button type="button" data-foreman-history-row aria-current={!thread ? 'true' : undefined} disabled={busy} onClick={pick(conversations.openGeneral)}
-                            className={cn('flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors', !thread ? 'bg-muted/60' : 'hover:bg-muted/40')}>
-                            <MessagesSquare className="size-3.5 text-brand-text" />
-                            <span className="min-w-0 flex-1 truncate">{t('foreman.mainConversation')}</span>
-                            {!thread && waiting && <span aria-hidden data-foreman-waiting className="size-1.5 shrink-0 rounded-full bg-amber-400" />}
-                        </button>
-                        {/* The unsaved new task is the one on screen: it has a row while it is open, and none once it is left. */}
-                        {draft && <button type="button" data-foreman-history-row data-foreman-history-draft aria-current="true" disabled={busy}
-                            onClick={() => { setOpen(false); conversations.focusComposer() }}
-                            className="flex w-full items-center gap-2.5 rounded-lg bg-muted/60 px-2.5 py-2 text-left transition-colors disabled:opacity-50">
-                            <span className="min-w-0 flex-1 truncate text-sm font-medium">{t('foreman.newConversation')}</span>
-                        </button>}
-                        {undated.map(rowOf)}
-                        {days.map(({ day, rows }) => <div key={day} className="pb-1">
-                            <p data-foreman-history-day className="px-2.5 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">{day}</p>
-                            {rows.map(rowOf)}
-                        </div>)}
-                        {threads.length === 0 && !draft && <p className="px-3 py-6 text-center text-xs text-muted-foreground">{t('foreman.noThreads')}</p>}
-                    </div>
+                    <ScrollFade className="min-h-0 px-2 pb-2">
+                        <div className="space-y-0.5">
+                            <button type="button" data-foreman-history-row aria-current={!thread ? 'true' : undefined} disabled={busy} onClick={pick(conversations.openGeneral)}
+                                className={cn('flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors', !thread ? 'bg-muted/60' : 'hover:bg-muted/40')}>
+                                <MessagesSquare className="size-3.5 text-brand-text" />
+                                <span className="min-w-0 flex-1 truncate">{t('foreman.mainConversation')}</span>
+                                {!thread && waiting && <span aria-hidden data-foreman-waiting className="size-1.5 shrink-0 rounded-full bg-amber-400" />}
+                            </button>
+                            {/* The unsaved new task is the one on screen: it has a row while it is open, and none once it is left. */}
+                            {draft && <button type="button" data-foreman-history-row data-foreman-history-draft aria-current="true" disabled={busy}
+                                onClick={() => { setOpen(false); conversations.focusComposer() }}
+                                className="flex w-full items-center gap-2.5 rounded-lg bg-muted/60 px-2.5 py-2 text-left transition-colors disabled:opacity-50">
+                                <span className="min-w-0 flex-1 truncate text-sm font-medium">{t('foreman.newConversation')}</span>
+                            </button>}
+                            {undated.map(rowOf)}
+                            {days.map(({ day, rows }) => <div key={day} className="pb-1">
+                                <p data-foreman-history-day className="px-2.5 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">{day}</p>
+                                {rows.map(rowOf)}
+                            </div>)}
+                            {threads.length === 0 && !draft && <p className="px-3 py-6 text-center text-xs text-muted-foreground">{t('foreman.noThreads')}</p>}
+                        </div>
+                    </ScrollFade>
                 </div>
             </PopoverContent>
         </Popover>
