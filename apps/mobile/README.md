@@ -51,7 +51,10 @@ How it is built (`src/mac/`):
   are `@rerun/mac-contracts/mac-phone-pairing` (`packages/contracts/src/mac-phone-pairing.ts`).
 - The listener serves HTTPS with a certificate the Mac made for itself. `modules/mac-pairing-transport`
   (Swift and Kotlin) only talks to a server presenting the certificate named in the offer. Without
-  that module (Expo Go, the tests) pairing over the network is refused.
+  that module (Expo Go, the tests) pairing over the network is refused. On iOS it opens the connection
+  with Network.framework and speaks HTTP/1.1 itself: through URLSession, App Transport Security refused
+  the Mac's certificate at a Tailscale address, and no ATS rule is loosened for it. Its HTTP part is
+  checked on a Mac with `sh modules/mac-pairing-transport/tests/run.sh`.
 - `session.ts` reads the pairing at launch, like the custom server: `environment.name` is `mac`, and
   `MacAuthProvider` stands in for the Supabase session. The phone's token lives in the Keychain under
   `rerun.mac-pairing.session`, apart from `rerun.server` and from a hub's session.

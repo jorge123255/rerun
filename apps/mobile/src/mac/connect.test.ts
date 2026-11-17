@@ -22,18 +22,18 @@ describe('readMacOffer', () => {
 
     it('refuses what is not a pairing code', () => {
         for (const input of ['', 'hello', '192.168.1.20', '{"kind":"other"}', 'https://example.com', JSON.stringify({ ...OFFER, secret: 'short' }), JSON.stringify({ ...OFFER, kind: 'something-else' })]) {
-            expect(readMacOffer(parser, input, NOW)).toEqual({ ok: false, problem: 'invalid' })
+            expect(readMacOffer(parser, input, NOW)).toMatchObject({ ok: false, problem: 'invalid' })
         }
     })
 
     it('refuses a Mac that is not on the local network, or that asks for plain HTTP there', () => {
         for (const change of [{ origin: 'https://203.0.113.9:52000' }, { origin: 'https://mac.example.com:52000' }, { origin: 'http://192.168.1.20:52000' }, { origin: 'http://192.168.1.20:52000', certificateFingerprint: undefined }, { certificateFingerprint: undefined }]) {
-            expect(readMacOffer(parser, JSON.stringify({ ...OFFER, ...change }), NOW)).toEqual({ ok: false, problem: 'invalid' })
+            expect(readMacOffer(parser, JSON.stringify({ ...OFFER, ...change }), NOW)).toMatchObject({ ok: false, problem: 'invalid' })
         }
     })
 
     it('says an offer has run out before asking the Mac', () => {
-        expect(readMacOffer(parser, JSON.stringify(OFFER), NOW + 121_000)).toEqual({ ok: false, problem: 'expired' })
+        expect(readMacOffer(parser, JSON.stringify(OFFER), NOW + 121_000)).toMatchObject({ ok: false, problem: 'expired' })
     })
 })
 
@@ -71,20 +71,20 @@ describe('pairWithMac', () => {
 
     it('says so when the code is wrong, used or expired, and keeps nothing', async () => {
         const { client, storage } = macThatAnswers([], { error: 'invalid_offer' })
-        expect(await pairWithMac(client, offer, { signal: new AbortController().signal, onWaiting: jest.fn(), pollMs: 1 })).toEqual({ ok: false, problem: 'expired' })
+        expect(await pairWithMac(client, offer, { signal: new AbortController().signal, onWaiting: jest.fn(), pollMs: 1 })).toMatchObject({ ok: false, problem: 'expired' })
         expect(storage.values.size).toBe(0)
     })
 
     it('says so when phone access is off, or the Mac cannot be reached', async () => {
         const off = macThatAnswers([], { error: 'disabled', httpStatus: 403 })
-        expect(await pairWithMac(off.client, offer, { signal: new AbortController().signal, onWaiting: jest.fn(), pollMs: 1 })).toEqual({ ok: false, problem: 'off' })
+        expect(await pairWithMac(off.client, offer, { signal: new AbortController().signal, onWaiting: jest.fn(), pollMs: 1 })).toMatchObject({ ok: false, problem: 'off' })
         const away = macThatAnswers([], new TypeError('Network request failed'))
-        expect(await pairWithMac(away.client, offer, { signal: new AbortController().signal, onWaiting: jest.fn(), pollMs: 1 })).toEqual({ ok: false, problem: 'unreachable' })
+        expect(await pairWithMac(away.client, offer, { signal: new AbortController().signal, onWaiting: jest.fn(), pollMs: 1 })).toMatchObject({ ok: false, problem: 'unreachable' })
     })
 
     it('forgets a request the Mac declined', async () => {
         const { client, storage } = macThatAnswers([{ status: 'pending', deviceId, workspaceId: 1 }, { status: 'revoked' }])
-        expect(await pairWithMac(client, offer, { signal: new AbortController().signal, onWaiting: jest.fn(), pollMs: 1 })).toEqual({ ok: false, problem: 'declined' })
+        expect(await pairWithMac(client, offer, { signal: new AbortController().signal, onWaiting: jest.fn(), pollMs: 1 })).toMatchObject({ ok: false, problem: 'declined' })
         expect(storage.values.size).toBe(0)
     })
 
@@ -92,13 +92,13 @@ describe('pairWithMac', () => {
         const controller = new AbortController()
         const { client, storage } = macThatAnswers(Array.from({ length: 50 }, () => ({ status: 'pending', deviceId, workspaceId: 1 })))
         const result = pairWithMac(client, offer, { signal: controller.signal, onWaiting: () => controller.abort(), pollMs: 1 })
-        expect(await result).toEqual({ ok: false, problem: 'cancelled' })
+        expect(await result).toMatchObject({ ok: false, problem: 'cancelled' })
         expect(storage.values.size).toBe(0)
     })
 
     it('cannot pair over the local network in a build without the pinned transport', async () => {
         const client = createMacPairingClient({ storage: memory() })
-        expect(await pairWithMac(client, offer, { signal: new AbortController().signal, onWaiting: jest.fn(), pollMs: 1 })).toEqual({ ok: false, problem: 'unsupported' })
+        expect(await pairWithMac(client, offer, { signal: new AbortController().signal, onWaiting: jest.fn(), pollMs: 1 })).toMatchObject({ ok: false, problem: 'unsupported' })
         expect(pairingProblemOf(new Error('pinned_transport_required'))).toBe('unsupported')
     })
 })
@@ -110,5 +110,13 @@ describe('parseMacLink', () => {
         expect(parseMacLink(JSON.stringify(saved))).toMatchObject({ origin: OFFER.origin, credential: saved.credential, workspaceId: 1 })
         expect(parseMacLink(JSON.stringify({ ...saved, status: 'pending', credential: undefined, requestToken: 'R'.repeat(43) }))).toBeNull()
         for (const raw of [null, '', 'not json', '{}', JSON.stringify({ ...saved, kind: 'other' }), JSON.stringify({ ...saved, workspaceId: '1' }), JSON.stringify({ ...saved, credential: 1 })]) expect(parseMacLink(raw)).toBeNull()
+    })
+})
+
+describe('pairWithMac detail', () => {
+    it('keeps what the phone itself reported beside the problem', async () => {
+        const client = { connectToThisMac: jest.fn().mockRejectedValue(Object.assign(new Error('The request timed out.'), {})), waitForApproval: jest.fn(), clearMacSession: jest.fn() }
+        const result = await pairWithMac(client as never, { ok: true, offer: {} as never }, { signal: new AbortController().signal, onWaiting: () => {} })
+        expect(result).toEqual({ ok: false, problem: 'unreachable', detail: 'The request timed out.' })
     })
 })
