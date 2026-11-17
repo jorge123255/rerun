@@ -12,7 +12,8 @@
         "limits.messages.sessionResets": "{plan} is an AI subscription (Claude, ChatGPT). {resetsAt} is a time written by the provider in English, e.g. '6:50pm (UTC)'.",
         "limits.messages.spend": "{plan} is an AI subscription (Claude). The organization is the company account at the AI provider.",
         "limits.messages.anthropicCredits": "The Anthropic API is billed apart from a Claude subscription: its account is topped up with prepaid credits. The Anthropic Console and Billing are names of Anthropic's site and its page.",
-        "anthropicKeyNotScoped.message": "An Anthropic API key belongs to an organization, which holds workspaces. The Anthropic Console is the name of Anthropic's site."
+        "anthropicKeyNotScoped.message": "An Anthropic API key belongs to an organization, which holds workspaces. The Anthropic Console is the name of Anthropic's site.",
+        "limits.messages.openaiCredits": "The OpenAI API is a product name, billed apart from a ChatGPT subscription: its account is topped up with prepaid credits. Keep platform.openai.com as it is."
     },
     "generic": "Something went wrong. Try sending your message again.",
     "modelAtCapacity": {
@@ -60,7 +61,8 @@
             "opencodeCredits": "OpenCode credits used up",
             "opencodeWindow": "OpenCode Go {window, select, weekly {weekly} other {monthly}} limit reached",
             "opencode": "OpenCode Go limit reached",
-            "anthropicCredits": "Anthropic API credits used up"
+            "anthropicCredits": "Anthropic API credits used up",
+            "openaiCredits": "OpenAI API credits used up"
         },
         "messages": {
             "anthropicCredits": "Your Anthropic API account has no credits left. Add credits in the Anthropic Console under Billing, or switch this coworker to another model.",
@@ -78,7 +80,8 @@
             "weekly": "Your {plan} plan has reached its weekly limit. Switch this coworker to another model until the week rolls over.",
             "model": "Your {plan} plan has reached its {model} limit. The other {plan} models still run: switch to one of them.",
             "sessionResets": "Your {plan} plan has used up its current usage window. It refills at {resetsAt}; switch this coworker to another model in the meantime.",
-            "session": "Your {plan} plan has used up its current usage window. It refills on its own; switch this coworker to another model in the meantime."
+            "session": "Your {plan} plan has used up its current usage window. It refills on its own; switch this coworker to another model in the meantime.",
+            "openaiCredits": "Your OpenAI API account has no credits left. Add credits on platform.openai.com, or switch this coworker to another model."
         }
     }
 }
