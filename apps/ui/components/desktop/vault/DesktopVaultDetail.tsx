@@ -85,7 +85,8 @@ export function DesktopVaultDetail({ entry, icon, coworkers, busy, alert, onBack
                 </div>
             </section>}
             {server?.browserSignIn && <div className="space-y-2 border-t pt-4">
-                <DesktopMcpOAuthAuthorize vaultId={server.id} name={server.name} revision={server.revision} active={!busy && !replace && !renaming} />
+                <DesktopMcpOAuthAuthorize vaultId={server.id} name={server.name} revision={server.revision} active={!busy && !replace && !renaming}
+                    onUseToken={server.catalog ? () => { setRenaming(false); setReplace(true) } : undefined} />
                 <ConfirmDialog title="Disconnect browser sign-in?" description="Coworkers will need you to sign in again before using this connection."
                     confirmLabel="Disconnect" pending={busy} onConfirm={() => onSubmit({ operation: 'clear-server-oauth', ...target })}>
                     <Button size="sm" variant="outline" disabled={busy}>Disconnect browser sign-in</Button>

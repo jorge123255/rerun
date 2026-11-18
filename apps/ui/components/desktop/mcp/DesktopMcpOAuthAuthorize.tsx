@@ -1,13 +1,15 @@
 'use client'
 import {useCallback,useEffect,useRef,useState} from 'react'
 import {z} from 'zod'
-import {Button} from '@/components/ui/button'
+import {Button,buttonVariants} from '@/components/ui/button'
 import {CheckCircle2Icon,ExternalLinkIcon,Loader2Icon,XCircleIcon} from '@/lib/icons'
 import type {OAuthStatus} from '@/lib/desktop/server/mcp/oauth-loopback'
 
-const statusSchema=z.object({state:z.enum(['idle','waiting','connected','error','unsupported']),message:z.string().max(400).optional()}).strict()
+// A device sign-in shows only the code to type and the provider's page to type it on.
+const deviceSchema=z.object({userCode:z.string().regex(/^[A-Za-z0-9-]{4,32}$/),verificationUri:z.string().max(2048)}).strict()
+const statusSchema=z.object({state:z.enum(['idle','waiting','connected','error','unsupported']),message:z.string().max(400).optional(),device:deviceSchema.optional(),reconnect:z.literal(true).optional()}).strict()
 const responseSchema=z.union([statusSchema,z.object({status:statusSchema,authorizationUrl:z.string().max(8192).optional()}).strict()])
-type Props={name:string;revision:string;active?:boolean} & (
+type Props={name:string;revision:string;active?:boolean;onUseToken?:()=>void} & (
  {agentId:string;vaultId?:never} | {vaultId:string;agentId?:never}
 )
 type Action='start'|'status'|'cancel'
@@ -39,7 +41,13 @@ async function readResponse(response:Response,signal:AbortSignal) {
 export function DesktopMcpOAuthAuthorize(props:Props) {
  return <Authorization key={JSON.stringify([props.agentId,props.vaultId,props.name,props.revision])} {...props}/>
 }
-function Authorization({agentId,vaultId,name,revision,active=true}:Props) {
+function safePage(value:string|undefined) {
+ try {
+  const url=new URL(value??'')
+  return url.protocol==='https:' && !url.username && !url.password && !url.hash && (!url.port || url.port==='443') ? url.href : ''
+ } catch { return '' }
+}
+function Authorization({agentId,vaultId,name,revision,active=true,onUseToken}:Props) {
  const [status,setStatus]=useState<OAuthStatus>({state:'idle'}),[pending,setPending]=useState<Action|null>(null),[link,setLink]=useState('')
  const [visible,setVisible]=useState(()=>typeof document==='undefined'||document.visibilityState!=='hidden')
  const epoch=useRef(0),inflight=useRef<AbortController|null>(null),operation=useRef<Action|null>(null)
@@ -79,16 +87,26 @@ function Authorization({agentId,vaultId,name,revision,active=true}:Props) {
   return()=>clearTimeout(timer)
  },[status,action,active,visible,pending])
  const busy=pending==='start'||pending==='cancel'
+ const device=status.state==='waiting'?status.device:undefined,devicePage=safePage(device?.verificationUri)
+ if(device && devicePage)return <div className="space-y-3 py-1" aria-label={`Authorization for ${name}`}>
+  <p className="text-sm">Enter this code on GitHub to finish signing in:</p>
+  <p className="select-all rounded-md border bg-muted px-3 py-2 text-center font-mono text-lg tracking-widest" aria-label="Sign-in code">{device.userCode}</p>
+  <a href={devicePage} target="_blank" rel="noreferrer" className={buttonVariants({size:'sm',className:'w-full'})}><ExternalLinkIcon className="size-3.5 mr-1.5"/>Open GitHub’s sign-in page</a>
+  <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2Icon className="size-3 animate-spin"/>Waiting for you to approve on GitHub…</p>
+  <Button variant="ghost" size="sm" disabled={!active||!visible||busy} onClick={()=>action('cancel')}>Cancel</Button>
+ </div>
  return <div className="space-y-2 py-1" aria-label={`Authorization for ${name}`}>
   {status.state==='connected'?<>
    <div className="flex items-center gap-2 text-sm text-green-600"><CheckCircle2Icon className="size-3.5"/>Connected</div>
    {vaultId&&<Button variant="outline" size="sm" disabled={!active||!visible||!!pending} onClick={()=>action('start')}>Reconnect</Button>}
   </>:<>
    {(status.state==='error'||status.state==='unsupported')&&<p role="alert" className="flex items-start gap-2 text-sm text-destructive break-words"><XCircleIcon className="size-3.5 shrink-0"/>{status.message}</p>}
-   <Button variant="outline" size="sm" className="w-full" disabled={!active||!visible||busy||status.state==='waiting'||pending==='status'} onClick={()=>action('start')}>
+   {/* A sign-in this Mac cannot finish offers the way out, not a retry that fails the same way. */}
+   {status.state==='unsupported'&&onUseToken?<Button size="sm" className="w-full" disabled={!active||!visible||busy} onClick={onUseToken}>Use a token instead</Button>
+   :<Button variant="outline" size="sm" className="w-full" disabled={!active||!visible||busy||status.state==='waiting'||pending==='status'} onClick={()=>action('start')}>
     {busy||status.state==='waiting'?<Loader2Icon className="size-3.5 animate-spin mr-1.5"/>:<ExternalLinkIcon className="size-3.5 mr-1.5"/>}
-    {status.state==='waiting'?'Waiting for authorization…':status.state==='error'||status.state==='unsupported'?'Retry sign-in':'Sign in with browser'}
-   </Button>
+    {status.state==='waiting'?'Waiting for authorization…':status.reconnect?'Sign in again':status.state==='error'||status.state==='unsupported'?'Retry sign-in':'Sign in with browser'}
+   </Button>}
    {link&&status.state==='waiting'&&<a className="text-sm underline break-words" href={link} target="_blank" rel="noreferrer">Open authorization in browser</a>}
    {status.state==='waiting'&&<Button variant="ghost" size="sm" disabled={!active||!visible||busy} onClick={()=>action('cancel')}>Cancel</Button>}
   </>}

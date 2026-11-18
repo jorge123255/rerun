@@ -11,7 +11,14 @@ export type CatalogOAuthPlan={slug:string;methodId:string;endpoint:string;transp
  * ("Square maintains an allowlist of MCP clients"; additions are requested in its developer forum).
  */
 export const CATALOG_OAUTH_ALLOWLISTED_HOSTS:readonly string[]=['mcp.squareup.com']
-export function compileCatalogOAuth(raw:ServiceManifest,methodId:string):CatalogOAuthPlan{
+/**
+ * Hosts whose sign-in service lets no app register itself, so this Mac's loopback sign-in can never
+ * complete there. GitHub's MCP server names https://github.com/login/oauth, whose published metadata
+ * has no registration_endpoint (checked 2026-11-18). Such a sign-in is offered only where the caller
+ * has a built-in sign-in for it (the Vault's GitHub device flow, when the build carries a client ID).
+ */
+export const CATALOG_OAUTH_NO_REGISTRATION_HOSTS:readonly string[]=['api.githubcopilot.com']
+export function compileCatalogOAuth(raw:ServiceManifest,methodId:string,options:{builtInSignIn?:(endpoint:string)=>boolean}={}):CatalogOAuthPlan{
  const manifest=serviceManifestSchema.parse(raw),method=manifest.authMethods.find(m=>m.id===methodId)
  if(!method||method.kind!=='oauth'||method.managed||method.composio||method.app||method.inputs.length||method.envKeys.length||method.mcpServers.length!==1)throw new Error('Unsupported catalog OAuth method')
  const server=method.mcpServers[0],oauth=server.oauth
@@ -21,6 +28,7 @@ export function compileCatalogOAuth(raw:ServiceManifest,methodId:string):Catalog
  const endpoint=oauthHttps(server.url).href
  if(new URL(endpoint).search||endpoint!==server.url||endpoint.includes('${')||/(?:^|\.)rerun\.build$/i.test(new URL(endpoint).hostname)||/\/api\/(?:hub|mcp\/(?:managed|composio|apps))(?:\/|$)/.test(new URL(endpoint).pathname))throw new Error('Hosted OAuth methods are unavailable locally')
  if(CATALOG_OAUTH_ALLOWLISTED_HOSTS.includes(new URL(endpoint).hostname.toLowerCase()))throw new Error('This app admits only sign-in clients on its own allowlist')
+ if(CATALOG_OAUTH_NO_REGISTRATION_HOSTS.includes(new URL(endpoint).hostname.toLowerCase()) && !options.builtInSignIn?.(endpoint))throw new Error('This app does not let apps register themselves for sign-in')
  if(manifest.skills.length>8||manifest.skills.some(s=>!s.name.trim()||s.name.length>128||Buffer.byteLength(s.description)>4096||!s.body.trim()||Buffer.byteLength(s.body)>65536||[s.name,s.description,s.body].some(v=>v.includes('${')||v.includes('\0'))))throw new Error('Unsupported bundled skill plan')
  if(Buffer.byteLength(JSON.stringify(manifest.skills))>262144)throw new Error('Unsupported bundled skill plan')
  const fields={slug:manifest.slug,methodId,endpoint,transport:'http' as const,serverTemplate:server.name,skills:manifest.skills.map(s=>({name:s.name,description:s.description,body:s.body}))}

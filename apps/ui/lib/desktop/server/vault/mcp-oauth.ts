@@ -3,12 +3,15 @@ import type { Client } from '@libsql/client'
 import { remoteMcpLifecycle } from '../mcp/lifecycle'
 import { loopbackMcpOAuth } from '../mcp/oauth-loopback'
 import type { OAuthJson } from '../mcp/oauth-network'
+import { vaultSignInPlan, type SignInPlan } from '../mcp/github-device'
 import type { BrowserOAuthWriteAdmission, OAuthTokenBundle, SettleOAuthWrite } from '../mcp/store'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
 import { withRosterWrite } from '../roster-writes'
 import { mirrorVaultOAuth, retireVaultOAuthOrigin, sealVaultOAuth, vaultOAuthContext } from './catalog-oauth-origin'
 
-export function vaultMcpOAuth(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, assertWorkspace: () => void, json?: OAuthJson, legacyKey?: () => Buffer) {
+/** `plan` defaults to this build's: GitHub's device flow when a client ID was staged, loopback for everything else. */
+export function vaultMcpOAuth(db: Client, crypto: DesktopSecretCrypto, workspaceId: number, assertWorkspace: () => void, json?: OAuthJson, legacyKey?: () => Buffer,
+    plan: (url: string) => SignInPlan = vaultSignInPlan()) {
     const lifecycle = remoteMcpLifecycle()
     const readEntry = async (id: string, name: string) => {
         assertWorkspace()
@@ -71,6 +74,6 @@ export function vaultMcpOAuth(db: Client, crypto: DesktopSecretCrypto, workspace
     }, async () => {
         assertWorkspace()
         return { enabled: true, granted: true }
-    }, json, { browserCredentialState, replaceOAuth })
+    }, json, { browserCredentialState, replaceOAuth }, undefined, plan)
     return { ...oauth, readOAuth }
 }

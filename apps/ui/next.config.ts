@@ -33,6 +33,10 @@ const nextConfig: NextConfig = {
   // /api/version reports. Locally both read "dev" and the update prompt never fires.
   env: {
     NEXT_PUBLIC_BUILD_SHA: process.env.NEXT_PUBLIC_BUILD_SHA,
+    // The Mac's GitHub sign-in: the public client ID of a GitHub OAuth App with Device Flow on.
+    // Staged builds bake it in (`RERUN_DESKTOP_GITHUB_CLIENT_ID=… pnpm desktop:stage`); it is read
+    // only by server code. No client secret exists or is needed. Empty: GitHub sign-in is not offered.
+    RERUN_DESKTOP_GITHUB_CLIENT_ID: process.env.RERUN_DESKTOP_GITHUB_CLIENT_ID ?? "",
   },
   experimental: {
     serverActions: { bodySizeLimit: "64mb" },

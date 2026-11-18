@@ -37,6 +37,21 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
     shutdown.addEventListener('abort', close, { once: true })
     if (shutdown.aborted) close()
 
+    // The sign-in tokens handed to an MCP request right now, by token, so a 401 can be traced to its entry.
+    const issued = new Map<string, { id: string; name: string; uses: number }>()
+    // A 401 to a sign-in token that cannot be refreshed marks it refused: the entry then asks the
+    // person to sign in again, once, instead of offering the same token on every call.
+    const watched: McpNetwork = async (input, init, guard) => {
+        const response = await network(input, init, guard)
+        if (response.status === 401) {
+            const header = new Headers(init.headers).get('authorization') ?? ''
+            const token = header.startsWith('Bearer ') ? header.slice(7) : ''
+            const entry = token ? issued.get(token) : undefined
+            if (entry) await oauth.reject(entry.id, entry.name, token, AbortSignal.any([shutdown, AbortSignal.timeout(10_000)]))
+        }
+        return response
+    }
+
     async function assigned(agentId: string, name?: string) {
         return (await db.execute({
             sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.oauth_enabled,s.transport,s.sealed IS NOT NULL AS has_credential
@@ -83,19 +98,28 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
         const row = await check()
         const { id, name, url, revision } = view(row)
         if (row.oauth_enabled === 1) {
-            const token = refresh ? await oauth.credential(id!, name, revision, signal) : (await oauth.readOAuth(id!, name))?.accessToken
+            const saved = refresh ? undefined : await oauth.readOAuth(id!, name)
+            const token = refresh ? await oauth.credential(id!, name, revision, signal) : saved?.rejected ? null : saved?.accessToken
             if (!token) throw new Error('Sign in to this MCP server in the Vault')
             const lease = emptyMcpMaterialLease()
             const bytes = new TextEncoder().encode(token)
             lease.material.headers.Authorization = `Bearer ${token}`
+            const use = issued.get(token) ?? { id: id!, name, uses: 0 }
+            use.uses++
+            issued.set(token, use)
+            let released = false
             lease.check = async () => {
                 await check()
                 const current = await oauth.readOAuth(id!, name)
-                if (current?.accessToken !== token || current.refreshPending || current.expiresAt <= Date.now()) throw new Error('Vault OAuth credential changed')
+                if (current?.accessToken !== token || current.refreshPending || current.rejected || current.expiresAt <= Date.now()) throw new Error('Vault OAuth credential changed')
                 await check()
             }
             lease.protect = result => redactDesktopMcpSecretValue(result, [bytes])
-            lease.release = async () => { bytes.fill(0); delete lease.material.headers.Authorization }
+            lease.release = async () => {
+                if (!released && --use.uses <= 0 && issued.get(token) === use) issued.delete(token)
+                released = true
+                bytes.fill(0); delete lease.material.headers.Authorization
+            }
             try { await lease.check(); return lease }
             catch (error) { await lease.release(); throw error }
         }
@@ -180,7 +204,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
             } finally { await lease.release() }
         },
     })
-    const runtime = remoteMcpRuntime(store, access, network, undefined, material)
+    const runtime = remoteMcpRuntime(store, access, watched, undefined, material)
     return {
         oauth,
         releaseSseRun: async (owner: string, run: McpRunIdentity) => { if (sse) await sse.runtime.releaseRun(owner, run) },
@@ -230,8 +254,10 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
                 if (row.oauth_enabled === 1) {
                     const token = await oauth.readOAuth(account.id, account.name)
                     if (!token) return 'signed-out'
+                    if (token.rejected) return 'revoked'
                     if (token.refreshPending || token.expiresAt <= Date.now()) return 'expired'
-                    credentialExpiresAt = new Date(token.expiresAt).toISOString()
+                    // A token with no expiry (GitHub's) reports none.
+                    if (!token.neverExpires) credentialExpiresAt = new Date(token.expiresAt).toISOString()
                 }
                 // The workspace owner explicitly checks one saved account. No coworker is
                 // assigned and the probe only initializes the connection and lists tools.
@@ -241,10 +267,11 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
                     async readOAuth() { return null },
                 }
                 // The app says a key is wrong only when it is called with it.
-                let refused = false
+                let refused = false, unauthorized = false
                 const observed: McpNetwork = async (input, init, guard) => {
-                    const response = await network(input, init, guard)
+                    const response = await watched(input, init, guard)
                     if (response.status === 401 || response.status === 403) refused = true
+                    if (response.status === 401) unauthorized = true
                     return response
                 }
                 const probeRuntime = remoteMcpRuntime(probeStore, async () => ({ enabled: true, granted: true }), observed, undefined,
@@ -255,6 +282,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
                     return { toolCount: result.tools.length, ...(credentialExpiresAt && { credentialExpiresAt }) }
                 } catch (error) {
                     if (refused && row.has_credential === 1 && row.oauth_enabled !== 1) return 'rejected'
+                    if (unauthorized && row.oauth_enabled === 1 && (await oauth.readOAuth(account.id, account.name))?.rejected) return 'revoked'
                     throw error
                 }
             })
@@ -262,7 +290,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
         tools(owner: string, signal: AbortSignal, authorizeRun?: (signal: AbortSignal) => Promise<void>) {
             const active = AbortSignal.any([signal, shutdown])
             if (!authorizeRun) return remoteMcpTools(owner, store, runtime, active)
-            const guardedNetwork: McpNetwork = (input, init, guard) => network(input, init, async () => {
+            const guardedNetwork: McpNetwork = (input, init, guard) => watched(input, init, async () => {
                 await authorizeRun(init.signal)
                 await guard()
             })

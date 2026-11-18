@@ -122,14 +122,14 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
     }
 
     // A refresh that was refused, or interrupted before the provider acknowledged it, leaves its
-    // mark on the saved sign-in. The entry then waits on a new sign-in like one never signed in.
+    // mark on the saved sign-in, as does a token the app refused that cannot be refreshed. The entry then waits on a new sign-in like one never signed in.
     const signedOut: SignedOut = async (id, url, generation, sealed) => {
         if (typeof generation !== 'string' || typeof sealed !== 'string') return true
         try {
             const bytes = await crypto.open(vaultOAuthContext(workspaceId, id, url, generation), sealed)
             try {
                 const bundle = JSON.parse(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8')) as OAuthTokenBundle
-                return bundle.resource !== url || !!bundle.refreshPending || bundle.expiresAt <= Date.now() + 60_000 && !bundle.refreshToken
+                return bundle.resource !== url || !!bundle.refreshPending || !!bundle.rejected || bundle.expiresAt <= Date.now() + 60_000 && !bundle.refreshToken
             } finally { bytes.fill(0) }
         } catch { return true }
     }
