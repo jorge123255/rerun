@@ -154,7 +154,7 @@ it.each([{ shape: 'older Mac', claude: undefined }, { shape: 'empty group', clau
 
 it('can revoke a paused Claude grant and cannot re-enable it while unavailable', async () => {
     mockParams.page = 'claude'
-    const row = { ...tool, id: 'claudeSubagents', label: 'Use Claude Code sub-agents', enabled: true, available: false, unavailableReason: 'Choose a Claude Code model.' }
+    const row = { ...tool, id: 'claudeSubagents' as const, label: 'Use Claude Code sub-agents', enabled: true, available: false, unavailableReason: 'Choose a Claude Code model.' }
     const hub = fakeHub()
     hub.readCoworkerSettings.mockResolvedValueOnce({ ...value, tools: { ...value.tools, claude: [row] } })
         .mockResolvedValue({ ...value, tools: { ...value.tools, claude: [{ ...row, enabled: false }] } })
