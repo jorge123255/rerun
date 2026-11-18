@@ -115,7 +115,7 @@
             "medium": "Medio",
             "high": "Alto",
             "xhigh": "Muy alto",
-            "max": "Máximo"
+            "max": "Max"
         },
         "effort": "Esfuerzo de razonamiento",
         "defaultEffort": "Predeterminado del modelo",

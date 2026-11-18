@@ -117,6 +117,7 @@ it('saves the offered reasoning stop and resets the current model using the same
     hub.readCoworkerSettings.mockResolvedValueOnce(value).mockResolvedValueOnce(active).mockResolvedValue(value)
     await render(<MacCoworkerSettingsScreen hub={hub} />)
     const slider = await screen.findByRole('adjustable', { name: 'Reasoning effort' })
+    await fireEvent.layout(slider, { width: 236, height: 44 })
     expect(screen.getByText('Default · Medium')).toBeTruthy()
     await fireEvent(slider, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } })
     expect(await screen.findByText('High')).toBeTruthy()

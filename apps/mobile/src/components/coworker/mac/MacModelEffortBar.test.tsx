@@ -7,7 +7,7 @@ jest.mock('react-native-svg', () => ({ __esModule: true, default: () => null, Pa
 const options = ['low', 'medium', 'high', 'xhigh', 'max']
 const touchAt = (x: number, y = 16) => ({ nativeEvent: { locationX: x, pageX: 100 + x, pageY: 100 + y } })
 const slider = () => screen.getByRole('adjustable', { name: 'Reasoning effort' })
-const measure = () => fireEvent(slider(), 'layout', { nativeEvent: { layout: { width: 236 } } })
+const measure = () => fireEvent.layout(slider(), { width: 236, height: 44 })
 
 it('previews drag stops and saves just once on release', async () => {
     const onChoose = jest.fn()
