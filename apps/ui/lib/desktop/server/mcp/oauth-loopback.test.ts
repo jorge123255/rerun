@@ -54,9 +54,9 @@ async function flush(){for(let i=0;i<80;i++)await Promise.resolve()}
 it('uses exact resource/issuer metadata and refuses secret/CIMD-only providers',async()=>{
  const {json}=fixture()
  expect((await discoverLoopbackOAuth(resource,new AbortController().signal,json)).resource).toBe(resource)
- await expect(discoverLoopbackOAuth('https://other.example/mcp',new AbortController().signal,json)).rejects.toThrow('exact resource')
+ await expect(discoverLoopbackOAuth('https://other.example/mcp',new AbortController().signal,json)).rejects.toThrow('describes its sign-in for a different address')
  const noRegistration:OAuthJson=async(url,signal,body)=>{const value=await json(url,signal,body);if(url.includes('oauth-authorization-server'))delete value.registration_endpoint;return value}
- await expect(discoverLoopbackOAuth(resource,new AbortController().signal,noRegistration)).rejects.toThrow('endpoint identity')
+ await expect(discoverLoopbackOAuth(resource,new AbortController().signal,noRegistration)).rejects.toThrow('auth.example does not let apps register themselves for sign-in.')
 })
 it('rejects wrong state, consumes a valid callback once, and encrypts tokens outside config',async()=>{
  const {oauth,revision,exchanges,store,db}=await setup()

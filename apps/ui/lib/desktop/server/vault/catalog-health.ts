@@ -11,7 +11,7 @@ export function vaultCatalogHealth(
     launchNonce: string,
     assertWorkspace: () => void,
     shutdown: AbortSignal,
-    inspect: (entry: Account, signal: AbortSignal) => Promise<'signed-out' | 'expired' | 'rejected' | { toolCount: number; credentialExpiresAt?: string }>,
+    inspect: (entry: Account, signal: AbortSignal) => Promise<'signed-out' | 'expired' | 'rejected' | 'revoked' | { toolCount: number; credentialExpiresAt?: string }>,
 ) {
     let checking = false
 
@@ -22,23 +22,38 @@ export function vaultCatalogHealth(
         if (checking) throw new DesktopHttpError(409, 'A Vault connection check is already running.')
         checking = true
         try {
-            const row = (await db.execute({
+            const read = async () => (await db.execute({
                 sql: `SELECT s.name,s.revision,o.generation
                     FROM desktop_vault_mcp_servers s LEFT JOIN desktop_vault_mcp_oauth o ON o.item_id=s.id
                     WHERE s.id=? AND s.catalog_slug IS NOT NULL`,
                 args: [id],
             })).rows[0]
+            const row = await read()
             if (!row || row.revision !== revision) throw new DesktopHttpError(409, 'This Vault entry changed. Reopen it and try again.')
-            const generation = typeof row.generation === 'string' ? row.generation : null
-            const account = { id, name: String(row.name), revision, generation }
-            const observed = await inspect(account, signal).catch(() => 'failed' as const)
+            let generation = typeof row.generation === 'string' ? row.generation : null
+            let observed = await inspect({ id, name: String(row.name), revision, generation }, signal).catch(() => 'failed' as const)
             assertCurrent()
+            // A check that met the 401 itself has just marked the sign-in refused, which saves it as a
+            // new generation. Look once more at that generation: a refused mark is read without any
+            // request, and a genuinely new sign-in saved meanwhile is checked like any other.
+            if (observed === 'revoked') {
+                const now = await read()
+                const next = typeof now?.generation === 'string' ? now.generation : null
+                if (now?.revision === revision && next !== generation) {
+                    generation = next
+                    observed = await inspect({ id, name: String(now.name), revision, generation }, signal).catch(() => 'failed' as const)
+                    assertCurrent()
+                }
+            }
             const checkedAt = new Date().toISOString()
             let health: DesktopVaultHealthReceipt
             if (observed === 'signed-out') {
                 health = { state: 'disconnected', checkedAt, message: 'Sign in to this account before checking its connection.' }
             } else if (observed === 'expired') {
                 health = { state: 'error', checkedAt, message: desktopVaultSignInExpiredMessage }
+            } else if (observed === 'revoked') {
+                // The provider refused a saved sign-in that cannot be refreshed: only a new sign-in helps.
+                health = { state: 'disconnected', checkedAt, message: 'The app no longer accepts this sign-in. Sign in again.' }
             } else if (observed === 'rejected') {
                 // The app answered and refused the saved key: a different failure from an app that did not answer.
                 health = { state: 'error', checkedAt, message: 'The app refused the saved key.', credentialRejected: true }

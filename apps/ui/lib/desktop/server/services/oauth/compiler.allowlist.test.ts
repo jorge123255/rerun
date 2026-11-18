@@ -29,3 +29,15 @@ test('a browser sign-in whose provider admits any client is still offered', () =
     expect(vaultCatalog('linear').find(app => app.slug === 'linear')?.methods.map(method => method.id)).toContain('oauth')
     expect(compileCatalogOAuth(getDesktopServiceManifest('linear').manifest, 'oauth')).toMatchObject({ endpoint: 'https://mcp.linear.app/mcp' })
 })
+
+// GitHub's sign-in service publishes no registration endpoint (read November 18, 2026), so the loopback
+// sign-in is never compiled for it; only a caller with a built-in GitHub sign-in may compile it.
+test('GitHub browser sign-in compiles only for a caller with a built-in sign-in', async () => {
+    const { CATALOG_OAUTH_NO_REGISTRATION_HOSTS } = await import('./compiler')
+    expect(CATALOG_OAUTH_NO_REGISTRATION_HOSTS).toContain('api.githubcopilot.com')
+    const manifest = getDesktopServiceManifest('github').manifest
+    expect(() => compileCatalogOAuth(manifest, 'oauth')).toThrow('register themselves')
+    expect(() => compileCatalogOAuth(manifest, 'oauth', { builtInSignIn: () => false })).toThrow('register themselves')
+    const plan = compileCatalogOAuth(manifest, 'oauth', { builtInSignIn: endpoint => endpoint === 'https://api.githubcopilot.com/mcp/' })
+    expect(plan).toMatchObject({ endpoint: 'https://api.githubcopilot.com/mcp/', transport: 'http' })
+})

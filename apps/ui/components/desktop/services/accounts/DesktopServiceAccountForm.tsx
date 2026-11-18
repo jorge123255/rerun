@@ -103,7 +103,7 @@ export function DesktopServiceAccountForm({
             <div className="space-y-1">
                 {methods.map(item => (
                     <p key={item.id} className="text-xs text-muted-foreground">
-                        {item.label || methodKindLabel(item.kind)}: {item.availability.supported ? 'Available locally' : `Unavailable — ${item.availability.reason ?? 'This method is not supported on this Mac.'}`}
+                        {item.label || methodKindLabel(item.kind)}: {item.availability.supported ? (item.recommended && methods.length > 1 ? 'Available locally (recommended)' : 'Available locally') : `Unavailable — ${item.availability.reason ?? 'This method is not supported on this Mac.'}`}
                     </p>
                 ))}
             </div>

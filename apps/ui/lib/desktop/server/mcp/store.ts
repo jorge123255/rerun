@@ -21,7 +21,12 @@ export function bindRemoteTransportDrain(store: Pick<RemoteMcpStore, 'lifecycle'
     if (transportDrains.has(store.lifecycle)) throw new Error('Remote transport cleanup is already bound')
     transportDrains.set(store.lifecycle, drain)
 }
-export type OAuthTokenBundle={refreshPending?:string;accessToken:string;refreshToken?:string;expiresAt:number;resource:string;issuer:string;tokenEndpoint:string;clientId:string;scope?:string}
+/**
+ * `neverExpires`: the provider gave no expiry (a GitHub OAuth App token); `expiresAt` then holds a
+ * far-future stand-in. `rejected`: the MCP server answered 401 to this exact token and it has no
+ * refresh token, so the person must sign in again. `signIn` names a built-in sign-in other than loopback.
+ */
+export type OAuthTokenBundle={refreshPending?:string;accessToken:string;refreshToken?:string;expiresAt:number;resource:string;issuer:string;tokenEndpoint:string;clientId:string;scope?:string;neverExpires?:true;rejected?:true;signIn?:'github-device'}
 export type BrowserOAuthWriteAdmission = { requestId: string; attemptId: string; sealedApproval: string; expiresAt: number }
 export type SettleOAuthWrite = (transaction: Pick<Client, 'execute'>) => Promise<void>
 export function remoteMcpStore(db: Client, key: () => Buffer) {

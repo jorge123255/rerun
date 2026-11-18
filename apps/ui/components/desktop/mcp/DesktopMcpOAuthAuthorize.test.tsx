@@ -97,3 +97,50 @@ it('offers an explicit reconnect for a signed-in Vault entry and uses the exact 
   ['status', 'start'].map(action => ['/api/desktop/vault/oauth', { id: vaultId, name: props.name, revision: props.revision, action }]),
  )
 })
+
+const vaultProps={vaultId:'5c0b2a8e-5f0f-4c56-9e55-3f7c0f1f6a11',name:'github',revision:'f7444d01-185f-4bfc-b97e-49b906257c56'}
+it('shows the GitHub code to type and a button to GitHub’s page, then the connected state',async()=>{
+ let connected=false
+ const requests=vi.fn(async(_url:string,init:RequestInit)=>{
+  const {action}=JSON.parse(String(init.body))
+  if(action==='start')return Response.json({status:{state:'waiting',device:{userCode:'WDJB-MJHT',verificationUri:'https://github.com/login/device'}}})
+  return Response.json(connected?{state:'connected'}:action==='status' && requests.mock.calls.length>1?{state:'waiting',device:{userCode:'WDJB-MJHT',verificationUri:'https://github.com/login/device'}}:{state:'idle'})
+ })
+ vi.useFakeTimers()
+ vi.stubGlobal('fetch',requests);render(vaultProps);await settle()
+ act(()=>button('Sign in with browser').click());await settle()
+ expect(host!.querySelector('[aria-label="Sign-in code"]')?.textContent).toBe('WDJB-MJHT')
+ const link=host!.querySelector('a')!
+ expect(link.textContent).toContain('Open GitHub’s sign-in page')
+ expect(link.href).toBe('https://github.com/login/device')
+ expect(link.target).toBe('_blank')
+ expect(button('Cancel')).toBeTruthy()
+ connected=true
+ await act(async()=>{await vi.advanceTimersByTimeAsync(1600)});await settle()
+ expect(host!.textContent).toContain('Connected')
+ expect(host!.querySelector('[aria-label="Sign-in code"]')).toBeNull()
+})
+
+it('refuses a status carrying anything beyond the code and page, such as a device code',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({state:'waiting',device:{userCode:'WDJB-MJHT',verificationUri:'https://github.com/login/device',deviceCode:'secret'}})))
+ render(vaultProps);await settle()
+ expect(host!.textContent).not.toContain('WDJB-MJHT')
+ expect(host!.textContent).toContain('Vault sign-in is unavailable')
+})
+
+it('a sign-in this Mac cannot finish offers the token instead of a retry',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({state:'unsupported',message:'GitHub does not let apps register themselves for sign-in, and this copy of Rerun has no GitHub sign-in app set up. Use a GitHub Personal Access Token instead.'})))
+ const onUseToken=vi.fn()
+ render({...vaultProps,onUseToken});await settle()
+ expect(host!.querySelector('[role="alert"]')?.textContent).toContain('GitHub does not let apps register themselves for sign-in')
+ expect(()=>button('Retry sign-in')).toThrow()
+ act(()=>button('Use a token instead').click())
+ expect(onUseToken).toHaveBeenCalledOnce()
+})
+
+it('a refused token asks to sign in again',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({state:'error',message:'GitHub no longer accepts this sign-in. Sign in again.',reconnect:true})))
+ render(vaultProps);await settle()
+ expect(host!.textContent).toContain('GitHub no longer accepts this sign-in. Sign in again.')
+ expect(button('Sign in again').disabled).toBe(false)
+})
