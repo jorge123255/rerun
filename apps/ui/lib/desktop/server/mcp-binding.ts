@@ -5,6 +5,7 @@ import { assertDesktopWorkspaceAdmission, desktopWorkspaceFrozen } from './works
 import { assignedVaultMcpPrograms, vaultProgramMaterials } from './vault/mcp-programs'
 import { desktopVaultMcpRuntime } from './vault/mcp-runtime'
 import { createDesktopSecretCrypto } from './secret-requests/crypto'
+import { authorizeForemanSharedVault } from './foreman/shared-vault'
 import { shutdownDesktopForeman } from './foreman/binding'
 import { shutdownDesktopForemanVoice } from './foreman-voice/binding'
 import { shutdownDesktopVoiceEngine } from './voice-engine/binding'
@@ -14,7 +15,7 @@ import { createCanonicalMcpSecretReferences } from './mcp-secret-references/bind
 import type { DesktopMcpMaterialSource } from './mcp-secret-references/lease'
 import { z } from 'zod'
 import { createDesktopSelfMcpBinding } from './self-mcp/binding'
-import { desktopRerunToolCatalog, desktopCodexToolCatalog } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, desktopRerunToolCatalog, desktopCodexToolCatalog } from '@rerun/contracts'
 import { serviceStore } from './services/store'
 import { bindDesktopServiceSkillOwners, desktopServiceSkillRestartScope, syncDesktopVaultSkillsForOwner } from './service-skills/authority'
 import { localServiceLifecycle, type ServiceAuthority } from './services/lifecycle'
@@ -231,22 +232,35 @@ async function createService(runtime: DesktopRuntime, entry: RegistryEntry) {
     entry.shutdown.signal.addEventListener('abort', () => vaultOAuth.shutdown(), { once: true })
     const vaultMcp = desktopVaultMcpRuntime(db, vaultCrypto, runtime.workspaceId, access, entry.shutdown.signal,
         undefined, assertVaultWorkspace, undefined, 'mcp', vaultOAuth)
+    const authorizeServiceRun = (identity: McpRunIdentity, signal: AbortSignal) => identity.engineAgentId === FOREMAN_AGENT_ID
+        ? authorizeForemanSharedVault(runtime, db, identity, AbortSignal.any([signal, entry.shutdown.signal, AbortSignal.timeout(5_000)]), false, engineJson)
+        : authorizeRun(identity, signal, 'services')
     const vaultCatalog = desktopVaultMcpRuntime(db, vaultCrypto, runtime.workspaceId,
-        owner => access(owner, 'services'), entry.shutdown.signal, undefined, assertVaultWorkspace, undefined, 'catalog', vaultMcp.oauth, verifyAdoptedSkills, {
+        async owner => {
+            if (owner !== FOREMAN_AGENT_ID) return access(owner, 'services')
+            // Chief only enters this catalog through authorizeServiceRun. The per-account grant
+            // is the live shared-with-everyone row checked by the Vault at each use.
+            entry.shutdown.signal.throwIfAborted()
+            assertVaultWorkspace()
+            return { enabled: true, granted: true }
+        }, entry.shutdown.signal, undefined, assertVaultWorkspace, undefined, 'catalog', vaultMcp.oauth, verifyAdoptedSkills, {
             store, key: masterKey, authorizeRun: (identity, signal) => authorizeRun(identity, signal, 'services'),
             remoteAccess: access, watchOwner: owner => watchDesktopMcpOwner(runtime, owner),
         })
     const servicesBridge = serviceEngineBridge(installedServices, services, async (identity, signal, action) => {
-        if (action !== 'release') return authorizeRun(identity, signal, 'services')
+        if (action !== 'release') return authorizeServiceRun(identity, signal)
+        if (identity.engineAgentId === FOREMAN_AGENT_ID) return authorizeForemanSharedVault(runtime, db, identity, signal, true, engineJson)
         return (await historicalOwner(identity, signal)).owner.id
     }, async (owner, identity, signal) => {
+        if (owner === FOREMAN_AGENT_ID) return // Chief's HTTP catalog has no persistent transport.
         await Promise.all([serviceTransports.releaseRun(owner, identity, signal), vaultCatalog.releaseSseRun(owner, identity)])
     }, async (owner, identity, signal) => {
         const active = AbortSignal.any([signal, entry.shutdown.signal])
-        await syncDesktopVaultSkillsForOwner(runtime, owner, active)
+        if (owner !== FOREMAN_AGENT_ID) await syncDesktopVaultSkillsForOwner(runtime, owner, active)
         const http = await vaultCatalog.tools(owner, active, async stop => {
-            if (await authorizeRun(identity, stop, 'services') !== owner) throw new Error('Service run owner changed')
+            if (await authorizeServiceRun(identity, stop) !== owner) throw new Error('Service run owner changed')
         })
+        if (owner === FOREMAN_AGENT_ID) return http
         // Managed apps (Gmail and the like) join the same path, so the same permission and the same ask-first check apply.
         return [...http, ...await vaultCatalog.sseTools(owner, identity, active), ...await (await openDesktopManagedApps(runtime)).tools(owner, active)]
     }, askFirst)

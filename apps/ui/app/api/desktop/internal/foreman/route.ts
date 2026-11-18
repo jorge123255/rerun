@@ -4,6 +4,7 @@ import { DESKTOP_FOREMAN_TURN_MAX_BYTES, companyBriefModelSchema, desktopForeman
 import { authenticateDesktopEngineRequest, DesktopHttpError } from '@/lib/desktop/server/auth'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { foremanTurn, foremanTurnWire, ownedForemanDispatch } from '@/lib/desktop/server/foreman/chat-store'
+import { foremanSharedCatalogAccounts } from '@/lib/desktop/server/foreman/shared-app-catalog'
 import { desktopForeman } from '@/lib/desktop/server/foreman/binding'
 import { desktopForemanVoice } from '@/lib/desktop/server/foreman-voice/binding'
 import { readGrantedForemanWorkspaceSnapshot } from '@/lib/desktop/server/foreman-workspace-reads'
@@ -54,7 +55,8 @@ export async function POST(request: Request) {
         if (input.action === 'binding') {
             const record = await foremanTurn(app.db, input.identity.runId)
             if (!record || record.body.sessionId !== input.identity.sessionId || !await app.isLive(record.body.binding)) throw new DesktopHttpError(409, 'Foreman binding changed.')
-            return Response.json({ binding: record.body.binding, discovery: true })
+            const available = await app.db.execute(`SELECT 1 FROM desktop_vault_mcp_servers s WHERE ${foremanSharedCatalogAccounts} LIMIT 1`)
+            return Response.json({ binding: record.body.binding, discovery: true, ...(available.rows.length > 0 && { sharedVaultApps: true }) })
         }
         if (!await app.isLive(input.binding)) throw new DesktopHttpError(409, 'This Foreman run is no longer current.')
         if (input.action === 'workspace_snapshot') {

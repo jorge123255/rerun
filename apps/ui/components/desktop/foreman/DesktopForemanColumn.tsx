@@ -92,6 +92,7 @@ export type DesktopForemanColumnProps = {
     onAnswerQuestion?: (answer: DesktopQuestionAnswer) => Promise<void>
     agentNameOf: (agentId: string) => string
     orbState?: OrbActivity
+    onOpenApps?: () => void
     headerActions?: ReactNode
     /** The thread on screen, on its own row under the tabs. */
     headerCrumb?: ReactNode
@@ -156,7 +157,7 @@ export function DesktopForemanColumn({
     approval, onDecideApproval, question, onAnswerQuestion,
     agentNameOf,
     orbState = 'idle',
-    headerActions,
+    onOpenApps, headerActions,
     headerCrumb, framedBar, threads, onOpenThread,
     runNotice,
     renderBoardOverlay,
@@ -543,7 +544,7 @@ export function DesktopForemanColumn({
                     the workspace (upstream #317). Over the chat on a narrower window, behind the same backdrop. */}
                 {framed && detailsOpen && !wide && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => setDesktopDetailsWanted(false)} />}
                 {framed && <DesktopDetailsColumn label={t('workspaceView.foreman.card')} open={detailsOpen} beside={wide}>
-                    {detailsMounted && <DesktopForemanDetails orbState={orbState} shown={detailsOpen} onClose={() => setDesktopDetailsWanted(false)} routines={
+                    {detailsMounted && <DesktopForemanDetails onOpenApps={onOpenApps} orbState={orbState} shown={detailsOpen} onClose={() => setDesktopDetailsWanted(false)} routines={
                         <DesktopWorkspaceRoutines
                             key={`details:${chat.workspaceId}`}
                             client={routinesClient}

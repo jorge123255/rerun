@@ -6,12 +6,15 @@ import { withAgentLock } from '../agents/lock.js'
 import { readAgentConfig } from '../agents/loader.js'
 import { beginDesktopAgentWork } from './agent-lifecycle.js'
 
-import { desktopActivityDecisionSchema } from '@rerun/contracts'
+import { desktopActivityDecisionSchema, FOREMAN_AGENT_ID } from '@rerun/contracts'
 import { noteDesktopActivity } from './activity-trail/recorder.js'
 
-const marked = new WeakSet<object>()
-/** Only actual adapter instances may pass the desktop Codex bridge's dynamic-tool allowlist. */
-export function isDesktopServiceTool(value: unknown): boolean { return typeof value === 'object' && value !== null && marked.has(value) }
+const marked = new WeakMap<object, { owner: string; name: string }>()
+/** A provider bridge must match the adapter that was built for this agent under this tool name. */
+export function isDesktopServiceTool(value: unknown, owner?: string, name?: string): boolean {
+    const identity = value && typeof value === 'object' ? marked.get(value) : undefined
+    return !!identity && (owner === undefined || identity.owner === owner && identity.name === name)
+}
 const catalogSchema = z.object({ catalogId: z.string().uuid(), tools: z.array(z.object({
     capabilityId: z.string().uuid(), name: z.string().regex(/^[\w.-]{1,128}$/), description: z.string().max(8_000), inputSchema: z.record(z.string(), z.unknown()),
 }).strict()).max(256) }).strict()
@@ -79,10 +82,7 @@ export async function desktopServiceTools(ctx: RunContext): Promise<{ tools: Too
     // The fresh check below is authoritative. This snapshot only avoids catalog work when off.
     const grants = ctx.agent.config.tools.desktopToolGrants as Record<string, boolean | undefined> | undefined
     if (!ctx.agent.config.enabled || grants?.services !== true) return { tools: {}, close: async () => {} }
-    if (!ctx.abortSignal || !ctx.runId) throw new Error('Service requires an active, cancellable run')
-    const runSignal = ctx.abortSignal
-    const identity = { engineAgentId: ctx.agent.id, sessionId: ctx.sessionId, runId: ctx.runId }
-    async function permission(signal: AbortSignal) {
+    return serviceCatalog(ctx, async signal => {
         const bounded = AbortSignal.any([signal, AbortSignal.timeout(5_000)])
         await abortable(withAgentLock(ctx.agent.id, async () => {
             bounded.throwIfAborted()
@@ -95,7 +95,22 @@ export async function desktopServiceTools(ctx: RunContext): Promise<{ tools: Too
                 noteDesktopActivity({ outcome: 'allowed-by-permission', rule: 'permission:services' })
             } finally { release() }
         }), bounded)
+    })
+}
+
+// The workspace owner's share-with-everyone choice admits only shared catalog apps.
+// The app resolves the authenticated Chief run itself and rechecks sharing on every call.
+export function desktopForemanSharedApps(ctx: RunContext, assertCurrent: () => Promise<void>) {
+    if (ctx.agent.id !== FOREMAN_AGENT_ID || ctx.agent.config.kind !== 'foreman' || ctx.agent.config.ephemeral) {
+        throw new Error('Shared Chief apps require an authenticated Chief run.')
     }
+    return serviceCatalog(ctx, assertCurrent)
+}
+
+async function serviceCatalog(ctx: RunContext, permission: (signal: AbortSignal) => Promise<void>): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
+    if (!ctx.abortSignal || !ctx.runId) throw new Error('Service requires an active, cancellable run')
+    const runSignal = ctx.abortSignal
+    const identity = { engineAgentId: ctx.agent.id, sessionId: ctx.sessionId, runId: ctx.runId }
     await permission(runSignal)
     let catalogId: string | undefined
     let closing: Promise<void> | undefined
@@ -138,7 +153,7 @@ export async function desktopServiceTools(ctx: RunContext): Promise<{ tools: Too
                     } finally { release() }
                 },
             })
-            marked.add(executable)
+            marked.set(executable, { owner: ctx.agent.id, name: definition.name })
             tools[definition.name] = executable
         }
         return { tools, close: async () => { runSignal.removeEventListener('abort', stop); await close() } }

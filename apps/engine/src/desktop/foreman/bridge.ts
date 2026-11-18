@@ -14,7 +14,7 @@ export type ForemanBridgeBody =
     | { action: 'team_changes'; binding: DesktopForemanBinding; toolCallId: string; input: unknown }
     | { action: 'navigate'; binding: DesktopForemanBinding; eventId: string; intent: unknown }
     | { action: 'discover'; binding: DesktopForemanBinding; url: string }
-const bindingResponse = z.strictObject({ binding: foremanBindingSchema, discovery: z.boolean() })
+const bindingResponse = z.strictObject({ binding: foremanBindingSchema, discovery: z.boolean(), sharedVaultApps: z.literal(true).optional() })
 export function createDesktopForemanBridge(runtime: ForemanRuntime, network: typeof fetch = fetch) {
     const origin = new URL(runtime.app.origin)
     if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.port || origin.origin !== runtime.app.origin || !/^[a-f0-9]{64}$/.test(runtime.engine.apiKey) || !z.uuid().safeParse(runtime.launchNonce).success) throw new Error('Desktop Foreman callback is unavailable.')

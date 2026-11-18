@@ -1,5 +1,5 @@
 import 'server-only'
-import { redactDesktopMcpSecretValue, type DesktopMcpSseRef } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, redactDesktopMcpSecretValue, type DesktopMcpSseRef } from '@rerun/contracts'
 import { randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import type { McpRunIdentity } from '../mcp/bridge'
@@ -16,6 +16,7 @@ import type { OAuthJson } from '../mcp/oauth-network'
 import { vaultCatalogHealth } from './catalog-health'
 import { vaultMcpOAuth } from './mcp-oauth'
 import { vaultMcpHttps } from './mcp-network'
+import { foremanSharedCatalogAccounts } from '../foreman/shared-app-catalog'
 import { assignedManagedAccounts } from '../managed-apps/assigned'
 
 type VaultSseOptions = Pick<DesktopSseRuntimeDeps, 'store' | 'key' | 'authorizeRun' | 'network'> & {
@@ -54,8 +55,18 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
     }
 
     async function assigned(agentId: string, name?: string) {
+        const columns = 's.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.oauth_enabled,s.transport,s.sealed IS NOT NULL AS has_credential'
+        if (agentId === FOREMAN_AGENT_ID) {
+            if (mode !== 'catalog') return []
+            return (await db.execute({
+                sql: `SELECT ${columns} FROM desktop_vault_mcp_servers s
+                    WHERE ${foremanSharedCatalogAccounts}
+                      AND (? IS NULL OR s.name=?) ORDER BY s.name`,
+                args: [name ?? null, name ?? null],
+            })).rows
+        }
         return (await db.execute({
-            sql: `SELECT s.id,s.name,s.url,s.revision,s.credential_revision,s.credential_header,s.oauth_enabled,s.transport,s.sealed IS NOT NULL AS has_credential
+            sql: `SELECT ${columns}
                 FROM desktop_vault_mcp_servers s JOIN desktop_agents a ON a.id=? AND a.workspace_id=1
                 WHERE (? IS NULL OR s.name=?) AND (s.catalog_slug IS NOT NULL)=?
                 AND NOT EXISTS (SELECT 1 FROM desktop_deletions d WHERE d.agent_id=a.id OR d.engine_agent_id=a.engine_agent_id)
@@ -290,6 +301,7 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
         },
         async tools(owner: string, signal: AbortSignal, authorizeRun?: (signal: AbortSignal) => Promise<void>) {
             const active = AbortSignal.any([signal, shutdown])
+            if (owner === FOREMAN_AGENT_ID && !authorizeRun) throw new Error('A running Chief conversation is required')
             if (!authorizeRun) {
                 const tools = await remoteMcpTools(owner, store, runtime, active)
                 const search = tools.find(tool => tool.server.name === 'composio' && tool.server.tool === 'COMPOSIO_SEARCH_TOOLS' && tool.server.host === 'connect.composio.dev')

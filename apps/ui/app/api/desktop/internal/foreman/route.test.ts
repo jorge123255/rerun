@@ -1,3 +1,4 @@
+import { createClient, type Client } from '@libsql/client'
 import { afterEach, expect, test, vi } from 'vitest'
 import { foremanDiscoveryRunSchema, type DesktopForemanBinding } from '@rerun/contracts'
 import { createForemanRuntime, type ForemanRuntime } from '@/lib/desktop/server/foreman/runtime'
@@ -7,17 +8,17 @@ type DiscoveryBridge = { request(input: { action: 'discover'; binding: DesktopFo
 type BridgeModule = { createDesktopForemanBridge(runtime: typeof appRuntime, network: typeof fetch): DiscoveryBridge }
 const bridgePath = new URL('../../../../../../engine/src/desktop/foreman/bridge.ts', import.meta.url).href
 
-const mounted = vi.hoisted(() => ({ core: null as ForemanRuntime | null, live: true, snapshot: vi.fn(), setup: vi.fn() }))
+const mounted = vi.hoisted(() => ({ core: null as ForemanRuntime | null, db: null as Client | null, live: true, snapshot: vi.fn(), setup: vi.fn() }))
 const appRuntime = vi.hoisted(() => ({ workspaceId: 1, launchNonce: '00000000-0000-4000-8000-000000000001', app: { origin: 'http://127.0.0.1:44000' }, engine: { apiKey: 'a'.repeat(64) } }))
 vi.mock('@/lib/desktop/server/auth', async original => ({ ...await original<typeof import('@/lib/desktop/server/auth')>(), authenticateDesktopEngineRequest: async () => appRuntime }))
-vi.mock('@/lib/desktop/server/foreman/binding', () => ({ desktopForeman: async () => ({ core: mounted.core, isLive: async () => mounted.live }) }))
+vi.mock('@/lib/desktop/server/foreman/binding', () => ({ desktopForeman: async () => ({ core: mounted.core, db: mounted.db, isLive: async () => mounted.live }) }))
 vi.mock('@/lib/desktop/server/foreman-voice/binding', () => ({ desktopForemanVoice: () => { throw new Error('Discovery must not create a voice runtime.') } }))
 vi.mock('@/lib/desktop/server/foreman-workspace-reads', () => ({ readGrantedForemanWorkspaceSnapshot: mounted.snapshot }))
 vi.mock('@/lib/desktop/server/foreman/setup-coordination', () => ({ inspectChiefSetup: mounted.setup }))
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { POST } from './route'
 
-afterEach(() => { mounted.core = null; mounted.live = true; mounted.snapshot.mockReset(); mounted.setup.mockReset() })
+afterEach(() => { mounted.core = null; mounted.db = null; mounted.live = true; mounted.snapshot.mockReset(); mounted.setup.mockReset() })
 
 test('the workspace snapshot callback refuses stale launches and checks the run again after the read', async () => {
     const binding: DesktopForemanBinding = { workspaceId: '1', chatId: 'fmc_callback0001', runId: '00000000-0000-4000-8000-000000000002', model: { connectionId: 'local', model: 'model' } }
@@ -80,4 +81,25 @@ test('inspection returns a safe contact hint, withholds the question after Stop 
     expect(permitted.status).toBe(200)
     expect(permitted.headers.get('cache-control')).toBe('no-store')
     expect(await permitted.json()).toMatchObject({ state: 'awaiting_reply', lastMessage: 'What platform?' })
+})
+
+test('only shared HTTP catalog apps enable tools for the exact live Chief binding', async () => {
+    const db = createClient({url:'file::memory:'})
+    mounted.db = db
+    const binding = {workspaceId:'1',chatId:'fmc_callback0001',runId:'00000000-0000-4000-8000-000000000002',model:{connectionId:'local',model:'fixture'}}
+    const post = (sessionId = 'chat') => POST(new Request(appRuntime.app.origin + '/api/desktop/internal/foreman', {
+        method:'POST',body:JSON.stringify({action:'binding',launchNonce:appRuntime.launchNonce,identity:{engineAgentId:'foreman',sessionId,runId:binding.runId}}),
+    }))
+    try {
+        await db.executeMultiple(`CREATE TABLE desktop_foreman_turns(request_id TEXT,body TEXT,fingerprint TEXT,status TEXT);
+            CREATE TABLE desktop_vault_mcp_servers(shared_with_all INTEGER,catalog_slug TEXT,transport TEXT);
+            INSERT INTO desktop_vault_mcp_servers VALUES(0,'linear','http'),(1,NULL,'http'),(1,'linear','sse');`)
+        await db.execute({sql:"INSERT INTO desktop_foreman_turns VALUES(?,?,'identity','admitted')",args:[binding.runId,JSON.stringify({binding,sessionId:'chat'})]})
+        expect(await (await post()).json()).toEqual({binding,discovery:true})
+        await db.execute("UPDATE desktop_vault_mcp_servers SET shared_with_all=1 WHERE catalog_slug='linear' AND transport='http'")
+        expect(await (await post()).json()).toEqual({binding,discovery:true,sharedVaultApps:true})
+        expect((await post('foreign')).status).toBe(409)
+        mounted.live = false
+        expect((await post()).status).toBe(409)
+    } finally { db.close() }
 })
