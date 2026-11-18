@@ -94,7 +94,8 @@ async function kickoffSetup(runtime: DesktopRuntime, db: Client, agent: DesktopA
     await db.execute({ sql: "UPDATE desktop_setup_kickoffs SET status='admitted' WHERE agent_id=? AND engine_session_id=? AND run_id=?", args: [agent.id, engineSessionId, String(receipt.run_id)] })
 }
 
-async function finishIntent(runtime: DesktopRuntime, db: Client, agent: DesktopAgent, row: Row): Promise<DesktopSetupMutationResult> {
+async function finishIntent(runtime: DesktopRuntime, db: Client, agent: DesktopAgent, row: Row,
+    resumedBy?: { requestId: string; fingerprint: string }): Promise<DesktopSetupMutationResult> {
     if (row.agent_id !== agent.id) throw new DesktopHttpError(409, 'This setup request belongs to another coworker.')
     if (row.status === 'complete') return desktopSetupMutationResultSchema.parse(JSON.parse(String(row.result)))
     if (row.status === 'rejected') {
@@ -143,6 +144,13 @@ async function finishIntent(runtime: DesktopRuntime, db: Client, agent: DesktopA
         { sql: `INSERT INTO desktop_setup_state(agent_id,skipped,updated_at) VALUES(?,?,?) ON CONFLICT(agent_id) DO UPDATE SET skipped=excluded.skipped,updated_at=excluded.updated_at`, args: [agent.id, Number(skipped), now] },
         { sql: "UPDATE desktop_setup_intents SET status='complete',result=? WHERE request_id=? AND agent_id=? AND status='pending'", args: [JSON.stringify(result), String(row.request_id), agent.id] },
         { sql: 'INSERT INTO desktop_setup_events(agent_id,kind,detail,created_at) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM desktop_setup_events WHERE agent_id=? AND kind=? AND detail=?)', args: [agent.id, intent.action, String(row.request_id), now, agent.id, intent.action, String(row.request_id)] },
+        // An explicit Continue after a restart may have a fresh id. Commit its receipt along
+        // with the original intent; a crash cannot acknowledge one without the other.
+        ...(resumedBy ? [{
+            sql: `INSERT INTO desktop_setup_intents(request_id,agent_id,action,fingerprint,intent,status,result,created_at)
+                    VALUES(?,?,'continue',?,?,'complete',?,?)`,
+            args: [resumedBy.requestId, agent.id, resumedBy.fingerprint, JSON.stringify({ ...intent, action: 'continue' }), JSON.stringify(result), now],
+        }] : []),
     ], 'write')
     return result
 }
@@ -199,7 +207,7 @@ export function mutateDesktopSetup(runtime: DesktopRuntime, agentId: string, inp
             if (input.action === 'continue' && (pending.action === 'start' || pending.action === 'continue')) {
                 const setup = await engineSetup(runtime, agent.engineAgentId)
                 if (setupRevision(setup, await skippedOf(db, agentId)) !== input.expectedRevision) throw errorChanged()
-                return finishIntent(runtime, db, agent, pending)
+                return finishIntent(runtime, db, agent, pending, { requestId: input.requestId, fingerprint })
             }
             await finishIntent(runtime, db, agent, pending)
             throw errorChanged()

@@ -125,6 +125,10 @@ test('a phone can recover a lost kickoff response after reopening without its or
     expect(acceptedRuns.size).toBe(1)
     expect(mocks.chat.mock.calls[1][1]).toEqual(mocks.chat.mock.calls[0][1])
     expect((await observeDesktopSetup(reopened, other)).sessionId).toBeNull()
+    setup = { ...setup, pending: false, completedAt: '2026-11-18T00:00:00Z', revision: 'finished' }
+    expect(await mutateDesktopSetup(reopened, owner, resume)).toEqual(recovered)
+    await expect(mutateDesktopSetup(reopened, owner, { ...resume, action: 'skip' })).rejects.toMatchObject({ status: 409 })
+    expect(mocks.chat).toHaveBeenCalledTimes(2)
 })
 
 test('skip is durable, distinct from completion and rejects stale or cross-owner intent reuse', async () => {
