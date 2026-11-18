@@ -91,10 +91,16 @@ test('a saved GitHub browser entry without a client ID says why and can switch t
     const [entry] = (await f.vault.mutate({ operation: 'add-app', slug: 'github', methodId: 'oauth', values: {} }, allow)).entries
     expect(entry).toMatchObject({ browserSignIn: true, signedOut: true })
     // The build that saved it had a client ID; this one has none.
+    // It also holds a sign-in GitHub later refused.
+    const { sealVaultOAuth } = await import('./catalog-oauth-origin')
+    const { generation, sealed } = await sealVaultOAuth(crypto, 7, entry.id, { accessToken: 'gho_refusedFixture', expiresAt: Number.MAX_SAFE_INTEGER, neverExpires: true, rejected: true,
+        resource: 'https://api.githubcopilot.com/mcp/', issuer: 'https://github.com/login/oauth', tokenEndpoint: 'https://github.com/login/oauth/access_token', clientId, signIn: 'github-device' })
+    await f.db.execute({ sql: 'INSERT INTO desktop_vault_mcp_oauth(item_id,generation,sealed) VALUES(?,?,?)', args: [entry.id, generation, sealed] })
     vi.stubEnv('RERUN_DESKTOP_GITHUB_CLIENT_ID', '')
     const oauth = vaultMcpOAuth(f.db, crypto, 7, allow)
     try {
         const reason = { state: 'unsupported', message: GITHUB_SIGN_IN_UNAVAILABLE }
+        // The reason, not an invitation to sign in again that this build cannot honour.
         expect(await oauth.status(entry.id, entry.name, entry.revision, signal)).toEqual(reason)
         expect(await oauth.start(entry.id, entry.name, entry.revision, signal)).toEqual({ status: reason })
         const [token] = (await f.vault.mutate({ operation: 'configure-app', id: entry.id, revision: entry.revision, methodId: 'api-key',

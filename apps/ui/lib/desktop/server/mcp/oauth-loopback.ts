@@ -235,10 +235,11 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   // The latest attempt's own outcome (declined, expired code, …) is news; an older unusable sign-in is not.
   const previous=terminal.get(slot)
   if(previous?.revision===revision && previous.url===server.url && previous.attemptId===attemptId)return previous.status
-  if(stale)return stale
-  // A saved entry whose sign-in can never complete on this Mac says why before anyone presses the button.
+  // A saved entry whose sign-in can never complete on this Mac says why before anyone presses the
+  // button, rather than inviting a new sign-in that cannot work.
   const chosen=plan(server.url)
-  return chosen.kind==='unavailable'?{state:'unsupported',message:chosen.message}:{state:'idle'}
+  if(chosen.kind==='unavailable')return {state:'unsupported',message:chosen.message}
+  return stale ?? {state:'idle'}
  }
  async function credential(agent:string,name:string,revision:string,stop:AbortSignal):Promise<string|null> {
   if(closed)throw new Error('OAuth stopped')
