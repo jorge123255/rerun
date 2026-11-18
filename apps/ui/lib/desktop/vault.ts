@@ -40,7 +40,7 @@ export const desktopVaultMutation = z.discriminatedUnion('operation', [
     z.strictObject({ operation: z.literal('set-program-credential'), ...target, variable: desktopVaultProgramVariable, value: desktopVaultProgramValue }),
     z.strictObject({ operation: z.literal('remove-program-credential'), ...target, variable: desktopVaultProgramVariable }),
     z.strictObject({ operation: z.literal('add-app'), slug: appSlug, methodId, values: appValues, label: appLabel.optional(), expectedAccounts: z.number().int().min(0).optional() }),
-    z.strictObject({ operation: z.literal('rename-app'), ...target, label: appLabel }),
+    z.strictObject({ operation: z.literal('rename-app'), ...target, label: z.union([appLabel, z.string().trim().length(0), z.null()]) }),
     z.strictObject({ operation: z.literal('configure-app'), ...target, methodId, values: appValues }),
     z.strictObject({ operation: z.literal('create-server'), name: serverName, url: serverUrl, bearer, browserSignIn: z.literal(true).optional(), header: credentialHeader.optional() }).refine(input => Number(!!input.bearer) + Number(!!input.header) + Number(!!input.browserSignIn) <= 1),
     z.strictObject({ operation: z.literal('enable-server-oauth'), ...target }),

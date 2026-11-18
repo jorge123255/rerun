@@ -74,7 +74,8 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
         }
         const changed = (event: Event) => {
             const owner = (event as CustomEvent<unknown>).detail
-            if (owner == null || owner === agentId) void read()
+            if (owner == null) setVaultRefresh(value => value + 1)
+            else if (owner === agentId) void read()
         }
         void read()
         window.addEventListener(DESKTOP_CONNECTOR_APPS_CHANGED, changed)
@@ -224,6 +225,7 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
     })
     const managedMatches = managedAccounts?.filter(account =>
         `${account.name} ${account.label ?? ''} ${account.slug}`.toLowerCase().includes(query.trim().toLowerCase())) ?? []
+    const hasInstalledRows = accounts.length > 0 || managedMatches.length > 0
     const editor = detail && selected
     return (
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col" data-state={loading ? 'loading' : error ? 'unavailable' : accounts.length || catalog.length ? 'ready' : 'empty'}>
@@ -298,8 +300,8 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
                             </div>
                         )}
                         {opening && <p role="status" className="text-xs text-muted-foreground">Loading app details…</p>}
-                        <PanelSection label="Installed">
-                            {loading && !accounts.length && !managedMatches.length ? <SkeletonPanelRows rows={3} leading /> : accounts.length || managedMatches.length ? (
+                        {(loading || hasInstalledRows || managedError) && <PanelSection label="Installed">
+                            {hasInstalledRows ? (
                                 <PanelList>
                                     {accounts.map(account => (
                                         <PanelRow key={account.installationId} title={account.label || account.name} leading={<Icon {...serviceIconProps(account.icon, account.category)} size="sm" />} description={healthText(account)} onClick={() => void openSlug(account.slug, account.key)} actions={<Button size="sm" variant="outline" onClick={() => void openSlug(account.slug, account.key)}>Configure</Button>} />
@@ -311,13 +313,14 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
                                             actions={<Button size="sm" variant="outline" onClick={() => setVaultApp({ managedApp: account.name })}>Manage in Vault</Button>} />
                                     ))}
                                 </PanelList>
-                            ) : !error && managedAccounts?.length === 0 && <EmptyState icon={UnplugIcon} title="No apps installed" description="Add an app from the Library to extend this coworker’s tools." />}
+                            ) : loading && <SkeletonPanelRows rows={3} leading />}
                             {managedError && <div className="space-y-2">
                                 <p role="alert" className="text-xs text-destructive">Could not load assigned Composio apps.</p>
                                 <Button size="sm" variant="outline" onClick={() => setVaultRefresh(value => value + 1)}>Retry assigned apps</Button>
                             </div>}
-                        </PanelSection>
-                        <DesktopCoworkerVault key={vaultRefresh} agentId={agentId} query={query} />
+                        </PanelSection>}
+                        <DesktopCoworkerVault key={vaultRefresh} agentId={agentId} query={query}
+                            showInstalledFallback={!loading && !error && !accounts.length && managedAccounts?.length === 0} />
                         <PanelSection label="Library">
                             {loading && !catalog.length ? <SkeletonPanelRows rows={6} leading /> : catalog.length ? (
                                 <ServiceList services={library} onInstall={slug => void openSlug(slug)} onAddAccount={slug => { const row = catalog.find(item => item.slug === slug); if (row?.addAccount) void openSlug(slug, `additional:${slug}`) }} />

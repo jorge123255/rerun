@@ -8,6 +8,7 @@ import { compileAccountService } from '../services/accounts/compiler'
 import { getDesktopServiceManifest } from '../services/catalog'
 import { createDesktopSecretCrypto } from '../secret-requests/crypto'
 import { desktopVault } from './store'
+import { initializeDesktopRound74 } from '../round74-schema'
 import { adoptDesktopCatalogApps } from './catalog-adoption'
 import { desktopVaultMcpRuntime } from './mcp-runtime'
 import { vaultCatalog } from './catalog'
@@ -172,6 +173,48 @@ test('adopts an installed Wrike SSE account once and fences the old tool path', 
             { catalog: { slug: 'wrike', methodId: 'permanent-access-token' }, agentIds: [first], hasBearer: true },
         ])
         expect((await f.db.execute('SELECT transport FROM desktop_vault_mcp_servers')).rows[0].transport).toBe('sse')
+    } finally { await f.close() }
+})
+
+test('an adopted account restores its original owner-derived name after the nickname is cleared', async () => {
+    const f = await fixture()
+    try {
+        await f.db.execute({ sql: "UPDATE desktop_agents SET name='Alice' WHERE id=?", args: [second] })
+        await f.install(first, 'alice', 'api-key', { LINEAR_API_KEY: firstKey })
+        await f.install(second, 'bob', 'api-key', { LINEAR_API_KEY: secondKey })
+        const input = { db: f.db, workspaceId: 1, key, assertCurrent: current, verifySkills: async () => current }
+        expect(await adoptDesktopCatalogApps(input)).toBe(2)
+        const vault = desktopVault(f.db, crypto, 1)
+        const { entries } = await vault.list()
+        const originals = []
+        for (const entry of entries) {
+            if (!('kind' in entry) || entry.kind !== 'mcp' || !entry.catalog?.label) throw Error('Expected an adopted app account')
+            originals.push(entry.catalog.label)
+            const named = (await vault.mutate({ operation: 'rename-app', id: entry.id, revision: entry.revision, label: 'Work' }, current)).entries.find(e => e.id === entry.id)!
+            const cleared = (await vault.mutate({ operation: 'rename-app', id: entry.id, revision: named.revision, label: null }, current)).entries.find(e => e.id === entry.id)
+            expect(cleared).toMatchObject({ id: entry.id, name: entry.name, catalog: { label: entry.catalog.label }, agentIds: entry.agentIds })
+        }
+        expect(originals.sort()).toEqual(['Alice', 'Alice 2'])
+    } finally { await f.close() }
+})
+
+test('a prior shared adoption restores the original account name corroborated by its single retained installation', async () => {
+    const f = await fixture()
+    try {
+        await f.install(first, 'alice', 'api-key', { LINEAR_API_KEY: firstKey })
+        const input = { db: f.db, workspaceId: 1, key, assertCurrent: current, verifySkills: async () => current }
+        expect(await adoptDesktopCatalogApps(input)).toBe(1)
+        const vault = desktopVault(f.db, crypto, 1)
+        const [adopted] = (await vault.list()).entries
+        expect(adopted).toMatchObject({ catalog: { label: 'Alice' } })
+        const [shared] = (await vault.mutate({ operation: 'share', id: adopted.id, revision: adopted.revision, sharedWithAll: false, agentIds: [first, second] }, current)).entries
+        expect(shared.revision).not.toBe(adopted.revision)
+        // Reopen the exact pre-74 shape, which only recorded the display label and the adoption receipt.
+        await f.db.executeMultiple('ALTER TABLE desktop_vault_mcp_servers DROP COLUMN catalog_default_label; DELETE FROM desktop_schema_migrations WHERE version=74;')
+        await initializeDesktopRound74(f.db)
+        const [named] = (await vault.mutate({ operation: 'rename-app', id: shared.id, revision: shared.revision, label: 'Work' }, current)).entries
+        const [cleared] = (await vault.mutate({ operation: 'rename-app', id: named.id, revision: named.revision, label: null }, current)).entries
+        expect(cleared).toMatchObject({ id: adopted.id, catalog: { label: 'Alice' }, agentIds: expect.arrayContaining([first, second]) })
     } finally { await f.close() }
 })
 
