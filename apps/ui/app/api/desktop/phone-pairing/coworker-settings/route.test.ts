@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { macPhoneCoworkerSettingsChangeSchema, macPhoneCoworkerSettingsSchema } from '@rerun/contracts'
 import { GET } from './route'
-import { PATCH } from './[field]/route'
+import { GET as readField, PATCH } from './[field]/route'
 import { phoneSettingsMethods } from '@/lib/desktop/server/phone-coworker-settings'
 
 const fixture = vi.hoisted(() => ({
@@ -32,7 +32,7 @@ function answer(path: string) {
     if (path.endsWith('/call-targets')) return { targets: [{ agentId: fixture.peer, name: 'Peer', enabled: true, callable: true, bearer: secret }], allowedTargetIds: [fixture.peer] }
     if (path === '/spaces') return { board: { revision: 4, spaces: [{ id: fixture.box, name: 'Box A', col_start: 0, row_start: 0, col_end: 6, row_end: 6 }],
         placements: [{ agentId: fixture.id, spaceId: fixture.box, col: 1, row: 1 }] } }
-    if (path.endsWith('/setup?observe=1')) return { agentId: fixture.id, revision: 'v1', required: true, canStart: true, canSkip: true, prompt: secret, completedAt: null, sessionId: null, pending: true, skipped: false, defaultPrompt: secret }
+    if (path.endsWith('/setup?observe=1')) return { agentId: fixture.id, revision: 'v1', required: true, canStart: true, canContinue: false, canSkip: true, prompt: secret, completedAt: null, sessionId: null, pending: true, skipped: false, defaultPrompt: secret }
     throw new Error('Unexpected canonical read ' + path)
 }
 beforeEach(() => {
@@ -73,6 +73,24 @@ it('reads only the Mac-owned roster, settings and human-readable permissions; a 
     expect(view.model).not.toHaveProperty('conversation')
 })
 
+it('reads the scoped setup snapshot without fetching private instructions, tools or credentials', async () => {
+    const context = { params: Promise.resolve({ field: 'setup' }) }
+    expect((await readField(request('GET', 'setup', undefined, 'foreign'), context)).status).toBe(404)
+    expect((await readField(request('GET', 'setup', undefined, fixture.id, 'expired'), context)).status).toBe(401)
+    expect((await readField(request('GET', 'tools'), { params: Promise.resolve({ field: 'tools' }) })).status).toBe(404)
+    expect(actions).toEqual([])
+    const response = await readField(request('GET', 'setup'), context)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+        agentId: fixture.id, revision: 'v1', pending: true, skipped: false, required: true,
+        canStart: true, canContinue: false, canSkip: true, sessionId: null, completedAt: null,
+    })
+    expect(actions.map(a => [a.method, a.path])).toEqual([
+        ['GET', '/coworkers/' + fixture.id + '/setup?observe=1'],
+        ['GET', '/agents/' + fixture.id + '/model?presets=1'],
+    ])
+})
+
 const valid = [
     ['model', { action: 'coworker', connectionId: 'provider-1', model: 'current' }, '/agents/' + fixture.id + '/model'],
     ['model', { action: 'follow-workspace' }, '/agents/' + fixture.id + '/model'],
@@ -84,6 +102,7 @@ const valid = [
     ['name', { name: 'New name' }, '/agents/' + fixture.id],
     ['enabled', { enabled: false }, '/agents/' + fixture.id + '/enabled'],
     ['setup', { action: 'start', requestId: fixture.request, expectedRevision: 'v1' }, '/coworkers/' + fixture.id + '/setup'],
+    ['setup', { action: 'continue', requestId: fixture.request, expectedRevision: 'v1' }, '/coworkers/' + fixture.id + '/setup'],
     ['setup', { action: 'skip', requestId: fixture.request, expectedRevision: 'v1' }, '/coworkers/' + fixture.id + '/setup'],
 ] as const
 it.each(valid)('%s uses the same route, method and body as the Mac and returns only an acknowledgement', async (field, body, target) => {
@@ -139,6 +158,8 @@ describe('the phone cannot provide a new route, a credential, or another identit
     it.each([
         ['settings', { workspaceReadEnabled: true }], ['settings', { apiKey: 'fixture' }], ['settings', { password: 'fixture' }],
         ['model', { action: 'conversation-follow', sessionId: fixture.peer }], ['setup', { action: 'save', prompt: 'new' }],
+        ['setup', { action: 'complete', requestId: fixture.request, expectedRevision: 'v1' }],
+        ['setup', { action: 'continue', requestId: fixture.request, expectedRevision: 'v1', sessionId: fixture.peer }],
         ['box', { agentId: fixture.peer, requestId: fixture.request, expectedRevision: 1, spaceId: fixture.box }],
     ] as const)('rejects surplus or Mac-only inputs for %s', async (field, body) => {
         expect(macPhoneCoworkerSettingsChangeSchema.safeParse({ field, body }).success).toBe(false)

@@ -1,7 +1,7 @@
 import { RERUN_CONNECTION_ID, appendAttachmentsRef, threadsByMessage, authorIdOf, queuedPreview, runUsesScreen, scrollCueOf, screenSite, shouldFlush, shouldKeepQueued, buildAttachmentsRef, findPendingAlert, findPendingHitl, findUnknownPendingCall, needsHuman, paidDataSourcesByTurn, pendingTakeover, quickRepliesOf, quickReplyDraft, type AgentModels, type AgentView, type SessionStatus } from '@rerun/contracts'
 import { router, useFocusEffect } from 'expo-router'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, ScrollView, StyleSheet, View, type ScrollViewInstance } from 'react-native'
+import { Alert, AppState, ScrollView, StyleSheet, View, type ScrollViewInstance } from 'react-native'
 import Animated, { FadeInDown, FadeOutDown, LayoutAnimationConfig, SlideInDown, SlideOutDown, useAnimatedStyle } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslations } from 'use-intl'
@@ -40,6 +40,8 @@ import { VoiceScreen } from '@/voice/VoiceScreen'
 import { uploadAttachments, type ComposerAttachment } from './attachments'
 import { PinnedSkillProposal } from './cards/SkillProposalRow'
 import { CHAT_HEADER_HEIGHT } from './ChatHeader'
+import { MacGuidedSetupBar, setupBlocksChat } from '@/components/coworker/mac/MacGuidedSetupBar'
+import type { MacGuidedSetup } from '@/components/coworker/mac/useMacCoworkerSetup'
 import { Composer, type ComposerHandle } from './Composer'
 import { ErrorCard, type ErrorCardActions } from './ErrorCard'
 import { ConversationSkeleton } from './ConversationSkeleton'
@@ -55,6 +57,7 @@ import { widgetFor } from './hitl/registry'
 import { HITL_WIDGETS } from './hitl/widgets'
 import { mentionAgentsOf } from './mentions'
 import { MessageView } from './MessageView'
+import { pairedInstallStatus } from './origins/paired-install-status'
 import { runPhase, stepGroupShowsActivity } from './run-phase'
 import { RunStatus } from './RunStatus'
 import { ChatScreen } from './screen/ChatScreen'
@@ -92,6 +95,7 @@ type ConversationPaneProps = {
     // Where the conversation opens on the web, which draws every block.
     webUrl: string
     // False on the pager's neighbouring pages, mounted but off screen.
+    setup?: MacGuidedSetup
     onScreen?: boolean
     // The coworker that opened this conversation on this one, when it was not a person.
     startedBy?: StartedBy | null
@@ -108,7 +112,7 @@ type ConversationPaneProps = {
 const VOICE_FOLLOW_UPS_MS = [3000, 8000]
 
 // One conversation on screen: the transcript, what waits on an answer, and the composer.
-export function ConversationPane({ coworker, makeEndpoints, initialSessionId, onSessionCreated, models, status, onStatusChange, webUrl, onScreen = true, startedBy = null, initialMessage, canAttach = true, threads, onOpenThread }: ConversationPaneProps) {
+export function ConversationPane({ coworker, makeEndpoints, initialSessionId, onSessionCreated, models, status, onStatusChange, webUrl, onScreen = true, setup, startedBy = null, initialMessage, canAttach = true, threads, onOpenThread }: ConversationPaneProps) {
     const { session, me } = useAuth()
     const caller = session && me ? { accessToken: session.access_token, workspaceId: me.workspace.id } : null
     const insets = useSafeAreaInsets()
@@ -160,6 +164,35 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
         }, [])
     )
     const [footerHeight, setFooterHeight] = useState(0)
+    const gated = setupBlocksChat(setup?.view ?? null, chat.sessionId)
+    const installStatus = onMac && coworker.kind === 'coworker' ? pairedInstallStatus(setup?.error ? null : setup?.view, coworker.id, chat.sessionId) : undefined
+    const claimedSetup = !!chat.sessionId && setup?.view?.sessionId === chat.sessionId
+    // A kickoff launched by the Mac has no phone-owned stream. Refresh the saved transcript
+    // first, then the tab status derived from its pending question/approval. Never start a turn.
+    const reloadSetupChat = useRef(chat.reload)
+    reloadSetupChat.current = chat.reload
+    const lastSetupSession = useRef<string | null>(null)
+    useEffect(() => {
+        if (!onScreen || !focused || chat.busy || !chat.sessionId) return
+        const active = claimedSetup && !!setup?.view?.pending && !setup.view.skipped && !!setup.view.canContinue
+        const justFinished = !!setup?.view?.completedAt && lastSetupSession.current === chat.sessionId
+        if (!active && !justFinished) return
+        lastSetupSession.current = active ? chat.sessionId : null
+        let disposed = false
+        let reading = false
+        const poll = async () => {
+            if (reading || disposed || AppState.currentState === 'background' || AppState.currentState === 'inactive') return
+            reading = true
+            try {
+                await reloadSetupChat.current()
+                if (!disposed) onStatusChange()
+            } finally { reading = false }
+        }
+        void poll()
+        const timer = active ? setInterval(() => void poll(), 3000) : null
+        const foreground = AppState.addEventListener('change', state => { if (state === 'active') void poll() })
+        return () => { disposed = true; if (timer) clearInterval(timer); foreground.remove() }
+    }, [claimedSetup, setup?.view?.pending, setup?.view?.skipped, setup?.view?.completedAt, setup?.view?.canContinue, onScreen, focused, chat.busy, chat.sessionId, onStatusChange])
 
     const keyboard = useKeyboardHeight()
     const lift = useAnimatedStyle(() => ({ paddingBottom: Math.max(keyboard.height.value + spacing.sm, insets.bottom) }))
@@ -299,6 +332,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
     }
 
     const submit = async (text: string) => {
+        if (gated) return
         const message = text.trim()
         if (!message && attachments.length === 0) return
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
@@ -451,7 +485,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
                             <PillButton label={t('retry')} variant="secondary" onPress={chat.retry} />
                         </View>
                     )}
-                    {empty && (isForeman ? <ForemanEmptyState onSend={submit} onPrefill={setDraft} /> : <CoworkerEmptyState agentId={coworker.id} mood={moodOf(coworker.status)} asleep={coworker.status === 'offline'} onSend={submit} />)}
+                    {empty && !gated && (isForeman ? <ForemanEmptyState onSend={submit} onPrefill={setDraft} /> : <CoworkerEmptyState agentId={coworker.id} mood={moodOf(coworker.status)} asleep={coworker.status === 'offline'} onSend={submit} />)}
                     {chat.history === 'ready' && !empty && (
                         // The transcript a conversation opens on is already there; the first bubble of a
                         // new conversation, sent as the list appears, still rises.
@@ -464,7 +498,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
                                     authorOf={authorId => (isForeman ? undefined : profileOf(authorId))}
                                     renderMessage={(message, index, stamp) => (
                                         <Fragment key={message.id}>
-                                            <MessageView message={message} isLastAssistant={index === lastAssistant} running={chat.busy} agentId={isForeman ? null : coworker.id} fileOwner={endpoints.fileOwner(chat.sessionId)} coworkerName={coworker.name} hiddenCallId={alert?.toolCallId ?? null} skillProposals={skillProposals} onStopTask={stopTask} onRegenerate={pending ? undefined : () => void chat.regenerate()} feedback={feedback} stamp={stamp} paidSources={paidSourcesByTurn.get(message.id)} />
+                                            <MessageView message={message} installStatus={installStatus} isLastAssistant={index === lastAssistant} running={chat.busy} agentId={isForeman ? null : coworker.id} fileOwner={endpoints.fileOwner(chat.sessionId)} coworkerName={coworker.name} hiddenCallId={alert?.toolCallId ?? null} skillProposals={skillProposals} onStopTask={stopTask} onRegenerate={pending ? undefined : () => void chat.regenerate()} feedback={feedback} stamp={stamp} paidSources={paidSourcesByTurn.get(message.id)} />
                                             {threadBranches(threadRows.after.get(index))}
                                         </Fragment>
                                     )}
@@ -522,6 +556,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
                 )}
 
                 <View onLayout={event => setFooterHeight(event.nativeEvent.layout.height)} style={{ gap: spacing.md, width: '100%', maxWidth: CHAT_COLUMN_MAX_WIDTH, alignSelf: 'center', paddingTop: replacesComposer && !alert ? 0 : spacing.sm }}>
+                    {setup && <MacGuidedSetupBar setup={setup} sessionId={chat.sessionId} />}
                     {alert && (
                         <Animated.View entering={FadeInDown.duration(280)} exiting={FadeOutDown.duration(280)} style={{ paddingHorizontal: spacing.md }}>
                             <AlertWidget
@@ -540,7 +575,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
                             <PinnedSkillProposal proposal={proposal} pending={skillProposals.pendingId === proposal.id} onDecide={skillProposals.decide} />
                         </Animated.View>
                     ))}
-                    {replies.length > 0 && !draft && !queue.queued && <Suggestions items={replies} onPick={pickReply} />}
+                    {!gated && replies.length > 0 && !draft && !queue.queued && <Suggestions items={replies} onPick={pickReply} />}
                     {queue.queued && (
                         <Animated.View entering={FadeInDown.duration(200)} exiting={FadeOutDown.duration(200)} style={{ paddingHorizontal: spacing.md }}>
                             <QueuedMessagePill text={queue.queued.text} busy={chat.busy} pending={stopping} onSendNow={sendQueuedNow} onDiscard={queue.clear} />
@@ -549,7 +584,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
                     {/* The composer's glass goes blank under a parent below full opacity, and when it mounts mid-slide:
                         it slides rather than fades, and the page opens with it already in place. */}
                     <LayoutAnimationConfig skipEntering>
-                        {!replacesComposer && (
+                        {!replacesComposer && (!gated || chat.busy) && (
                             <Animated.View entering={SlideInDown.duration(280)} exiting={SlideOutDown.duration(280)} style={{ paddingHorizontal: spacing.md }}>
                                 <Composer ref={composer} value={draft} onChangeText={setDraft} attachments={attachments} onAttachmentsChange={setAttachments} skills={skills} mentionAgents={mentionAgents} onSend={() => submit(draft)} onStop={chat.stop} running={chat.busy || uploading} placeholder={placeholder} model={model} onOpenModel={openModel} canAttach={canAttach && !pending} voice={voice} talk={talk} autoFocus={!initialSessionId && onScreen} />
                             </Animated.View>

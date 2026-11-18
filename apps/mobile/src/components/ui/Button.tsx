@@ -11,6 +11,7 @@ export type ButtonVariant = 'default' | 'outline' | 'secondary' | 'ghost' | 'des
 
 type ButtonProps = {
     label: string
+    testID?: string
     onPress: () => void
     variant?: ButtonVariant
     size?: ControlSize
@@ -62,7 +63,7 @@ function lookOf(theme: Theme, variant: ButtonVariant, size: ControlSize, pressed
 
 // The web Button (packages/ui/src/primitives/button-variants.ts) at touch sizes: same variants, same
 // reliefs, same one-pixel sink on press. Loading stays the native spinner.
-export function Button({ label, onPress, variant = 'default', size = 'md', symbol, icon, iconOnly, stretch, loading, disabled }: ButtonProps) {
+export function Button({ label, testID, onPress, variant = 'default', size = 'md', symbol, icon, iconOnly, stretch, loading, disabled }: ButtonProps) {
     const theme = useTheme()
     const inactive = disabled || loading
     const { height, radius } = controlSize[size]
@@ -90,6 +91,7 @@ export function Button({ label, onPress, variant = 'default', size = 'md', symbo
     }
     return (
         <Pressable
+            testID={testID}
             onPress={onPress}
             disabled={inactive}
             accessibilityRole="button"

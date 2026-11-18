@@ -1,4 +1,4 @@
-import type { MacPhoneCoworkerSettings, MacPhoneCoworkerSettingsChange } from '@rerun/mac-contracts/mac-phone-pairing'
+import type { MacPhoneCoworkerSetup, MacPhoneCoworkerSettings, MacPhoneCoworkerSettingsChange } from '@rerun/mac-contracts/mac-phone-pairing'
 
 export interface Storage {
     getItem(key: string): Promise<string | null>
@@ -56,6 +56,7 @@ export function createMacPairingClient(options: {
     connectToThisMac(input: string | MacOffer, signal?: AbortSignal): Promise<Pending>
     waitForApproval(signal?: AbortSignal): Promise<Approval>
     listCoworkers(signal?: AbortSignal): Promise<{ coworkers: MacCoworker[] }>
+    readCoworkerSetup(coworkerId: string, signal?: AbortSignal): Promise<MacPhoneCoworkerSetup>
     readCoworkerSettings(coworkerId: string, signal?: AbortSignal): Promise<MacPhoneCoworkerSettings>
     changeCoworkerSettings(coworkerId: string, change: MacPhoneCoworkerSettingsChange, signal?: AbortSignal): Promise<{ ok: true }>
     listSavedChats(coworkerId: string, signal?: AbortSignal): Promise<{ chats: MacChat[]; permissions?: { sendMessages: boolean } }>

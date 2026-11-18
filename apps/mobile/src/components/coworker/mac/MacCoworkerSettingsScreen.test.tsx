@@ -1,5 +1,6 @@
 import type { MacPhoneCoworkerSettings } from '@rerun/mac-contracts/mac-phone-pairing'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { router } from 'expo-router'
 import { Alert } from 'react-native'
 
 import { isSwitchDisabled } from '@/test/switch'
@@ -27,7 +28,7 @@ const value: MacPhoneCoworkerSettings = {
     tools: { rerun: [tool, { ...tool, id: 'callAgent', label: 'Call coworkers', enabled: true, confirmOnEnable: false }], codex: [{ ...tool, id: 'shell', label: 'Run shell commands' }] },
     callTargets: { targets: [{ agentId: 'bo', name: 'Bo', enabled: true, callable: false }], allowedTargetIds: [] },
     board: { revision: 10, spaceId: null, spaces: [{ id: 'box1', name: 'Reports' }] },
-    setup: { revision: 'setup-now', required: true, pending: true, skipped: false, completedAt: null, canStart: true, canSkip: true },
+    setup: { revision: 'setup-now', required: true, pending: true, skipped: false, completedAt: null, canStart: true, canSkip: true, canContinue: false, sessionId: null },
 }
 
 const fakeHub = (snapshot = value) => ({
@@ -187,4 +188,13 @@ it('can revoke a paused Claude grant and cannot re-enable it while unavailable',
     expect(hub.changeCoworkerSettings).toHaveBeenCalledWith('ada', { field: 'tools', body: { group: 'claude', id: row.id, enabled: false } }, expect.anything())
     expect(alert).not.toHaveBeenCalled()
     expect(isSwitchDisabled(screen.getByLabelText(row.label))).toBe(true)
+})
+
+it('opens the Mac’s claimed setup chat from Settings after re-reading a successful start', async () => {
+    mockParams.page = 'setup'
+    const hub = fakeHub()
+    hub.readCoworkerSettings.mockResolvedValueOnce(value).mockResolvedValue({ ...value, setup: { ...value.setup, sessionId: 'ada-setup', canStart: false, canContinue: true } })
+    await render(<MacCoworkerSettingsScreen hub={hub} />)
+    await fireEvent.press(await screen.findByRole('button', { name: 'Start setup' }))
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith({ pathname: '/chat/[id]', params: { id: 'ada-setup', to: 'ada' } }))
 })

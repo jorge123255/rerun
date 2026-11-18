@@ -46,13 +46,15 @@ export function MacCoworkerProfile({ value, save, disabled }: SettingsProps) {
     </>
 }
 
-export function MacCoworkerSetup({ value, disabled, save }: SettingsProps) {
+export function MacCoworkerSetup({ value, disabled, save, onOpen }: SettingsProps & { onOpen: (sessionId: string) => void }) {
     const t = useTranslations('mobileCoworker.mac')
     const { setup } = value
-    const change = (action: 'start' | 'skip') => save({ field: 'setup', body: { action, expectedRevision: setup.revision, requestId: randomUUID() } })
+    const change = (action: 'start' | 'continue' | 'skip') => save({ field: 'setup', body: { action, expectedRevision: setup.revision, requestId: randomUUID() } })
     return <Section title={t('setup')}>
-        <SettingsRow label={t('status')} value={t(setup.completedAt ? 'complete' : setup.skipped ? 'skipped' : setup.required === true ? 'pending' : 'optional')} />
-        {setup.canStart && <SettingsRow label={t('start')} onPress={() => change('start')} disabled={disabled || !value.enabled} />}
+        <SettingsRow label={t('status')} value={t(setup.completedAt ? 'complete' : setup.skipped ? 'skipped' : setup.sessionId || setup.canContinue ? 'setupInProgress' : setup.required === true ? 'pending' : 'optional')} />
+        {!!setup.sessionId && !setup.skipped && <SettingsRow label={t(setup.completedAt ? 'setupChat' : 'continue')} onPress={() => { if (setup.sessionId) onOpen(setup.sessionId) }} />}
+        {setup.canContinue && (!setup.sessionId || setup.skipped) && <SettingsRow label={t('continue')} onPress={() => change('continue')} disabled={disabled || !value.enabled} />}
+        {setup.canStart && !setup.canContinue && !setup.sessionId && <SettingsRow label={t('start')} onPress={() => change('start')} disabled={disabled || !value.enabled} />}
         {setup.canSkip && <SettingsRow label={t('skip')} onPress={() => change('skip')} disabled={disabled} />}
     </Section>
 }

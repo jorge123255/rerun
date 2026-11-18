@@ -29,6 +29,7 @@ const edits = [
     ['POST', 'box', { spaceId: target, expectedRevision: 3, requestId }],
     ['POST', 'setup', { action: 'skip', expectedRevision: 'r2', requestId }],
     ['POST', 'setup', { action: 'start', expectedRevision: 'r3', requestId }],
+    ['POST', 'setup', { action: 'continue', expectedRevision: 'r4', requestId }],
 ]
 
 async function fixture(t, host) {
@@ -99,12 +100,16 @@ test('approved read-only phones can see settings and cannot write or reach anoth
     }
     assert.equal((await qa.call('PATCH', 'secret', { password: 'fake' })).status, 404)
     assert.equal((await qa.call('DELETE', 'name', { name: 'Ada' })).status, 404)
-    assert.equal(qa.calls.length, 1)
+    const view = { agentId, sessionId: target, revision: 'r4', canContinue: true }
+    qa.reply.body = view
+    assert.deepEqual(await qa.call('GET', 'setup'), { status: 200, body: { ...view, permissions: { changeSettings: false } } })
+    assert.equal((await qa.call('GET', 'setup', null, { workspaceId: '2' })).status, 404)
+    assert.equal(qa.calls.length, 2)
     await assert.rejects(qa.service.setChangeSettings(qa.deviceId, true), { code: 'not_found' })
     // A snapshot already being read cannot be released after the phone was revoked.
     const entered = Promise.withResolvers(), finish = Promise.withResolvers()
     qa.reply.hold = () => { entered.resolve(); return finish.promise }
-    const reading = qa.call()
+    const reading = qa.call('GET', 'setup')
     await entered.promise
     try { await qa.service.revokeDevice(qa.deviceId) } finally { finish.resolve() }
     assert.equal((await reading).status, 401)
@@ -154,6 +159,8 @@ test('Change settings is independent, persistent, scoped and cleared on revoke; 
         ['PATCH', 'settings', { constructor: true }],
         ['PATCH', 'call-targets', { targetAgentIds: [] }],
         ['POST', 'box', { spaceId: target, expectedRevision: -1, requestId }],
+        ['POST', 'setup', { action: 'complete', requestId, expectedRevision: 'r1' }],
+        ['POST', 'setup', { action: 'continue', sessionId: target, requestId, expectedRevision: 'r1' }],
         ['POST', 'setup', { action: 'save', requestId, expectedRevision: 'r1' }],
     ]) assert.equal((await qa.call(method, field, body)).status, 400)
     assert.equal(qa.calls.length, before)

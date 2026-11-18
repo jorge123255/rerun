@@ -42,10 +42,12 @@ function MacSettingsPage({ hub, agentId, page }: { hub: SettingsHub; agentId: st
     const [unconfirmed, setUnconfirmed] = useState<MacPhoneCoworkerSettingsChange | null>(null)
     const focus = useRef<AbortController | null>(null)
     const lock = useRef(false)
+    const openSetupChat = (sessionId: string) => router.push({ pathname: '/chat/[id]', params: { id: sessionId, to: agentId } })
     const read = useCallback(async (signal: AbortSignal) => {
         const result = await hub.readCoworkerSettings(agentId, signal)
         if (result.agentId !== agentId) throw new Error('not_found')
         if (!signal.aborted) { setValue(result); setSuspended(false) }
+        return result
     }, [agentId, hub])
     useFocusEffect(useCallback(() => {
         const controller = new AbortController()
@@ -72,7 +74,10 @@ function MacSettingsPage({ hub, agentId, page }: { hub: SettingsHub; agentId: st
         try {
             await hub.changeCoworkerSettings(agentId, change, signal)
             acknowledged = true
-            await read(signal)
+            const fresh = await read(signal)
+            if (!signal.aborted && change.field === 'setup' && change.body.action !== 'skip' && fresh.setup.sessionId && !fresh.setup.skipped) {
+                openSetupChat(fresh.setup.sessionId)
+            }
         } catch (reason) {
             if (signal.aborted) return
             const detail = reason instanceof Error ? reason.message : t('failed')
@@ -111,7 +116,7 @@ function MacSettingsPage({ hub, agentId, page }: { hub: SettingsHub; agentId: st
                 : activePage === 'model' ? <MacCoworkerModel {...settings} />
                 : activePage === 'rerun' || activePage === 'codex' || activePage === 'claude' ? <MacCoworkerTools {...settings} group={activePage} />
                 : activePage === 'targets' ? <MacCoworkerTargets {...settings} />
-                : activePage === 'setup' ? <MacCoworkerSetup {...settings} />
+                : activePage === 'setup' ? <MacCoworkerSetup {...settings} onOpen={openSetupChat} />
                 : <>
                     <Section title={t('title')}>
                         <SettingsRow label={t('profile')} value={value.board.spaces.find(space => space.id === value.board.spaceId)?.name} accessory="chevron" onPress={() => open('profile')} />

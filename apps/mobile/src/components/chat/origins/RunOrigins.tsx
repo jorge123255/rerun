@@ -16,6 +16,7 @@ import { fonts, radius, spacing } from '@/theme/tokens'
 
 import { useFileSize } from '../cards/FileCardView'
 import { Markdown } from '../Markdown'
+import type { PairedInstallStatus } from './paired-install-status'
 import { ThreadDivider } from './ThreadDivider'
 
 const METHOD_TONES: Record<string, string> = { GET: 'cyan', POST: 'green', PUT: 'orange', PATCH: 'orange', DELETE: 'red' }
@@ -169,17 +170,21 @@ export function ScheduledRunDivider({ run, owner }: { run: Pick<ScheduledRun, 'n
 }
 
 // The coworker installs itself from a guide: the divider flows while it works through it.
-export function InstallDivider({ agentName, guide, installing, owner }: { agentName: string; guide: string; installing: boolean; owner: FileOwner | null }) {
+export function InstallDivider({ agentName, guide, installing, status, owner }: { agentName: string; guide: string; installing: boolean; status?: PairedInstallStatus; owner: FileOwner | null }) {
     const t = useTranslations('mobileChat.origins')
+    const mac = useTranslations('mobileCoworker.mac')
     const [open, setOpen] = useState(false)
+    // Hosted conversations keep the existing run-based presentation.
+    const state = status ?? (installing ? 'started' : 'complete')
+    const label = state === 'complete' ? t('installComplete') : state === 'started' ? t('installStarted') : state === 'skipped' ? mac('setupSkipped') : mac('setup')
     return (
         <>
             <ThreadDivider
-                symbol={installing ? 'package' : 'circle-check'}
-                symbolTint={installing ? undefined : '#10b981'}
-                flowing={installing}
+                symbol={state === 'complete' ? 'circle-check' : 'package'}
+                symbolTint={state === 'complete' ? '#10b981' : undefined}
+                flowing={installing && state === 'started'}
                 pieces={[
-                    { kind: 'text', text: installing ? t('installStarted') : t('installComplete') },
+                    { kind: 'text', text: label },
                     { kind: 'link', text: t('viewGuide'), onPress: () => setOpen(true) },
                 ]}
             />

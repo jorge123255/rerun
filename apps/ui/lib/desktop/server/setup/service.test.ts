@@ -101,6 +101,39 @@ test('a lost kickoff acknowledgement reuses its run ID and setup chat after rest
     expect(mocks.chat).toHaveBeenCalledTimes(2)
 })
 
+test('a phone can recover a lost kickoff response after reopening without its original request id', async () => {
+    const initial = await observeDesktopSetup(runtime, owner)
+    expect(initial).toMatchObject({ canStart: true, canContinue: false, sessionId: null })
+    const chat = mocks.chat.getMockImplementation()!
+    mocks.chat.mockImplementationOnce(async (...args) => {
+        await chat(...args)
+        throw new Error('Disconnected after kickoff')
+    })
+    await expect(mutateDesktopSetup(runtime, owner, { action: 'start', requestId: crypto.randomUUID(), expectedRevision: initial.revision })).rejects.toThrow('Disconnected after kickoff')
+    await closeDesktopDatabase(root)
+    const reopened = { ...runtime, launchNonce: 'second' }
+    const pending = await observeDesktopSetup(reopened, owner)
+    expect(pending).toMatchObject({ canStart: false, canContinue: true, canSkip: false, sessionId: null })
+    const resume = { action: 'continue', requestId: crypto.randomUUID(), expectedRevision: pending.revision }
+    await expect(mutateDesktopSetup(reopened, owner, { ...resume, expectedRevision: initial.revision })).rejects.toMatchObject({ status: 409 })
+    expect(mocks.chat).toHaveBeenCalledTimes(1)
+    const [recovered, concurrentRetry] = await Promise.all([
+        mutateDesktopSetup(reopened, owner, resume), mutateDesktopSetup(reopened, owner, resume),
+    ])
+    expect(concurrentRetry).toEqual(recovered)
+    const restored = await observeDesktopSetup(reopened, owner)
+    expect(restored.sessionId).toBe(recovered.sessionId)
+    expect(restored.sessionId).toBe(mocks.chat.mock.calls[0][1].sessionId)
+    expect(restored.sessionId).not.toBe(setup.sessionId)
+    expect(acceptedRuns.size).toBe(1)
+    expect(mocks.chat.mock.calls[1][1]).toEqual(mocks.chat.mock.calls[0][1])
+    expect((await observeDesktopSetup(reopened, other)).sessionId).toBeNull()
+    setup = { ...setup, pending: false, completedAt: '2026-11-18T00:00:00Z', revision: 'finished' }
+    expect(await mutateDesktopSetup(reopened, owner, resume)).toEqual(recovered)
+    await expect(mutateDesktopSetup(reopened, owner, { ...resume, action: 'skip' })).rejects.toMatchObject({ status: 409 })
+    expect(mocks.chat).toHaveBeenCalledTimes(2)
+})
+
 test('skip is durable, distinct from completion and rejects stale or cross-owner intent reuse', async () => {
     const before = await readDesktopSetupView(runtime, owner)
     const input = { action: 'skip', requestId: crypto.randomUUID(), expectedRevision: before.revision }
@@ -172,7 +205,7 @@ test('a paired-phone read of an interrupted Start does not replay it, create a c
         args: [crypto.randomUUID(), owner, JSON.stringify({ action: 'start', engineRevision: 'before', claimedEngineSessionId: setup.sessionId, required: true }), new Date().toISOString()] })
     mocks.request.mockClear()
     const view = await observeDesktopSetup(runtime, owner)
-    expect(view).toMatchObject({ pending: true, canStart: false, canSkip: false })
+    expect(view).toMatchObject({ pending: true, canStart: false, canSkip: false, canContinue: true, sessionId: null })
     setup.completedAt = new Date().toISOString()
     expect((await observeDesktopSetup(runtime, owner)).completedAt).toBe(setup.completedAt)
     expect(mocks.request.mock.calls.map(([, , init]) => init.method)).toEqual(['GET', 'GET'])

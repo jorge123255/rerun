@@ -36,6 +36,14 @@ const answerInput = z.object({ runId: uuid, answer: z.object({
     answers: z.array(z.array(z.string().max(4000)).max(100)).min(1).max(32).optional(),
 }).strict() }).strict()
 
+async function ownedChat(runtime: DesktopRuntime, agentId: string, chatId: string) {
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    const agent = await findDesktopAgent(db, agentId)
+    const chat = await findDesktopSession(db, chatId)
+    if (!agent || chat?.agentId !== agentId) throw new DesktopHttpError(404, 'Not found')
+    return { agent, chat }
+}
+
 async function ownedRun(runtime: DesktopRuntime, engineAgentId: string, engineSessionId: string, runId: string) {
     const conn = engineOf(runtime)
     try {
@@ -118,13 +126,10 @@ export async function POST(request: Request): Promise<Response> {
         const decided = approvalInput.safeParse(input)
         if (decided.success) {
             const { runId, approval } = decided.data
+            const { agent, chat } = await ownedChat(runtime, agentId, chatId)
             const pending = (await readDesktopApproval(runtime, chatId)).approval
             if (!pending) {
                 // Sent twice: the first one was taken, and its run says so.
-                const db = await openDesktopDatabase(runtime.dataRoot)
-                const agent = await findDesktopAgent(db, agentId)
-                const chat = await findDesktopSession(db, chatId)
-                if (!agent || chat?.agentId !== agentId) throw new DesktopHttpError(404, 'Not found')
                 await ownedRun(runtime, agent.engineAgentId, chat.engineSessionId, runId).catch(() => { throw new DesktopHttpError(409, 'This approval is no longer waiting for decisions.') })
                 return Response.json({ runId }, { ...options, status: 202 })
             }
@@ -140,13 +145,10 @@ export async function POST(request: Request): Promise<Response> {
         const answered = answerInput.safeParse(input)
         if (answered.success) {
             const { runId, answer } = answered.data
+            const { agent, chat } = await ownedChat(runtime, agentId, chatId)
             const pending = (await readDesktopQuestion(runtime, chatId)).question
             if (!pending) {
                 // Sent twice: the first one was taken, and its run says so.
-                const db = await openDesktopDatabase(runtime.dataRoot)
-                const agent = await findDesktopAgent(db, agentId)
-                const chat = await findDesktopSession(db, chatId)
-                if (!agent || chat?.agentId !== agentId) throw new DesktopHttpError(404, 'Not found')
                 await ownedRun(runtime, agent.engineAgentId, chat.engineSessionId, runId).catch(() => { throw new DesktopHttpError(409, 'This question is no longer waiting for an answer.') })
                 return Response.json({ runId }, { ...options, status: 202 })
             }
@@ -180,10 +182,7 @@ export async function DELETE(request: Request): Promise<Response> {
         if (!agentId || !id.test(agentId) || !chatId || !id.test(chatId) || !runId || !uuid.safeParse(runId).success) {
             throw new DesktopHttpError(404, 'Not found')
         }
-        const db = await openDesktopDatabase(runtime.dataRoot)
-        const agent = await findDesktopAgent(db, agentId)
-        const chat = await findDesktopSession(db, chatId)
-        if (!agent || chat?.agentId !== agentId) throw new DesktopHttpError(404, 'Not found')
+        const { agent, chat } = await ownedChat(runtime, agentId, chatId)
         const { conn, run } = await ownedRun(runtime, agent.engineAgentId, chat.engineSessionId, runId)
         if (run.status === 'running') {
             try {

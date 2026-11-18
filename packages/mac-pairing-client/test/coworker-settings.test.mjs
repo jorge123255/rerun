@@ -35,6 +35,7 @@ test('settings writes use only the paired workspace and the named Mac operation'
         ['name', 'PATCH', { name: 'Avery' }],
         ['enabled', 'PATCH', { enabled: false }],
         ['box', 'POST', { requestId: uuid, spaceId: uuid, expectedRevision: 4 }],
+        ['setup', 'POST', { requestId: uuid, action: 'continue', expectedRevision: 'rev-3' }],
         ['setup', 'POST', { requestId: uuid, action: 'skip', expectedRevision: 'rev-3' }],
     ]
     for (const [field, method, body] of changes) {
@@ -42,6 +43,8 @@ test('settings writes use only the paired workspace and the named Mac operation'
         assert.deepEqual(calls.at(-1), { resource: '/api/mac-pairing/v1/workspaces/7/coworker-settings/' + field + '?agentId=agent-a', method, body })
     }
     for (const invalid of [
+        { field: 'setup', body: { requestId: uuid, action: 'complete', expectedRevision: 'rev-3' } },
+        { field: 'setup', body: { requestId: uuid, action: 'continue', expectedRevision: 'rev-3', sessionId: 'other' } },
         { field: 'vault', body: { key: 'test' } },
         { field: 'name', body: { name: 'Avery', workspaceId: 2 } },
         { field: 'model', body: { action: 'conversation-follow', sessionId: 'another-chat' } },
@@ -60,6 +63,17 @@ test('reads need pairing and writes preserve the authenticated Mac refusal', asy
     await client.clearMacSession()
     await assert.rejects(client.readCoworkerSettings('agent-a'), /not_paired/)
     assert.equal(calls.length, 2)
+})
+
+test('reads only the pairing-scoped public guided-setup snapshot', async () => {
+    const view = { agentId: 'agent-a', revision: 'r1', required: true, completedAt: null, sessionId: 'local-claimed-chat',
+        pending: true, skipped: false, canStart: false, canSkip: true, canContinue: true, permissions: { changeSettings: false } }
+    const { client, calls } = await paired(() => Response.json({ ...view, prompt: 'internal instructions', engineSessionId: 'private' }))
+    assert.deepEqual(await client.readCoworkerSetup('agent-a'), view)
+    assert.deepEqual(calls[0], { resource: '/api/mac-pairing/v1/workspaces/7/coworker-settings/setup?agentId=agent-a', method: 'GET', body: undefined })
+    await assert.rejects(client.readCoworkerSetup('agent-b'), /invalid_setup_response/)
+    await client.clearMacSession()
+    await assert.rejects(client.readCoworkerSetup('agent-a'), /not_paired/)
 })
 
 test('a malformed write receipt or settings snapshot is never taken as success', async () => {

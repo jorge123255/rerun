@@ -25,7 +25,7 @@ vi.mock('@/lib/engine/client', () => ({ cancelRun: vi.fn(), EngineRequestError: 
 import { POST } from './route'
 
 const runId = '4ce8e801-9bbd-4c6e-8221-2e326471724c'
-const post = (body: unknown) => POST(new Request('http://127.0.0.1/api/desktop/phone-pairing?agentId=ada&chatId=chat-1', { method: 'POST', body: JSON.stringify(body) }))
+const post = (body: unknown, agentId = 'ada') => POST(new Request(`http://127.0.0.1/api/desktop/phone-pairing?agentId=${agentId}&chatId=chat-1`, { method: 'POST', body: JSON.stringify(body) }))
 const accepted = () => new Response('data: [DONE]\n\n', { headers: { 'x-run-id': runId } })
 const pendingApproval = { id: 'a'.repeat(64), messageId: 'm1', toolCallId: 'call-9', approvals: [{ action: 'Email the invoice', detail: 'Total 120.00' }, { action: 'Archive it' }] }
 
@@ -44,6 +44,17 @@ describe('a decision sent from a paired phone', () => {
         expect(mocks.answerDesktopApproval).toHaveBeenCalledTimes(1)
         expect(mocks.answerDesktopApproval.mock.calls[0].slice(1)).toEqual(['chat-1', { approvalId: pendingApproval.id, requestId: runId, decisions: [{ decision: 'approved' }, { decision: 'declined', note: 'Keep it' }] }])
         expect(mocks.startDesktopChat).not.toHaveBeenCalled()
+    })
+
+    it('checks the chat owner before reading a setup question or approval', async () => {
+        for (const body of [
+            { runId, answer: { toolCallId: 'call-1', answers: [['Pear']] } },
+            { runId, approval: { toolCallId: 'call-9', decisions: [{ decision: 'approved' }, { decision: 'declined' }] } },
+        ]) expect((await post(body, 'different-coworker')).status).toBe(404)
+        expect(mocks.readDesktopQuestion).not.toHaveBeenCalled()
+        expect(mocks.readDesktopApproval).not.toHaveBeenCalled()
+        expect(mocks.answerDesktopQuestion).not.toHaveBeenCalled()
+        expect(mocks.answerDesktopApproval).not.toHaveBeenCalled()
     })
 
     it('is refused when it is for another card, or does not decide every action', async () => {
