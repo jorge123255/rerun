@@ -1,4 +1,10 @@
 {
+    "macSetup": {
+        "open": "Abrir la configuración de {name}",
+        "question": "Pregunta de configuración",
+        "reply": "Respuesta propuesta",
+        "changed": "Esta configuración cambió. Abre el coworker desde el tablero para ver su paso actual."
+    },
     "agentPicker": {
         "open": "{tab, select, chat {Abrir el chat de {name}} actions {Abrir Por atender de {name}} services {Abrir las apps de {name}} mcp {Abrir MCP de {name}} skills {Abrir las skills de {name}} data {Abrir la base de datos de {name}} memories {Abrir el conocimiento de {name}} files {Abrir los archivos de {name}} scheduled {Abrir las rutinas de {name}} triggers {Abrir los disparadores de {name}} other {{name}}}"
     },
