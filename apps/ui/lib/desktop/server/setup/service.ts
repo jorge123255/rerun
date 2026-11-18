@@ -44,9 +44,13 @@ async function skippedOf(db: Client, agentId: string): Promise<boolean> {
 async function engineSetup(runtime: DesktopRuntime, engineAgentId: string): Promise<EngineSetup> {
     return request(engineOf(runtime), `/agents/${encodeURIComponent(engineAgentId)}/setup`, { method: 'GET' }, value => engineSetupSchema.parse(value))
 }
+async function lookupSetupSession(db: Client, agentId: string, engineSessionId: string): Promise<string | null> {
+    const row = (await db.execute({ sql: 'SELECT id FROM desktop_sessions WHERE agent_id=? AND engine_session_id=?', args: [agentId, engineSessionId] })).rows[0]
+    return row ? String(row.id) : null
+}
 async function ensureSetupDesktopSession(db: Client, agent: DesktopAgent, engineSessionId: string): Promise<string> {
-    const existing = (await db.execute({ sql: 'SELECT id FROM desktop_sessions WHERE agent_id=? AND engine_session_id=?', args: [agent.id, engineSessionId] })).rows[0]
-    if (existing) return String(existing.id)
+    const existing = await lookupSetupSession(db, agent.id, engineSessionId)
+    if (existing) return existing
     return (await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Setup' })).id
 }
 function setupRevision(setup: EngineSetup, skipped: boolean) {
@@ -150,12 +154,19 @@ export function observeDesktopSetup(runtime: DesktopRuntime, agentId: string) {
         const { db, agent } = await agentFor(runtime, agentId)
         const setup = await engineSetup(runtime, agent.engineAgentId)
         const skipped = await skippedOf(db, agentId)
-        const changing = !!(await pendingOf(db, agentId))
-        const needsSetup = !changing && agent.enabled && setup.required === true && setup.completedAt === null && !!setup.prompt.trim()
+        const changing = await pendingOf(db, agentId)
+        const needsSetup = agent.enabled && setup.pending && setup.required === true && setup.completedAt === null && !!setup.prompt.trim()
+        const pendingKickoff = changing?.action === 'start' || changing?.action === 'continue'
+        // Only expose a public, owner-matched chat after its kickoff has settled. An explicit
+        // Continue can recover an interrupted start without a read replaying any work.
+        const sessionId = !changing && setup.sessionId ? await lookupSetupSession(db, agentId, setup.sessionId) : null
         return {
             revision: setupRevision(setup, skipped), required: setup.required, completedAt: setup.completedAt,
             pending: setup.pending && !skipped, skipped,
-            canStart: needsSetup && !setup.sessionId, canSkip: needsSetup && !skipped,
+            sessionId,
+            canStart: needsSetup && !changing && !setup.sessionId,
+            canContinue: needsSetup && (pendingKickoff || (!changing && !!setup.sessionId)),
+            canSkip: needsSetup && !changing && !skipped,
         }
     })
 }
@@ -185,6 +196,11 @@ export function mutateDesktopSetup(runtime: DesktopRuntime, agentId: string, inp
         }
         const pending = await pendingOf(db, agentId)
         if (pending) {
+            if (input.action === 'continue' && (pending.action === 'start' || pending.action === 'continue')) {
+                const setup = await engineSetup(runtime, agent.engineAgentId)
+                if (setupRevision(setup, await skippedOf(db, agentId)) !== input.expectedRevision) throw errorChanged()
+                return finishIntent(runtime, db, agent, pending)
+            }
             await finishIntent(runtime, db, agent, pending)
             throw errorChanged()
         }
@@ -240,9 +256,9 @@ export async function readDesktopSetupWaitingChat(runtime: DesktopRuntime, agent
         throw error
     }
     if (!setup.pending || !setup.sessionId || setup.completedAt || await skippedOf(db, agentId)) return null
-    const local = (await db.execute({ sql: 'SELECT id FROM desktop_sessions WHERE agent_id=? AND engine_session_id=?', args: [agent.id, setup.sessionId] })).rows[0]
+    const local = await lookupSetupSession(db, agent.id, setup.sessionId)
     if (!local) return null
     // A setup turn still running is the coworker's move, not the person's.
     const running = await listRuns(engineOf(runtime), agent.engineAgentId, { sessionId: setup.sessionId, status: 'running', limit: 1 }, signal ? { signal } : {})
-    return running.length ? null : { sessionId: String(local.id) }
+    return running.length ? null : { sessionId: local }
 }

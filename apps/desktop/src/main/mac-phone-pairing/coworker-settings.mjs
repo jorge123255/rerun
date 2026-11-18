@@ -37,11 +37,12 @@ const mutations = [
     ['POST', 'box', body => keys(body, ['requestId', 'spaceId', 'expectedRevision']) && isUuid(body.requestId)
         && isUuid(body.spaceId) && Number.isSafeInteger(body.expectedRevision) && body.expectedRevision >= 0],
     ['POST', 'setup', body => keys(body, ['requestId', 'action', 'expectedRevision']) && isUuid(body.requestId)
-        && ['start', 'skip'].includes(body.action) && text(body.expectedRevision, 256)],
+        && ['start', 'continue', 'skip'].includes(body.action) && text(body.expectedRevision, 256)],
 ]
 
 export const coworkerSettingsResources = [
     ['GET coworker-settings', { to: 'coworker-settings', query: settingsQuery, grant: 'changeSettings', settingsRefusals: true }],
+    ['GET coworker-settings/setup', { to: 'coworker-settings/setup', query: settingsQuery, grant: 'changeSettings', settingsRefusals: true }],
     ...mutations.map(([method, field, accepts]) => {
         const to = 'coworker-settings/' + field
         return [method + ' ' + to, {

@@ -1,6 +1,6 @@
 import 'server-only'
 import {
-    desktopGithubRepositorySchema, macPhoneCoworkerSettingsViewSchema,
+    desktopGithubRepositorySchema, macPhoneCoworkerSettingsViewSchema, macPhoneCoworkerSetupViewSchema,
     readDesktopGithubRepository, type MacPhoneCoworkerSettingsChange,
 } from '@rerun/contracts'
 import { z } from 'zod'
@@ -81,6 +81,16 @@ async function accepted(response: Response) {
 
 async function read(mac: LocalRequest, path: string) {
     return (await accepted(await mac(path))).json()
+}
+
+export async function readPhoneCoworkerSetup(owner: DesktopAgent, mac: LocalRequest) {
+    const id = encodeURIComponent(owner.id)
+    const setup = macPhoneCoworkerSetupViewSchema.parse({ ...await read(mac, 'coworkers/' + id + '/setup?observe=1'), agentId: owner.id })
+    if (setup.canStart) {
+        const model = desktopModelViewSchema.parse(await read(mac, 'agents/' + id + '/model?presets=1'))
+        return { ...setup, canStart: model.effective.available }
+    }
+    return setup
 }
 
 export async function readPhoneCoworkerSettings(owner: DesktopAgent, mac: LocalRequest) {

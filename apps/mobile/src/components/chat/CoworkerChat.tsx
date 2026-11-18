@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { View } from 'react-native'
 import { useSharedValue } from 'react-native-reanimated'
 
+import { macHub } from '@/api/client'
+import { useMacCoworkerSetup } from '@/components/coworker/mac/useMacCoworkerSetup'
 import { fetchAgentView } from '@/api/chat'
 import { markInboxRead } from '@/api/inbox'
 import { fetchAgentModels } from '@/api/models'
@@ -93,6 +95,12 @@ export function CoworkerChat({ agentId, sessionId }: { agentId: string; sessionI
         router.setParams({ id })
     }
 
+    const setup = useMacCoworkerSetup(macHub, agentId, id => {
+        macHub?.rememberChat(id, agentId)
+        open(id)
+        loadConversations()
+    })
+
     const showDraft = () => {
         setActiveId(null)
         router.setParams({ id: 'new' })
@@ -159,7 +167,7 @@ export function CoworkerChat({ agentId, sessionId }: { agentId: string; sessionI
 
     return (
         <View style={{ flex: 1, backgroundColor: theme.background }}>
-            <ConversationPager pages={pages} activeIndex={activeIndex} progress={progress} onSettle={settleOn} renderPage={(page: ConversationPage, onScreen) => <ConversationPane coworker={coworker} makeEndpoints={() => coworkerEndpoints(agentId, { general: page.general })} initialSessionId={page.sessionId} onSessionCreated={page.general ? onGeneralCreated : onSessionCreated} models={models} status={(page.sessionId && byId.get(page.sessionId)?.status) || null} onStatusChange={loadConversations} webUrl={`${environment.apiUrl}/?agent=${encodeURIComponent(agentId)}`} onScreen={onScreen} startedBy={startedByOf(page.sessionId ? byId.get(page.sessionId) : undefined)} threads={page.general ? generalThreads : undefined} onOpenThread={select} />} />
+            <ConversationPager pages={pages} activeIndex={activeIndex} progress={progress} onSettle={settleOn} renderPage={(page: ConversationPage, onScreen) => <ConversationPane coworker={coworker} makeEndpoints={() => coworkerEndpoints(agentId, { general: page.general })} initialSessionId={page.sessionId} onSessionCreated={page.general ? onGeneralCreated : onSessionCreated} models={models} status={(page.sessionId && byId.get(page.sessionId)?.status) || null} onStatusChange={loadConversations} webUrl={`${environment.apiUrl}/?agent=${encodeURIComponent(agentId)}`} onScreen={onScreen} setup={macHub && onScreen ? setup : undefined} startedBy={startedByOf(page.sessionId ? byId.get(page.sessionId) : undefined)} threads={page.general ? generalThreads : undefined} onOpenThread={select} />} />
             <ChatHeader coworker={coworker} tabs={tabs} activeId={shownId ?? undefined} progress={progress} allSessions={allTabs} onBack={back} onSelect={select} onNewSession={startNew} onOpenDetails={() => router.push({ pathname: '/coworker/[id]', params: { id: agentId, name: coworker.name } })} />
         </View>
     )

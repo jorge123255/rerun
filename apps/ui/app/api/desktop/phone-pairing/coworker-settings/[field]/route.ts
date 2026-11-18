@@ -1,13 +1,24 @@
 import { macPhoneCoworkerSettingsChangeSchema } from '@rerun/contracts'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
-import { phoneSettingsMacRequest, phoneSettingsMethods, phoneSettingsRefusal, savePhoneCoworkerSettings } from '@/lib/desktop/server/phone-coworker-settings'
+import { phoneSettingsMacRequest, phoneSettingsMethods, phoneSettingsRefusal, readPhoneCoworkerSetup, savePhoneCoworkerSettings } from '@/lib/desktop/server/phone-coworker-settings'
 import { readDesktopJson } from '@/lib/desktop/server/request-json'
 import { phoneSettingsOwner } from '../owner'
 
 export const dynamic = 'force-dynamic'
 
 type Context = { params: Promise<{ field: string }> }
+export function GET(request: Request, context: Context) {
+    return desktopRoute(request, async runtime => {
+        if ((await context.params).field !== 'setup') throw new DesktopHttpError(404, 'Not found')
+        const owner = await phoneSettingsOwner(runtime, request)
+        try {
+            const view = await readPhoneCoworkerSetup(owner, phoneSettingsMacRequest(runtime, request.signal))
+            return Response.json(view, { headers: { 'cache-control': 'no-store' } })
+        } catch (error) { return phoneSettingsRefusal(error) }
+    })
+}
+
 async function write(request: Request, context: Context) {
     return desktopRoute(request, async runtime => {
         const { field } = await context.params

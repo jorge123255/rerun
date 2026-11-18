@@ -1,4 +1,4 @@
-import { macPhoneCoworkerSettingsSchema, macPhoneCoworkerSettingsChangeSchema } from '@rerun/mac-contracts/mac-phone-pairing'
+import { macPhoneCoworkerSetupSchema, macPhoneCoworkerSettingsSchema, macPhoneCoworkerSettingsChangeSchema } from '@rerun/mac-contracts/mac-phone-pairing'
 import { API_PREFIX, SERVICE_NAME } from './protocol.mjs'
 import { createMacSessionStore } from './session-store.mjs'
 
@@ -184,6 +184,12 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
         async listCoworkers(signal) {
             const session = await sessionOrThrow()
             return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers`, { credential: session.credential, fetchImpl, pinnedFetch, signal })
+        },
+        async readCoworkerSetup(agentId, signal) {
+            const result = await coworkerSettingsRequest(agentId, '/setup', { signal })
+            const parsed = macPhoneCoworkerSetupSchema.safeParse(result)
+            if (!parsed.success || parsed.data.agentId !== agentId) throw new Error('invalid_setup_response')
+            return parsed.data
         },
         async readCoworkerSettings(agentId, signal) {
             const result = await coworkerSettingsRequest(agentId, '', { signal })
