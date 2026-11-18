@@ -26,7 +26,7 @@ export function MacCoworkerSettingsScreen({ hub }: { hub: SettingsHub }) {
     const selected = sections.find(name => name === page)
     return <>
         {/* On iOS 26, a rightward drag on the effort slider would otherwise start a full-screen Back gesture. Edge-swipe Back remains available. */}
-        <Stack.Screen options={{ fullScreenGestureEnabled: selected === 'model' ? false : undefined }} />
+        <Stack.Screen options={{ gestureResponseDistance: selected === 'model' ? { end: 28 } : undefined }} />
         <MacSettingsPage key={id} hub={hub} agentId={id} page={selected} />
     </>
 }

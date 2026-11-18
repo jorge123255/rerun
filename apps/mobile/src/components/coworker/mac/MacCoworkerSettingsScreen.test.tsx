@@ -41,7 +41,7 @@ it('shows an approved read-only phone the settings and Mac-only credential rows 
     const hub = fakeHub({ ...value, permissions: { changeSettings: false } })
     await render(<MacCoworkerSettingsScreen hub={hub} />)
     await screen.findByText('Ada')
-    expect(mockStackScreen).toHaveBeenLastCalledWith({ options: { fullScreenGestureEnabled: undefined } })
+    expect(mockStackScreen).toHaveBeenLastCalledWith({ options: { gestureResponseDistance: undefined } })
     expect(screen.getByText(/To edit, turn on Change settings/)).toBeTruthy()
     expect(isSwitchDisabled(screen.getByLabelText('Switched on'))).toBe(true)
     expect(screen.getAllByText('Set on your Mac')).toHaveLength(4)
@@ -119,7 +119,7 @@ it('saves the offered reasoning stop and resets the current model using the same
     const active = { ...value, model: { ...value.model, effective: { ...value.model.effective, reasoning: { source: 'model' as const, effort: 'high' } } } }
     hub.readCoworkerSettings.mockResolvedValueOnce(value).mockResolvedValueOnce(active).mockResolvedValue(value)
     await render(<MacCoworkerSettingsScreen hub={hub} />)
-    expect(mockStackScreen).toHaveBeenLastCalledWith({ options: { fullScreenGestureEnabled: false } })
+    expect(mockStackScreen).toHaveBeenLastCalledWith({ options: { gestureResponseDistance: { end: 28 } } })
     const slider = await screen.findByRole('adjustable', { name: 'Reasoning effort' })
     await fireEvent.layout(slider, { width: 236, height: 44 })
     expect(screen.getByText('Default · Medium')).toBeTruthy()
