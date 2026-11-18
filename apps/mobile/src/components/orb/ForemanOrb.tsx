@@ -5,14 +5,15 @@ import Svg, { Circle, ClipPath, Defs, Ellipse, G, LinearGradient, RadialGradient
 
 import { BUDDY_FACE_CENTER, BuddyFace } from '@/components/buddy/BuddyFace'
 import { BuddyMotionScope } from '@/components/buddy/motion'
-import { ORB_CENTER as CENTER, ORB_RADIUS as RADIUS, advance, restingPose, startClock, type Matrix } from '@/components/orb/orb-motion'
+import { ORB_CENTER as CENTER, ORB_RADIUS as RADIUS, advance, restingPose, startClock, type Matrix, type OrbActivity } from '@/components/orb/orb-motion'
 
 // Ported from packages/ui/src/foreman (Orb, ForemanBall, foreman-face, the `glass` material): the
 // Foreman is an indigo glass ball with two round eyes on a dark plate. Like on the web, its eyes
 // drift, the ball turns as if looking around, a band of light crosses the glass, and it bounces and
 // spins while it thinks.
 
-export type OrbState = 'idle' | 'thinking'
+// The Mac's four states, as on the web: idle, listening, thinking, speaking. Only the rhythm changes.
+export type OrbState = OrbActivity
 
 // G takes a `matrix` and hands it to the native group as is; its typings only list the shorthands.
 const AnimatedG = Animated.createAnimatedComponent(G as ComponentType<GProps & { matrix?: Matrix }>)
@@ -48,8 +49,12 @@ const GLASS = {
 
 const MOTION: Record<OrbState, { amp: number; period: number }> = {
     idle: { amp: 0, period: 0 },
+    listening: { amp: 0.03, period: 2.8 },
     thinking: { amp: 0.09, period: 1.1 },
+    speaking: { amp: 0.05, period: 0.45 },
 }
+// Listening, the face leans in a little.
+const LISTENING_FACE_SCALE = 1.1
 
 type ForemanOrbProps = {
     // Diameter of the ball in points; its shadow spills a little under it.
@@ -66,7 +71,7 @@ export function ForemanOrb({ size, state = 'idle', facing = 'left', animated = t
     const uid = useId().replace(/[^a-zA-Z0-9]/g, '')
     const reducedMotion = useReducedMotion()
     const small = size < SMALL_BELOW
-    const faceScale = small ? SMALL_FACE_SCALE : FACE_SCALE
+    const faceScale = (small ? SMALL_FACE_SCALE : FACE_SCALE) * (state === 'listening' ? LISTENING_FACE_SCALE : 1)
     const motion = MOTION[state]
     const moving = animated && !reducedMotion && motion.amp > 0
 
@@ -84,16 +89,16 @@ export function ForemanOrb({ size, state = 'idle', facing = 'left', animated = t
     const thinking = state === 'thinking'
     const clock = useSharedValue(startClock())
     const pose = useSharedValue(restingPose(facing))
-    const lifeInput = useSharedValue({ thinking, facing })
+    const lifeInput = useSharedValue({ state, facing })
     useEffect(() => {
-        lifeInput.value = { thinking, facing }
-    }, [thinking, facing, lifeInput])
+        lifeInput.value = { state, facing }
+    }, [state, facing, lifeInput])
     const life = useFrameCallback(frame => {
         const dt = Math.min((frame.timeSincePreviousFrame ?? 16) / 1000, 0.05)
-        const { thinking: busy, facing: side } = lifeInput.value
+        const { state: activity, facing: side } = lifeInput.value
         clock.modify(current => {
             'worklet'
-            pose.value = advance(current, dt, busy, side)
+            pose.value = advance(current, dt, activity, side)
             return current
         }, false)
     }, false)

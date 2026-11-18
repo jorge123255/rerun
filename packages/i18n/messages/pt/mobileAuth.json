@@ -144,7 +144,42 @@
             },
             "openOnMac": "Abra no seu Mac para aprovar",
             "intakeTitle": "Conclua a configuração no seu Mac",
-            "intakeBody": "O Chief of Staff ainda tem algumas perguntas sobre sua empresa. Responda no Rerun no seu Mac e volte aqui."
+            "intakeBody": "O Chief of Staff ainda tem algumas perguntas sobre sua empresa. Responda no Rerun no seu Mac e volte aqui.",
+            "voice": {
+                "talk": "Falar com o Chief of Staff",
+                "mute": "Silenciar o microfone",
+                "unmute": "Ligar o microfone de novo",
+                "close": "Encerrar a conversa",
+                "connecting": "Conectando pelo seu Mac…",
+                "listening": "Ouvindo",
+                "thinking": "Pensando",
+                "speaking": "Falando",
+                "muted": "Silenciado. Nada do que você diz é enviado.",
+                "micOn": "Microfone ligado",
+                "you": "Você",
+                "chief": "Chief of Staff",
+                "keptAsText": "O que você diz e ouve fica salvo nesta conversa como texto.",
+                "tryAgain": "Tentar de novo",
+                "openSettings": "Abrir Ajustes",
+                "done": "Fechar",
+                "ended": {
+                    "closed": "A conversa terminou.",
+                    "away": "A conversa terminou quando o Rerun saiu da tela.",
+                    "interrupted": "A conversa terminou por causa de uma ligação ou outro som neste telefone.",
+                    "chief": "A conversa foi encerrada do outro lado."
+                },
+                "problems": {
+                    "notSetUp": "A voz não está configurada no seu Mac. No Rerun do seu Mac, ative Allow voice conversations from paired phones.",
+                    "unavailable": "Seu Mac não consegue iniciar uma conversa por voz agora: a conexão de voz dele caiu. Tente de novo daqui a pouco.",
+                    "notAllowed": "Este telefone não pode enviar mensagens. No seu Mac, abra Connect iPhone e ative Send messages para ele.",
+                    "rateLimited": "Tentativas demais. Espere um minuto e tente de novo.",
+                    "microphone": "O Rerun não pode usar o microfone. Permita nos Ajustes e tente de novo.",
+                    "dropped": "A conexão caiu.",
+                    "unreachable": "Não foi possível alcançar seu Mac.",
+                    "removed": "Seu Mac não aceita mais este telefone.",
+                    "failed": "Não foi possível iniciar a conversa por voz."
+                }
+            }
         }
     }
 }

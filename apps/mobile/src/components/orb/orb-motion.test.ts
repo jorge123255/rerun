@@ -20,7 +20,7 @@ describe('orb motion', () => {
         const rest = restingPose('left')
         let pose = rest
         for (let frame = 0; frame < 600; frame++) {
-            pose = advance(clock, 1 / 60, false, 'left')
+            pose = advance(clock, 1 / 60, 'idle', 'left')
             expect(Math.abs(pose.eyes[4])).toBeLessThan(1)
             expect(Math.abs(pose.eyes[5])).toBeLessThan(1)
             expect(pose.faceShown).toBe(true)
@@ -32,7 +32,7 @@ describe('orb motion', () => {
     it('spins the whole ball while it thinks', () => {
         const clock = startClock()
         let hidden = false
-        for (let frame = 0; frame < 60; frame++) hidden ||= !advance(clock, 1 / 60, true, 'left').faceShown
+        for (let frame = 0; frame < 60; frame++) hidden ||= !advance(clock, 1 / 60, 'thinking', 'left').faceShown
         expect(hidden).toBe(true)
     })
 })
