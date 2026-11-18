@@ -52,12 +52,32 @@ export interface CoworkerCallStore {
     get(callId: string): Promise<CoworkerCallRow | null>
     listByParentSession(parentSessionId: string): Promise<CoworkerCallRow[]>
     inbound(engineRunId: string): Promise<CoworkerCallRow | null>
-    insertReserved(row: CoworkerCallRow): Promise<{ inserted: true; row: CoworkerCallRow } | { inserted: false; reason: 'exists' | 'fanout'; row: CoworkerCallRow | null }>
+    /**
+     * `exists`: this source identity already has a row (a retried tool call or a lost acknowledgement).
+     * `duplicate`: the same caller conversation already sent this exact request to this coworker and
+     * it was delivered (see `repeatsCoworkerCall`); `row` is that earlier call. `fanout`: over the limit.
+     */
+    insertReserved(row: CoworkerCallRow): Promise<{ inserted: true; row: CoworkerCallRow } | { inserted: false; reason: 'exists' | 'fanout' | 'duplicate'; row: CoworkerCallRow | null }>
     claim(callId: string, epoch: string, now: string): Promise<CoworkerCallRow | null>
     patch(callId: string, expect: CoworkerCallExpect, patch: CoworkerCallPatch, now: string): Promise<CoworkerCallRow | null>
 }
 
 const ACTIVE: readonly DesktopCoworkerCallStatus[] = ['queued', 'running', 'dispatched', 'waiting-human']
+
+/**
+ * A new tool call that repeats an earlier one: the same caller in the same conversation sends the
+ * same request (agent name, message, context, wait) to the same coworker again, typically after
+ * a timeout. It is the earlier call, not a second assignment, while that call is still in hand,
+ * or when it already finished or waits on the person within the same run. A call that failed,
+ * was stopped or never got past its reservation never blocks a new send.
+ */
+export function repeatsCoworkerCall(earlier: CoworkerCallRow, next: CoworkerCallRow): boolean {
+    if (earlier.sourceKey === next.sourceKey || earlier.phase === 'reserved') return false
+    if (earlier.parentAgentId !== next.parentAgentId || earlier.parentSessionId !== next.parentSessionId || earlier.engineParentAgentId !== next.engineParentAgentId
+        || earlier.targetAgentId !== next.targetAgentId || earlier.requestFingerprint !== next.requestFingerprint) return false
+    if (ACTIVE.includes(earlier.status) && earlier.phase !== 'terminal') return true
+    return earlier.engineParentRunId === next.engineParentRunId && (earlier.status === 'completed' || earlier.status === 'waiting-human')
+}
 
 function clone(row: CoworkerCallRow): CoworkerCallRow {
     return { ...row, ancestors: [...row.ancestors], progress: { ...row.progress, calls: row.progress.calls.map(call => ({ ...call })) } }
@@ -107,6 +127,8 @@ export function createMemoryCoworkerCallStore(): CoworkerCallStore & { rows(): C
             const existing = [...rows.values()].find(item => item.sourceKey === row.sourceKey)
             if (existing && existing.requestFingerprint !== row.requestFingerprint) throw new Error('Coworker call request changed')
             if (existing) return { inserted: false as const, reason: 'exists' as const, row: clone(existing) }
+            const repeated = [...rows.values()].filter(item => repeatsCoworkerCall(item, row)).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+            if (repeated) return { inserted: false as const, reason: 'duplicate' as const, row: clone(repeated) }
             const sameRun = [...rows.values()].filter(item => item.engineParentRunId === row.engineParentRunId)
             if (sameRun.length >= DESKTOP_COWORKER_CALL_MAX_FANOUT) return { inserted: false as const, reason: 'fanout' as const, row: null }
             const stored = clone(row)

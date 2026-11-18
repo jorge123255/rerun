@@ -2,7 +2,15 @@ import 'server-only'
 import { z, ZodError } from 'zod'
 import {
     DESKTOP_COWORKER_CALL_INTERRUPTED_REASON,
+    DESKTOP_COWORKER_CALL_RESULT_MAX_CHARS,
+    DESKTOP_COWORKER_CALL_STATUS_LIST,
+    DESKTOP_COWORKER_CALL_STATUS_PREVIEW_CHARS,
     FOREMAN_AGENT_ID,
+    desktopCoworkerCallCallerViewSchema,
+    desktopCoworkerCallSetupRefusal,
+    type DesktopCoworkerCallCallerState,
+    type DesktopCoworkerCallCallerView,
+    type DesktopCoworkerCallWaitingOn,
     desktopCoworkerCallListSchema,
     desktopCoworkerCallProgressSchema,
     desktopCoworkerCallSnapshotOf,
@@ -16,6 +24,7 @@ import type { DesktopRuntime } from '../runtime'
 import { createDesktopSession, findDesktopSession, findDesktopAgent } from '../store'
 import { assertCoworkerNotDeleting } from '../coworker-delete'
 import { assertDesktopSetupChatAllowed } from '../setup/service'
+import { DesktopSetupPendingError } from '../setup/errors'
 import { resolveDesktopChatModel } from '../chat-model'
 import { readDesktopQuestion } from '../questions'
 import { readDesktopApproval } from '../approvals'
@@ -114,9 +123,17 @@ async function recoverCalledChat(runtime: DesktopRuntime, row: CoworkerCallRecor
     } catch { return row } // A failed read never creates or replays an engine run.
 }
 
+type PendingHumanKind = 'question' | 'approval' | 'takeover' | 'service' | 'secret'
+
 async function currentSnapshot(runtime: DesktopRuntime, row: CoworkerCallRecord) {
     const result = snapshot(row)
     if (row.status !== 'waiting-human' || row.phase !== 'terminal' || !row.pendingToolCallId || !row.targetSessionId) return result
+    return await pendingHumanKind(runtime, row) ? result : { ...result, status: 'completed' as const }
+}
+
+/** Which of the called chat's requests still holds this finished turn, or null once it was answered. */
+async function pendingHumanKind(runtime: DesktopRuntime, row: CoworkerCallRecord): Promise<PendingHumanKind | null> {
+    if (!row.pendingToolCallId || !row.targetSessionId) return null
     const db = await openDesktopDatabase(runtime.dataRoot)
     const session = await findDesktopSession(db, row.targetSessionId)
     const owner = await findDesktopAgent(db, row.targetAgentId)
@@ -124,12 +141,71 @@ async function currentSnapshot(runtime: DesktopRuntime, row: CoworkerCallRecord)
     await assertCoworkerNotDeleting(db, row.targetAgentId)
     const signal = AbortSignal.timeout(5_000)
     const options = { signal }
-    if ((await readDesktopQuestion(runtime, session.id, options)).question?.toolCallId === row.pendingToolCallId) return result
-    if ((await readDesktopApproval(runtime, session.id, options)).approval?.toolCallId === row.pendingToolCallId) return result
-    if ((await readDesktopTakeover(runtime, session.id, options)).takeover?.toolCallId === row.pendingToolCallId) return result
-    if (await readPendingDesktopServiceToolCallView(runtime, session.id, options) === row.pendingToolCallId) return result
-    if ((await readDesktopSecretRequestView(runtime, session.id, options)).request?.source.toolCallId === row.pendingToolCallId) return result
-    return { ...result, status: 'completed' as const }
+    if ((await readDesktopQuestion(runtime, session.id, options)).question?.toolCallId === row.pendingToolCallId) return 'question'
+    if ((await readDesktopApproval(runtime, session.id, options)).approval?.toolCallId === row.pendingToolCallId) return 'approval'
+    if ((await readDesktopTakeover(runtime, session.id, options)).takeover?.toolCallId === row.pendingToolCallId) return 'takeover'
+    if (await readPendingDesktopServiceToolCallView(runtime, session.id, options) === row.pendingToolCallId) return 'service'
+    if ((await readDesktopSecretRequestView(runtime, session.id, options)).request?.source.toolCallId === row.pendingToolCallId) return 'secret'
+    return null
+}
+
+// A live turn's open request, by the tool it is waiting in (the engine's own attention tools).
+const LIVE_WAITING: Record<string, DesktopCoworkerCallWaitingOn> = { ask_user: 'question', request_approval: 'approval', request_takeover: 'takeover' }
+// Before a dispatched call finished, its saved text was this acknowledgement, never the answer.
+const DISPATCHED_ACK = /^Message dispatched to /
+const STOP_DETAIL: Record<string, string> = {
+    'stopped by the user': 'The person stopped it.',
+    'stopped along with the calling run': 'It stopped along with the run that started it.',
+}
+
+async function setupStillPending(runtime: DesktopRuntime, agentId: string): Promise<boolean> {
+    try { await assertDesktopSetupChatAllowed(runtime, agentId); return false }
+    catch (error) { return error instanceof DesktopSetupPendingError }
+}
+
+/**
+ * One call as the coworker that started it reads it (check_agent_call): its state in the caller's
+ * terms, why it is blocked or failed, and its answer. A list cuts each answer; a read by id does not.
+ */
+async function callerViewOf(runtime: DesktopRuntime, row: CoworkerCallRecord, whole: boolean): Promise<DesktopCoworkerCallCallerView> {
+    const delivered = row.engineChildRunId !== null
+    let state: DesktopCoworkerCallCallerState
+    let waitingOn: DesktopCoworkerCallWaitingOn | null = null
+    let detail: string | null = null
+    switch (row.status) {
+        case 'queued': state = 'accepted'; break
+        case 'running': case 'dispatched': state = 'working'; break
+        case 'waiting-human': {
+            if (row.phase !== 'terminal') {
+                const open = [...row.progress.calls].reverse().find(call => call.status === 'running' && LIVE_WAITING[call.tool])
+                state = 'blocked'; waitingOn = open ? LIVE_WAITING[open.tool]! : 'person'
+                break
+            }
+            // A conversation that can no longer be read still waits on the person as far as anyone knows.
+            const kind = await pendingHumanKind(runtime, row).catch((): DesktopCoworkerCallWaitingOn => 'person')
+            if (kind) { state = 'blocked'; waitingOn = kind } else state = 'completed'
+            break
+        }
+        case 'completed': state = 'completed'; break
+        case 'error':
+            if (delivered) { state = 'failed'; detail = row.error; break }
+            if (await setupStillPending(runtime, row.targetAgentId)) {
+                state = 'blocked'; waitingOn = 'setup'
+                detail = `${row.targetName} has not received this message: its setup is not finished. Ask the person to finish or skip its setup, then send it again.`
+            } else { state = 'not-delivered'; detail = row.error }
+            break
+        default:
+            state = delivered ? 'stopped' : 'not-delivered'
+            detail = (row.error && STOP_DETAIL[row.error]) ?? row.error
+    }
+    const answers = state === 'completed' || state === 'failed' || state === 'stopped' || (state === 'blocked' && row.phase === 'terminal' && delivered)
+    const text = answers && row.resultText && !DISPATCHED_ACK.test(row.resultText) ? row.resultText.slice(0, DESKTOP_COWORKER_CALL_RESULT_MAX_CHARS) : null
+    const cut = !whole && text !== null && text.length > DESKTOP_COWORKER_CALL_STATUS_PREVIEW_CHARS
+    return desktopCoworkerCallCallerViewSchema.parse({
+        callId: row.callId, coworker: row.targetName, state, waitingOn, detail: detail?.slice(0, 2_000) ?? null,
+        result: cut ? text.slice(0, DESKTOP_COWORKER_CALL_STATUS_PREVIEW_CHARS) : text, resultCut: cut,
+        startedAt: row.createdAt, updatedAt: row.updatedAt,
+    })
 }
 
 type CallScope = 'coworker' | 'foreman'
@@ -291,7 +367,13 @@ export async function handleDesktopCoworkerCallBridge(runtime: DesktopRuntime, b
                     const target = await findDesktopAgent(db, input.target.publicAgentId)
                     if (!target || target.engineAgentId !== input.target.engineAgentId || !target.enabled) throw new DesktopHttpError(409, 'This coworker is not available for this call.')
                     await assertCoworkerNotDeleting(db, target.id)
-                    await assertDesktopSetupChatAllowed(runtime, target.id)
+                    try { await assertDesktopSetupChatAllowed(runtime, target.id) }
+                    catch (error) {
+                        // The caller is told who is still in setup and what the person can do, in place of
+                        // the chat refusal meant for the person's own window.
+                        if (error instanceof DesktopSetupPendingError) throw new DesktopHttpError(409, desktopCoworkerCallSetupRefusal(target.name))
+                        throw error
+                    }
                     return target
                 }
                 const target = await check()
@@ -318,6 +400,27 @@ export async function handleDesktopCoworkerCallBridge(runtime: DesktopRuntime, b
                     return createDesktopSession(db, { agentId: owner.id, engineSessionId: actual.id, title: actual.title })
                 })
                 return Response.json({ ok: true, result: { publicSessionId: saved.id } })
+            }
+            case 'status': {
+                const input = z.strictObject({
+                    caller: z.strictObject({ engineAgentId: serverId, engineSessionId: serverId, engineRunId: serverId }),
+                    callId: z.string().uuid().optional(),
+                }).parse(payload)
+                const authorization = await authorizeDesktopCoworkerCall(runtime, db, input.caller, fetchImpl)
+                if (!authorization.ok) throw new DesktopHttpError(409, authorization.reason)
+                const owner = authorization.caller
+                let rows: CoworkerCallRecord[]
+                if (input.callId) {
+                    const row = await getDesktopCoworkerCall(db, input.callId)
+                    // Only calls this caller started; another coworker's call reads as unknown.
+                    if (!row || row.parentAgentId !== owner.publicAgentId) throw new DesktopHttpError(404, 'No call with this id was started by you.')
+                    rows = [row]
+                } else {
+                    rows = (await listDesktopCoworkerCallRows(db, owner.publicSessionId)).filter(row => row.parentAgentId === owner.publicAgentId).slice(0, DESKTOP_COWORKER_CALL_STATUS_LIST)
+                }
+                const calls = []
+                for (const row of rows) calls.push(await callerViewOf(runtime, row, !!input.callId))
+                return Response.json({ ok: true, result: { calls } })
             }
             case 'get-by-source':
                 return Response.json({ ok: true, result: typeof payload.sourceKey === 'string' ? await getDesktopCoworkerCallBySource(db, payload.sourceKey) : null })

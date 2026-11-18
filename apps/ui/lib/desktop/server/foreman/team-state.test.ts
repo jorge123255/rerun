@@ -108,3 +108,70 @@ test('the Chief of Staff is told who may ask whom and to propose both halves of 
     expect(text).toContain('Who you yourself may message with call_agent (data): ["Ben"]')
     expect(desktopTeamChangesInstruction([], [], 12_000)).not.toContain('Who you yourself may message')
 })
+
+// The person's rule for team access: the Chief of Staff may message every coworker that is on;
+// each coworker may ask only those on its own or a linked GitHub repository, or, without a
+// repository, those in its Box. The app works out who that is; the card still asks the person.
+test('each coworker carries its repository, the linked repositories and its teammates under the person\'s rule', async () => {
+    const project = (id: string, removed = false) => {
+        const [owner, name] = id.split('/') as [string, string]
+        return { id, owner, name, url: `https://github.com/${id}`, state: 'read', failure: null, kind: 'other', kindSource: 'default', purpose: null, stack: [], build: null, suggestedRoles: [], roles: [], removed }
+    }
+    const record = (projects: ReturnType<typeof project>[], links: [string, string][]) => JSON.stringify({ key: 'f'.repeat(64), revision: 0, inference: 'none', inferenceNote: null, projects,
+        links: links.map(([from, to]) => ({ from, to, kind: 'depends-on', source: 'owner', quote: null })), readAt: 'now', updatedAt: 'now' })
+    const fakeDb = {
+        execute: async (query: string | { sql: string; args: unknown[] }) => {
+            const sql = typeof query === 'string' ? query : query.sql
+            if (sql.includes('desktop_coworker_call_allows')) return { rows: [] }
+            if (sql.includes('desktop_space_placements')) return { rows: [{ agent_id: 'of', name: 'OpenFlix' }, { agent_id: 'w', name: 'OpenFlix' }, { agent_id: 't', name: 'OpenFlix' }, { agent_id: 'tu', name: 'Tuner' }] }
+            if (sql.includes('desktop_intake_github_projects')) {
+                expect((query as { args: unknown[] }).args).toEqual(['1'])
+                return { rows: [
+                    { body: record([project('acme/openflix'), project('acme/dvr-tuner'), project('acme/android'), project('acme/gone', true)], [['acme/openflix', 'acme/dvr-tuner'], ['acme/android', 'acme/openflix'], ['acme/gone', 'acme/other']]) },
+                    { body: 'not json' },
+                ] }
+            }
+            throw new Error(`unexpected ${sql}`)
+        },
+    } as never
+    listDesktopAgents.mockResolvedValue([agent('of', 'OpenFlix Dev'), agent('tu', 'Tuner Dev'), agent('an', 'Android Dev'), agent('ot', 'Other Dev'), agent('w', 'Writer'), agent('t', 'Test Bot', false)])
+    const repositories: Record<string, { owner: string; name: string }> = { 'engine-of': { owner: 'Acme', name: 'OpenFlix' }, 'engine-tu': { owner: 'acme', name: 'dvr-tuner' }, 'engine-an': { owner: 'acme', name: 'android' }, 'engine-ot': { owner: 'acme', name: 'other' } }
+    getAgent.mockImplementation(async (_engine: unknown, id: string) => config(repositories[id] ? { desktopRepository: repositories[id] } : {}))
+    readDesktopSetupView.mockResolvedValue(setup({ completedAt: 'done' }))
+
+    const state = await readDesktopTeamState({ workspaceId: 1 } as never, fakeDb, connections)
+    const byName = Object.fromEntries(state.map(member => [member.name, member]))
+    expect(byName['OpenFlix Dev']).toMatchObject({ repository: 'Acme/OpenFlix', box: 'OpenFlix', linkedRepositories: ['acme/dvr-tuner', 'acme/android'], teammates: ['Tuner Dev', 'Android Dev'] })
+    expect(byName['Tuner Dev']).toMatchObject({ repository: 'acme/dvr-tuner', box: 'Tuner', linkedRepositories: ['Acme/OpenFlix'], teammates: ['OpenFlix Dev'] })
+    expect(byName['Android Dev']).toMatchObject({ teammates: ['OpenFlix Dev'] })
+    // A link to a project the person removed links nothing.
+    expect(byName['Other Dev']).toMatchObject({ repository: 'acme/other', linkedRepositories: [], teammates: [] })
+    // Without a repository: the switched-on coworkers in its Box; a switched-off one is never a teammate.
+    expect(byName['Writer']).toMatchObject({ box: 'OpenFlix', teammates: ['OpenFlix Dev'] })
+    expect(byName['Writer']).not.toHaveProperty('repository')
+    expect(JSON.stringify(state)).not.toMatch(/engine-|github\.com/)
+
+    const text = desktopTeamChangesInstruction([], state, 12_000, [])!
+    expect(text).toContain('"repository":"Acme/OpenFlix"')
+    expect(text).toContain('"linkedRepositories":["acme/dvr-tuner","acme/android"]')
+    expect(text).toContain('"teammates":["Tuner Dev","Android Dev"]')
+    expect(text).toContain('you (coworker "Chief of Staff") may message every coworker that is on, never one that is off')
+    expect(text).toContain('each coworker that is on may ask only the coworkers listed as its `teammates`')
+    expect(text).toContain('You still only propose: the person approves the card')
+})
+
+test('teammates are left out rather than guessed when a coworker\'s settings or the links could not be read', async () => {
+    const fakeDb = { execute: async (query: string | { sql: string }) => {
+        const sql = typeof query === 'string' ? query : query.sql
+        if (sql.includes('desktop_intake_github_projects')) throw new Error('SQLITE_ERROR: no such table: desktop_intake_github_projects')
+        if (sql.includes('desktop_space_placements')) return { rows: [] }
+        return { rows: [] }
+    } } as never
+    listDesktopAgents.mockResolvedValue([agent('a', 'Ada'), agent('b', 'Ben')])
+    getAgent.mockImplementation(async (_engine: unknown, id: string) => { if (id === 'engine-b') throw new Error('engine down'); return config({ desktopRepository: { owner: 'acme', name: 'x' } }) })
+    readDesktopSetupView.mockResolvedValue(setup())
+    const state = await readDesktopTeamState(runtime, fakeDb, connections)
+    // Ben could not be read, so whether he shares Ada's repository is unknown.
+    expect(state.every(member => !('teammates' in member))).toBe(true)
+    expect(state[0]).toMatchObject({ repository: 'acme/x' })
+})

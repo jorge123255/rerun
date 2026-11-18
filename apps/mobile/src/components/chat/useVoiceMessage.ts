@@ -2,6 +2,8 @@ import { appendVoiceMarker, buildVoiceMarker, MAX_RECORDING_MS } from '@rerun/co
 import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { holdAudio } from '@/lib/audio-yield'
+
 export type VoiceMessageStatus = 'idle' | 'starting' | 'recording' | 'processing' | 'failed'
 
 export type VoiceMessageError = 'silent' | 'sendFailed'
@@ -150,6 +152,14 @@ export function useVoiceMessage(sender: VoiceSender | undefined) {
         setStatus('idle')
         if (wasRecording) await stopRecorder()
     }, [status, stopRecorder])
+
+    // A voice conversation starting stops a recording under way, as Discard does. A recording kept
+    // for a retry stays.
+    const yieldRef = useRef<() => Promise<void> | void>(() => {})
+    useEffect(() => {
+        yieldRef.current = status === 'recording' || status === 'starting' ? discard : () => {}
+    })
+    useEffect(() => holdAudio(() => yieldRef.current()), [])
 
     const getLiveState = useCallback(() => liveRef.current, [])
 

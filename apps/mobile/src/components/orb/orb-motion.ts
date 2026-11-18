@@ -36,17 +36,24 @@ export function facePose(yaw: number, pitch: number): { matrix: Matrix; shown: b
     return { matrix: [scaleX, lean * scaleX, 0, scaleY, x, y], shown: true }
 }
 
-type Tuning = { gaze: number; gazeRate: number; turn: number; turnRate: number; sheenPeriod: number }
+// The web's four states (packages/ui/src/foreman/orb-tuning.ts): the same ball, only its rhythm changes.
+export type OrbActivity = 'idle' | 'listening' | 'thinking' | 'speaking'
 
-const TUNING: { idle: Tuning; thinking: Tuning } = {
-    idle: { gaze: 0.8, gazeRate: 0.35, turn: 16, turnRate: 0.45, sheenPeriod: 6 },
-    thinking: { gaze: 3, gazeRate: 1.9, turn: 40, turnRate: 1.6, sheenPeriod: 1.8 },
+type Tuning = { gaze: number; gazeRate: number; turn: number; turnRate: number; sheenPeriod: number; nod: number }
+
+const TUNING: Record<OrbActivity, Tuning> = {
+    idle: { gaze: 0.8, gazeRate: 0.35, turn: 16, turnRate: 0.45, sheenPeriod: 6, nod: 0 },
+    listening: { gaze: 1.5, gazeRate: 0.6, turn: 9, turnRate: 0.7, sheenPeriod: 6, nod: 0 },
+    thinking: { gaze: 3, gazeRate: 1.9, turn: 40, turnRate: 1.6, sheenPeriod: 1.8, nod: 0 },
+    speaking: { gaze: 1.1, gazeRate: 0.8, turn: 4, turnRate: 0.8, sheenPeriod: 4, nod: 7 },
 }
 
 const WANDER = 0.5
 const DEGREES = Math.PI / 180
 const SPIN_SECONDS = 0.7
 const SPIN_EVERY = 5
+// How fast the ball nods while it speaks.
+const NOD_RATE = 7
 // How far the band of light travels, and the share of its period spent crossing; it rests the rest.
 export const SHEEN_TRAVEL = 170
 const SHEEN_CROSSING = 0.55
@@ -59,10 +66,11 @@ export type OrbClock = {
     spin: number
     spinSide: number
     nextSpin: number
+    nod: number
 }
 
 export function startClock(): OrbClock {
-    return { tuning: { ...TUNING.idle }, gaze: 0, turn: 0, sheen: 0, spin: 1, spinSide: 1, nextSpin: 0 }
+    return { tuning: { ...TUNING.idle }, gaze: 0, turn: 0, sheen: 0, spin: 1, spinSide: 1, nextSpin: 0, nod: 0 }
 }
 
 export type OrbPose = { face: Matrix; faceShown: boolean; eyes: Matrix; sheen: Matrix }
@@ -80,9 +88,10 @@ function easeInOut(progress: number) {
 }
 
 // Moves `clock` on by `dt` seconds, in place, and returns where everything is drawn.
-export function advance(clock: OrbClock, dt: number, thinking: boolean, facing: OrbFacing): OrbPose {
+export function advance(clock: OrbClock, dt: number, activity: OrbActivity, facing: OrbFacing): OrbPose {
     'worklet'
-    const target = thinking ? TUNING.thinking : TUNING.idle
+    const thinking = activity === 'thinking'
+    const target = TUNING[activity]
     const tuning = clock.tuning
     // A change of state never jumps: the ball speeds up or calms down over a second or so.
     const k = 1 - Math.exp(-dt * 2.6)
@@ -91,6 +100,7 @@ export function advance(clock: OrbClock, dt: number, thinking: boolean, facing: 
     tuning.turn += (target.turn - tuning.turn) * k
     tuning.turnRate += (target.turnRate - tuning.turnRate) * k
     tuning.sheenPeriod += (target.sheenPeriod - tuning.sheenPeriod) * k
+    tuning.nod += (target.nod - tuning.nod) * k
 
     // Two sines at unrelated rates: a single one would swing like a metronome and read as a loop.
     clock.gaze += dt * tuning.gazeRate
@@ -117,7 +127,10 @@ export function advance(clock: OrbClock, dt: number, thinking: boolean, facing: 
     clock.sheen = (clock.sheen + dt / tuning.sheenPeriod) % 1
     const crossing = Math.min(1, clock.sheen / SHEEN_CROSSING)
 
+    clock.nod += dt * NOD_RATE
+    const nod = Math.sin(clock.nod) * tuning.nod * DEGREES
+
     const rest = restPose(facing)
-    const face = facePose(rest.yaw + sweep + spin, rest.pitch + tilt)
+    const face = facePose(rest.yaw + sweep + spin, rest.pitch + tilt + nod)
     return { face: face.matrix, faceShown: face.shown, eyes: [1, 0, 0, 1, wander, lift], sheen: [1, 0, 0, 1, easeInOut(crossing) * SHEEN_TRAVEL, 0] }
 }

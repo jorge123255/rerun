@@ -25,6 +25,8 @@ let root: string, server: Server, runtime: DesktopRuntime, alice: DesktopAgent, 
 let question: DesktopSession, approval: DesktopSession, bobChat: DesktopSession
 const time = '2026-11-04T12:00:00.000Z'
 const histories = new Map<string, { owner: string; rows: Message[] }>(), calls: string[] = [], failures = new Set<string>(), stalled = new Set<string>()
+// Engine setup state by engine agent id; an agent without an entry has none (404). Setup chats with a running turn.
+const setups = new Map<string, unknown>(), runningSetups = new Set<string>()
 function rows(sessionId: string, kind: 'question' | 'approval'): Message[] {
     const requestedAt = sessionId === 'approval' ? '2026-11-06T12:00:00.000Z' : sessionId === 'question' ? '2026-11-05T12:00:00.000Z' : time
     const toolName = kind === 'question' ? 'ask_user' : 'request_approval'
@@ -72,7 +74,7 @@ async function appChat(detail = appRequest()) {
 
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-pending-inbox-api-'))
-    histories.clear(); calls.length = 0; failures.clear(); stalled.clear()
+    histories.clear(); calls.length = 0; failures.clear(); stalled.clear(); setups.clear(); runningSetups.clear()
     serviceReader.mockReset(); serviceReader.mockResolvedValue({ request: null })
     secretReader.mockReset(); secretReader.mockResolvedValue({ request: null })
     mcpReader.mockReset(); mcpReader.mockResolvedValue({ request: null })
@@ -85,6 +87,15 @@ beforeEach(async () => {
             if (failures.has(history[2])) return reply(503, { error: 'Unavailable private fixture details' })
             const found = histories.get(history[2])
             return reply(found?.owner === history[1] ? 200 : 404, found?.owner === history[1] ? { messages: found.rows } : { error: 'Not found' })
+        }
+        const setup = req.url?.match(/^\/agents\/([^/]+)\/setup$/)
+        if (req.method === 'GET' && setup && setups.has(setup[1])) return reply(200, setups.get(setup[1]))
+        const runs = req.url?.match(/^\/agents\/([^/]+)\/runs\?(.*)$/)
+        if (req.method === 'GET' && runs) {
+            const session = new URLSearchParams(runs[2]).get('session') ?? ''
+            return reply(200, { runs: runningSetups.has(session) ? [{ id: 'setup-run', agentId: runs[1], sessionId: session, status: 'running', stepCount: 0, usageJson: null, provider: null, model: null,
+                triggerSource: null, triggerSlug: null, costMicros: null, inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null, totalTokens: null,
+                startedAt: time, finishedAt: null, error: null }] : [] })
         }
         return reply(404, { error: 'Unexpected fixture request' })
     })
@@ -393,4 +404,67 @@ test('MCP mark-as-read acknowledges only the inbox row and keeps the sign-in req
     expect((await read()).items.some(item => item.id === target.id)).toBe(false)
     expect((await mcpReader(runtime, session.id)).request).toBe(pending)
     expect((await seen()).find(row => row.item_id === target.id)?.kind).toBe('mcp')
+})
+
+test('a started setup waiting for the person shows as « Setup waiting for you », opens its chat, and answers nothing', async () => {
+    const db = await openDesktopDatabase(root)
+    const setupChat = await createDesktopSession(db, { agentId: bob.id, engineSessionId: 'bob-setup', title: 'Setup' })
+    histories.set('bob-setup', { owner: bob.engineAgentId, rows: [] })
+    await db.execute({ sql: 'UPDATE desktop_sessions SET updated_at = ? WHERE id = ?', args: ['2026-11-07T12:00:00.000Z', setupChat.id] })
+    const pendingSetup = { required: true, prompt: 'Ask about the repository.', completedAt: null, sessionId: 'bob-setup', pending: true, revision: 'r1' }
+    setups.set(bob.engineAgentId, pendingSetup)
+    const state = async () => (await db.batch(['SELECT * FROM desktop_sessions ORDER BY id', 'SELECT * FROM desktop_setup_state', 'SELECT * FROM desktop_setup_intents', 'SELECT * FROM desktop_setup_kickoffs'], 'read')).map(result => result.rows)
+    const before = await state()
+
+    const body = await read()
+    expect(body.unavailableAgentIds).toEqual([])
+    const row = body.items.find(item => item.kind === 'setup')!
+    expect(row).toEqual({ id: `setup:${setupChat.id}`, kind: 'setup', agentId: bob.id, agentName: 'Bob', agentEnabled: true, sessionId: setupChat.id, title: 'Setup',
+        summary: 'Setup waiting for you', requestedAt: '2026-11-07T12:00:00.000Z', updatedAt: '2026-11-07T12:00:00.000Z' })
+    // Newest first, like every other row; reading it wrote nothing and posted nothing to the engine.
+    expect(body.items[0]!.id).toBe(row.id)
+    expect(JSON.stringify(row)).not.toContain('bob-setup')
+    expect(calls.every(call => call.startsWith('GET '))).toBe(true)
+    expect(await state()).toEqual(before)
+
+    // A setup turn still running is the coworker's move: no row.
+    runningSetups.add('bob-setup')
+    expect((await read()).items.some(item => item.kind === 'setup')).toBe(false)
+    runningSetups.clear()
+
+    // Mark as read hides this attempt's row only, and only while it still waits.
+    expect(await (await mark([{ id: row.id, kind: 'setup', agentId: bob.id, sessionId: setupChat.id }])).json()).toEqual({ marked: 1, failedIds: [] })
+    expect((await read()).items.some(item => item.kind === 'setup')).toBe(false)
+    expect(await (await mark([{ id: `setup:${question.id}`, kind: 'setup', agentId: alice.id, sessionId: question.id }])).json()).toEqual({ marked: 0, failedIds: [`setup:${question.id}`] })
+    // Nothing about the setup itself changed: no skip, no answer.
+    expect((await db.execute('SELECT * FROM desktop_setup_state')).rows).toEqual([])
+})
+
+test('a setup row leaves when the setup is finished, skipped or the coworker is off, and a failed setup read is not an empty inbox', async () => {
+    const db = await openDesktopDatabase(root)
+    const setupChat = await createDesktopSession(db, { agentId: bob.id, engineSessionId: 'bob-setup', title: 'Setup' })
+    histories.set('bob-setup', { owner: bob.engineAgentId, rows: [] })
+    setups.set(bob.engineAgentId, { required: true, prompt: 'p', completedAt: null, sessionId: 'bob-setup', pending: true, revision: 'r1' })
+    expect((await read()).items.filter(item => item.kind === 'setup').map(item => item.sessionId)).toEqual([setupChat.id])
+
+    // Not started yet: no chat to open, so no row.
+    setups.set(bob.engineAgentId, { required: true, prompt: 'p', completedAt: null, sessionId: null, pending: true, revision: 'r2' })
+    expect((await read()).items.some(item => item.kind === 'setup')).toBe(false)
+    // Finished.
+    setups.set(bob.engineAgentId, { required: true, prompt: 'p', completedAt: time, sessionId: 'bob-setup', pending: false, revision: 'r3' })
+    expect((await read()).items.some(item => item.kind === 'setup')).toBe(false)
+    // Skipped by the person.
+    setups.set(bob.engineAgentId, { required: true, prompt: 'p', completedAt: null, sessionId: 'bob-setup', pending: true, revision: 'r4' })
+    await db.execute({ sql: "INSERT INTO desktop_setup_state(agent_id,skipped,updated_at) VALUES(?,1,?)", args: [bob.id, time] })
+    expect((await read()).items.some(item => item.kind === 'setup')).toBe(false)
+    await db.execute({ sql: 'DELETE FROM desktop_setup_state WHERE agent_id=?', args: [bob.id] })
+    // Switched off.
+    await db.execute({ sql: 'UPDATE desktop_agents SET enabled=0 WHERE id=?', args: [bob.id] })
+    expect((await read()).items.some(item => item.kind === 'setup')).toBe(false)
+    await db.execute({ sql: 'UPDATE desktop_agents SET enabled=1 WHERE id=?', args: [bob.id] })
+    // An engine that cannot answer marks the coworker unknown rather than idle.
+    setups.set(bob.engineAgentId, 'not json')
+    const partial = await read()
+    expect(partial.unavailableAgentIds).toEqual([bob.id])
+    expect(partial.items.some(item => item.kind === 'setup')).toBe(false)
 })

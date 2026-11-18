@@ -272,6 +272,15 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
             const url = pairingOrigin(session.origin, pin) + API_PREFIX + `/workspaces/${encodeURIComponent(session.workspaceId)}/chief/stream?chat=${encodeURIComponent(chatId)}&request=${encodeURIComponent(requestId)}`
             return pinnedStream(url, pin, 'Bearer ' + session.credential, onFrame, signal)
         },
+        // A voice conversation with the Chief of Staff on one of its conversations: a short-lived token
+        // for the phone's own WebRTC session with ElevenLabs, its id and when it lapses. Needs the send
+        // permission and the Mac's own switch for it. The token is handed back, never kept here.
+        async startVoice(chatId, signal) {
+            const session = await sessionOrThrow()
+            const result = await request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/voice/start`, { method: 'POST', body: { chatId }, credential: session.credential, fetchImpl, pinnedFetch, signal })
+            if (typeof result?.conversationToken !== 'string' || !result.conversationToken || typeof result.conversationId !== 'string' || typeof result.expiresAt !== 'string') throw new Error('invalid_voice_session')
+            return { conversationToken: result.conversationToken, conversationId: result.conversationId, expiresAt: result.expiresAt }
+        },
         readMacSession: () => sessions.read(),
         clearMacSession: () => sessions.clear(),
     }

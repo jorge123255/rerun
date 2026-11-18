@@ -175,7 +175,7 @@ it('binds model note tools to one coworker, preserves retries, and refuses stale
 })
 
 it('freezes native grants until every active Codex process belonging to the coworker closes', async () => {
-    const { beginDesktopCodexRun, endDesktopCodexRun } = await import('./native-grants.js')
+    const { beginDesktopNativeRun, endDesktopNativeRun } = await import('./native-grants.js')
     const id = 'native-owner', other = 'native-other'
     for (const a of [id, other]) {
         await mkdir(workspaceDir(a), { recursive: true })
@@ -183,15 +183,47 @@ it('freezes native grants until every active Codex process belonging to the cowo
     }
     const patch = (agent: string, flags: object) => app.request(`/agents/${agent}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tools: { desktopCodexGrants: flags } }) })
     const signal = new AbortController().signal
-    await Promise.all(['a','b'].map(runId => beginDesktopCodexRun(id, runId, signal)))
+    await Promise.all(['a','b'].map(runId => beginDesktopNativeRun(id, runId, signal, 'codex')))
     expect((await patch(id, { webSearch: false })).status).toBe(200)
     expect((await patch(id, { webSearch: true })).status).toBe(409)
     expect((await patch(other, { webSearch: true })).status).toBe(200)
-    endDesktopCodexRun(id, 'a')
+    endDesktopNativeRun(id, 'a')
     expect((await patch(id, { webSearch: true })).status).toBe(409)
-    endDesktopCodexRun(id, 'b')
+    endDesktopNativeRun(id, 'b')
     expect((await patch(id, { webSearch: true })).status).toBe(200)
-    expect((await beginDesktopCodexRun(id, 'fresh', signal)).tools.desktopCodexGrants).toEqual({ webSearch: true })
-    endDesktopCodexRun(id, 'fresh')
+    expect((await beginDesktopNativeRun(id, 'fresh', signal, 'codex')).tools.desktopCodexGrants).toEqual({ webSearch: true })
+    endDesktopNativeRun(id, 'fresh')
     expect((await patch(id, { unverifiedExternalTool: true })).status).toBe(400)
+})
+
+it('holds the Claude sub-agent permission until its coworker’s last Claude reply closes', async () => {
+    const { beginDesktopNativeRun, endDesktopNativeRun } = await import('./native-grants.js')
+    const owner = 'claude-tools-owner', other = 'claude-tools-other'
+    for (const id of [owner, other]) {
+        await mkdir(workspaceDir(id), { recursive: true })
+        await writeAgentConfig(id, config(id))
+    }
+    const patch = (id: string, claudeSubagents: boolean) => app.request(`/agents/${id}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tools: { desktopToolGrants: { claudeSubagents } } }),
+    })
+    const signal = new AbortController().signal
+    expect((await patch(owner, true)).status).toBe(200)
+    try {
+        await beginDesktopNativeRun(owner, 'codex', signal, 'codex')
+        await beginDesktopNativeRun(owner, 'claude-a', signal, 'claude')
+        await beginDesktopNativeRun(owner, 'claude-b', signal, 'claude')
+        expect((await patch(owner, true)).status).toBe(200)
+        expect((await patch(owner, false)).status).toBe(409)
+        expect((await patch(other, true)).status).toBe(200)
+        endDesktopNativeRun(owner, 'claude-a')
+        expect((await patch(owner, false)).status).toBe(409)
+        endDesktopNativeRun(owner, 'claude-b')
+        expect((await patch(owner, false)).status).toBe(200)
+        const next = await beginDesktopNativeRun(owner, 'fresh', signal, 'claude')
+        expect(next.tools.desktopToolGrants?.claudeSubagents).toBe(false)
+        expect((await patch(owner, true)).status).toBe(409)
+    } finally {
+        for (const runId of ['codex', 'claude-a', 'claude-b', 'fresh']) endDesktopNativeRun(owner, runId)
+    }
 })

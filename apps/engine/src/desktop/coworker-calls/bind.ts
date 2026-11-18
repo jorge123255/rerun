@@ -36,6 +36,7 @@ export async function bindDesktopCoworkerCalls(runtime: DesktopBind, fetchImpl?:
             return { engineSessionId: session.id }
         },
         adoptPublicSession: bridge.adoptPublicSession,
+        readCalls: bridge.readCalls,
         notifyOpened: async input => {
             await sendNotification({
                 event: 'agent.session.created',

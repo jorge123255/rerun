@@ -1,5 +1,5 @@
-import { desktopCodexGrantsOf, desktopRerunGrantsOf, type AgentConfig } from '@rerun/contracts'
-import { coworkerToolCatalogs, coworkerToolPatch, type CoworkerToolPatch } from '@/lib/desktop/coworker-tools'
+import { DESKTOP_CHATGPT_CONNECTION_ID, DESKTOP_CLAUDE_CONNECTION_ID, desktopCodexGrantsOf, desktopRerunGrantsOf, type AgentConfig, type AgentDetail } from '@rerun/contracts'
+import { coworkerToolCatalogs, coworkerToolPatch, type CoworkerToolPatch, type DesktopToolGroup } from '@/lib/desktop/coworker-tools'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { desktopRoute } from '@/lib/desktop/server/http'
@@ -35,7 +35,18 @@ function toolPayload(patch: CoworkerToolPatch): EngineAgentConfigPatch {
 }
 
 const directBuildRequired = 'This tool requires the direct Mac build.'
-const requiresDirectBuild = (group: 'codex' | 'rerun', id: string) => group === 'codex' || id === 'nativeWriteback'
+const requiresDirectBuild = (group: DesktopToolGroup, id: string) => group !== 'rerun' || id === 'nativeWriteback'
+
+function subagentRuntimeReason(group: DesktopToolGroup, id: string, agent: AgentDetail): string | undefined {
+    if (group === 'claude' && id === 'claudeSubagents'
+        && (agent.config.kind !== 'user' || agent.config.ephemeral || agent.resolvedProvider !== 'claude' || agent.resolvedConnectionId !== DESKTOP_CLAUDE_CONNECTION_ID)) {
+        return 'This permission requires a coworker using Claude Code with your Claude subscription.'
+    }
+    if (group === 'codex' && id === 'subagents'
+        && (agent.config.kind !== 'user' || agent.config.ephemeral || agent.resolvedProvider !== 'codex' || agent.resolvedConnectionId !== DESKTOP_CHATGPT_CONNECTION_ID)) {
+        return 'This permission requires a coworker using Codex with your ChatGPT subscription.'
+    }
+}
 
 async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToolPatch) {
     const owner = await findDesktopAgent(await openDesktopDatabase(runtime.dataRoot), id)
@@ -48,6 +59,8 @@ async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToo
             if (appStore && patch.enabled && requiresDirectBuild(patch.group, patch.id)) throw new DesktopHttpError(400, directBuildRequired)
             const row = coworkerToolCatalogs[patch.group].find(entry => entry.id === patch.id)
             if (!row?.available) throw new DesktopHttpError(400, 'This tool is unavailable for this coworker.')
+            const runtimeReason = subagentRuntimeReason(patch.group, patch.id, current)
+            if (patch.enabled && runtimeReason) throw new DesktopHttpError(400, runtimeReason)
             if (patch.group === 'rerun' && patch.enabled) {
                 if (patch.id === 'privateFileWrite' && !current.config.tools.filesystem) throw new DesktopHttpError(400, 'File editing is paused for this coworker.')
                 if (patch.id === 'sharedFilesRead' && pausedReason(patch.id, current.config)) throw new DesktopHttpError(400, 'Shared files access is paused for this coworker.')
@@ -63,6 +76,16 @@ async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToo
         const rerun: Record<string, boolean> = desktopRerunGrantsOf(agent.config.tools)
         const master = agent.config.selfImprovement.enabled
         const codex: Record<string, boolean> = desktopCodexGrantsOf(agent.config.tools)
+        function nativeRows(group: 'codex' | 'claude', grants: Record<string, boolean>) {
+            return coworkerToolCatalogs[group].flatMap(row => {
+                const enabled = row.available && grants[row.id] === true
+                const runtimeReason = subagentRuntimeReason(group, row.id, agent)
+                if (runtimeReason && !enabled) return []
+                // After a provider change a previous opt-in remains visible for revocation.
+                const reason = appStore ? directBuildRequired : runtimeReason
+                return [{ ...row, ...(reason && { available: false, unavailableReason: reason }), enabled }]
+            })
+        }
         return Response.json({
             rerun: coworkerToolCatalogs.rerun.map(row => {
                 const nested = row.parent === 'self'
@@ -71,13 +94,14 @@ async function toolsFor(runtime: DesktopRuntime, id: string, patch?: CoworkerToo
                 if (appStore && requiresDirectBuild('rerun', row.id)) return { ...row, available: false, unavailableReason: directBuildRequired, enabled }
                 return { ...row, ...(reason && { available: false, unavailableReason: reason }), enabled: row.available && enabled }
             }),
-            codex: coworkerToolCatalogs.codex.map(row => ({
-                ...row, ...(appStore && { available: false, unavailableReason: directBuildRequired }),
-                enabled: row.available && codex[row.id] === true,
-            })),
+            codex: nativeRows('codex', codex),
+            claude: nativeRows('claude', rerun),
         }, { headers: { 'cache-control': 'no-store' } })
     } catch (error) {
         if (error instanceof DesktopHttpError) throw error
+        if (error instanceof EngineRequestError && error.status === 409 && patch && patch.group !== 'rerun') {
+            throw new DesktopHttpError(409, 'The permission could not change. Stop any active replies for this coworker and try again.')
+        }
         if (error instanceof EngineRequestError && error.status === 404) throw new DesktopHttpError(404, 'Coworker not found')
         throw new DesktopHttpError(502, 'Could not reach this coworker’s tools. Try again.')
     }

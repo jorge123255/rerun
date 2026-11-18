@@ -2,6 +2,14 @@ import { writeFile, rename } from 'node:fs/promises'
 import { configPath } from '../config/paths.js'
 import { BRIDGE_SERVER_NAME, MCP_SERVER_NAME_RE, type AgentConfig, type McpServer } from './types.js'
 
+// Native Claude helpers spend the owner's subscription. Only a grant on this
+// coworker after creation can authorize them; copied configuration cannot.
+export function clearInheritedClaudeSubagentGrant(config: AgentConfig): boolean {
+    if (config.tools.desktopToolGrants?.claudeSubagents !== true) return false
+    config.tools.desktopToolGrants.claudeSubagents = false
+    return true
+}
+
 // tmp + rename so a concurrent reader (loadAgentFromDisk, GET /:id, mcp_status) never
 // observes a half-written file: rename is atomic on the same filesystem.
 export async function writeAgentConfig(id: string, config: AgentConfig): Promise<void> {

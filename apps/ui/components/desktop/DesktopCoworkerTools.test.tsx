@@ -119,3 +119,28 @@ it('puts usable tools from both providers before the single disclosure and keeps
         expect(labels()).toEqual(['read', 'paused', 'native-web', 'shared', 'connectors'])
     } finally { await act(async () => root.unmount()) }
 })
+
+it('presents the Claude subscription cost and saves its switch independently from Rerun delegation', async () => {
+    const patches: CoworkerToolPatch[] = []
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+        if (init.method === 'PATCH') patches.push(JSON.parse(String(init.body)))
+        return Response.json({
+            rerun: [{ id: 'delegate', label: 'Delegate tasks', description: '', tools: [], available: true, enabled: false }],
+            codex: [],
+            claude: [{ id: 'claudeSubagents', label: 'Use Claude Code sub-agents', description: 'Sub-agents work on parts of a reply and use your Claude subscription.', tools: [], available: true, enabled: patches.at(-1)?.enabled === true }],
+        })
+    })
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    try {
+        await act(async () => root.render(<DesktopCoworkerTools agent={{ id: 'first', name: 'First' } as DesktopAgentView} />))
+        await act(async () => document.querySelector<HTMLButtonElement>('button')!.click())
+        const label = Array.from(document.querySelectorAll('label')).find(row => row.textContent === 'Use Claude Code sub-agents')!
+        const control = document.getElementById(label.htmlFor)!
+        expect(document.getElementById(control.getAttribute('aria-describedby')!)?.textContent).toContain('your Claude subscription')
+        expect(control.getAttribute('aria-checked')).toBe('false')
+        await act(async () => control.click())
+        expect(patches).toEqual([{ group: 'claude', id: 'claudeSubagents', enabled: true }])
+        expect(control.getAttribute('aria-checked')).toBe('true')
+        expect(document.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('false')
+    } finally { await act(async () => root.unmount()) }
+})

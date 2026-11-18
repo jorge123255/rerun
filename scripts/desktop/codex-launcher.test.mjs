@@ -3,8 +3,9 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { chmod, copyFile, link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const exec = promisify(execFile)
@@ -51,6 +52,16 @@ static int can_write(const char *path) {
     return ok;
 }
 int main(int argc, char **argv) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--probe-agent-policy") != 0) continue;
+        for (int j = 1; j + 1 < argc; j++) {
+            if ((strcmp(argv[j], "-c") == 0 && strncmp(argv[j+1], "agents.enabled=", 15) == 0) ||
+                (strcmp(argv[j], "--disable") == 0 && strncmp(argv[j+1], "multi_agent", 11) == 0)) {
+                printf("%s\n%s\n", argv[j], argv[j+1]);
+            }
+        }
+        return 0;
+    }
     const char *schema = argument(argc, argv, "--output-schema");
     if (!schema) schema = argument(argc, argv, "--probe-file");
     const char *sibling = argument(argc, argv, "--probe-sibling");
@@ -211,4 +222,41 @@ test('schema cannot gain writes through the private-profile permission', { skip:
     const schema = join(directory, 'schema.json')
     await writeFile(schema, '{}')
     await refused(f, ['--output-schema', schema], environment(join(profile, 'tmp')))
+})
+
+test('the Mac launcher closes catalog-selected sub-agents in the bundled Codex runtime', { skip: !supported }, async () => {
+    const f = await fixture()
+    const { stdout } = await exec('/bin/sh', [launcher, '--probe-agent-policy'], {
+        env: environment(f.temp), cwd: f.directory, timeout: 10_000,
+    })
+    const policy = stdout.trim().split('\n')
+    assert.deepEqual(policy, ['-c', 'agents.enabled=false', '--disable', 'multi_agent', '--disable', 'multi_agent_v2'])
+
+    const engine = createRequire(new URL('../../apps/engine/package.json', import.meta.url))
+    const adapter = createRequire(engine.resolve('ai-sdk-provider-codex-cli'))
+    const codex = createRequire(adapter.resolve('@openai/codex/package.json'))
+    const binRoot = dirname(codex.resolve(`@openai/codex-darwin-${process.arch}/package.json`))
+    const binary = join(binRoot, 'vendor', process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin', 'bin', 'codex')
+    const command = (...args) => exec('/usr/bin/sandbox-exec', [
+        '-p', '(version 1) (allow default) (deny network*)', binary,
+        '-c', 'cli_auth_credentials_store="file"', '-c', 'analytics.enabled=false', ...args,
+    ], {
+        cwd: f.directory, env: { HOME: f.directory, CODEX_HOME: f.directory, TMPDIR: f.temp, PATH: '/usr/bin:/bin' },
+        maxBuffer: 16 * 1024 * 1024, timeout: 15_000,
+    })
+
+    // Use the exact packaged catalog locally. Debug prompt rendering sends no turn.
+    const { stdout: catalog } = await command('debug', 'models', '--bundled')
+    const declaredV2 = JSON.parse(catalog).models.find(model => model.multi_agent_version === 'v2')
+    assert.ok(declaredV2)
+    const catalogFile = join(f.directory, 'models.json')
+    await writeFile(catalogFile, catalog)
+    async function hasSubagentGuidance(flags) {
+        const result = await command(...flags, '-c', 'model=' + JSON.stringify(declaredV2.slug),
+            '-c', 'model_catalog_json=' + JSON.stringify(catalogFile), 'debug', 'prompt-input', 'Offline fixture')
+        return JSON.parse(result.stdout).some(message => message.role === 'developer' &&
+            message.content?.some(part => part.text?.startsWith('<multi_agent_role>')))
+    }
+    assert.equal(await hasSubagentGuidance(['--disable', 'multi_agent', '--disable', 'multi_agent_v2']), true)
+    assert.equal(await hasSubagentGuidance(policy), false)
 })

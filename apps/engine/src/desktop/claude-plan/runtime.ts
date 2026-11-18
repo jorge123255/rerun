@@ -1,3 +1,4 @@
+import { desktopClaudeChildDisplay } from './subagents.js'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
@@ -28,7 +29,7 @@ function trusted(path: string) {
     throw new Error('The bundled Claude runtime is unavailable.')
 }
 /** Bound protocol lines before the SDK parses JSON; never publish a credential echo. */
-export function desktopClaudeOutputFilter(token: string, totalLimit = 64 * 1024 * 1024, lineLimit = 8 * 1024 * 1024, onRateLimit?: (info: unknown) => void) {
+export function desktopClaudeOutputFilter(token: string, totalLimit = 64 * 1024 * 1024, lineLimit = 8 * 1024 * 1024, onRateLimit?: (info: unknown) => void, project?: (line: string) => string) {
     const variants = [...new Set([token, Buffer.from(token).toString('base64'), Buffer.from(token).toString('hex'), encodeURIComponent(token)])].filter(Boolean)
     let pending = Buffer.alloc(0), total = 0
     const redact = (value: Buffer) => variants.reduce((text, secret) => text.split(secret).join('[redacted]'), value.toString('utf8'))
@@ -49,13 +50,19 @@ export function desktopClaudeOutputFilter(token: string, totalLimit = 64 * 1024 
                         if (message.type === 'rate_limit_event') onRateLimit(message.rate_limit_info)
                     } catch { /* not a message of its own */ }
                 }
-                this.push(line)
+                try { this.push(project ? project(line) : line) } catch { done(new Error('Invalid Claude protocol message.')); return }
                 pending = pending.subarray(offset + 1)
             }
             if (pending.length > lineLimit) { done(new Error('Claude response exceeded its limit.')); return }
             done()
         },
-        flush(done) { if (pending.length) this.push(redact(pending)); pending.fill(0); done() },
+        flush(done) {
+            try {
+                if (pending.length) { const line = redact(pending); this.push(project ? project(line) : line) }
+                done()
+            } catch { done(new Error('Invalid Claude protocol message.')) }
+            finally { pending.fill(0) }
+        },
         destroy(error, done) { pending.fill(0); done(error) },
     })
 }
@@ -71,7 +78,7 @@ export function desktopClaudeSpawnSpec(binary: string, sandbox: string, profile:
         env: { ...harness, NODE_ENV: 'production' as const, PATH: '/usr/bin:/bin', HOME: profile, CLAUDE_CONFIG_DIR: profile, TMPDIR: join(profile, 'tmp'), CLAUDE_CODE_TMPDIR: join(profile, 'tmp'), LANG: 'en_US.UTF-8', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', CLAUDE_AGENT_SDK_VERSION: DESKTOP_CLAUDE_SDK_VERSION, CLAUDE_CODE_OAUTH_TOKEN: token },
     }
 }
-export function desktopClaudeRuntime(connectionId: string | undefined, token: string, harness: Record<string, string>) {
+export function desktopClaudeRuntime(connectionId: string | undefined, token: string, harness: Record<string, string>, nativeSubagents = false) {
     if (connectionId !== DESKTOP_CLAUDE_CONNECTION_ID || !desktopClaudeAvailable() || !token || /[\0\r\n]/.test(token)) throw new Error('Connect Claude in Settings before chatting.')
     const binary = trusted(process.env.RERUN_DESKTOP_CLAUDE_RUNNER!), sandbox = trusted(process.env.RERUN_DESKTOP_CLAUDE_SANDBOX!)
     const base = join(dataDir(), 'claude')
@@ -81,7 +88,7 @@ export function desktopClaudeRuntime(connectionId: string | undefined, token: st
     mkdirSync(profile, { mode: 0o700 })
     mkdirSync(join(profile, 'tmp'), { mode: 0o700 })
     const children = new Set<ChildProcessWithoutNullStreams>()
-    let closed = false
+    let closed = false, childNumber = 0
     async function drain(child: ChildProcessWithoutNullStreams) {
         if (!child.pid) return
         const pid = child.pid
@@ -120,14 +127,14 @@ export function desktopClaudeRuntime(connectionId: string | undefined, token: st
             env: {}, logger: false, verbose: false,
             spawnClaudeCodeProcess(options: SpawnOptions) {
                 if (closed) throw new Error('Claude process owner changed')
-                const spec = desktopClaudeSpawnSpec(binary, sandbox, profile, token, harness, options)
+                const spec = desktopClaudeSpawnSpec(binary, sandbox, profile, token, nativeSubagents ? { ...harness, CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: '1' } : harness, options)
                 const child = spawn(spec.command, spec.args, { cwd: spec.cwd, env: spec.env, stdio: ['pipe', 'pipe', 'pipe'], shell: false, detached: true }) as ChildProcessWithoutNullStreams
                 children.add(child)
                 const output = desktopClaudeOutputFilter(token, undefined, undefined, info => {
                     const windows = planLimitWindowsFromClaudeEvent(info)
                     mergePlanLimits(DESKTOP_CLAUDE_CONNECTION_ID, windows)
                     noteDesktopPlanUsage('claude-reply', { outcome: windows.length ? 'read' : 'no-windows', fields: info && typeof info === 'object' ? [...Object.keys(info), ...Object.keys((info as { unifiedWindows?: object }).unifiedWindows ?? {}).map(key => `window:${key}`)] : [] })
-                }), diagnostic = desktopClaudeOutputFilter(token, 65536, 65536)
+                }, nativeSubagents ? desktopClaudeChildDisplay(() => ++childNumber) : undefined), diagnostic = desktopClaudeOutputFilter(token, 65536, 65536)
                 child.stdout = child.stdout.pipe(output)
                 child.stderr = child.stderr.pipe(diagnostic)
                 output.on('error', () => { void drain(child).catch(() => {}) })

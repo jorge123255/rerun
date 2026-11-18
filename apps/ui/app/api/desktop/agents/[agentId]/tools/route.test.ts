@@ -12,6 +12,9 @@ const originalEnv = { ...process.env }
 let root: string
 let server: Server
 let coworker: string
+let resolvedProvider: AgentConfig['provider'] | null
+let resolvedConnectionId: string | null
+let nativeRunActive: boolean
 const agents = new Map<string, AgentConfig>()
 
 function request(path: string, init?: { method?: string; body?: unknown }) {
@@ -35,6 +38,9 @@ const rerunRows = (body: unknown) => (body as { rerun: ToolRow[] }).rerun
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'rerun-tools-'))
     agents.clear()
+    nativeRunActive = false
+    resolvedProvider = null
+    resolvedConnectionId = null
     agents.set('engine-self', agentConfigSchema.parse({ name: 'engine-self', description: 'Self tester' }))
     server = createServer(async (req, res) => {
         let text = ''
@@ -47,6 +53,7 @@ beforeEach(async () => {
             if (!config) return sendJson({ error: 'missing' }, 404)
             if (req.method === 'PATCH' && body) {
                 const sent = body.tools as Record<string, unknown> | undefined
+                if (nativeRunActive && sent?.desktopToolGrants) return sendJson({ error: 'fixture engine diagnostic' }, 409)
                 if (sent?.desktopToolGrants) {
                     config.tools = { ...config.tools, desktopToolGrants: { ...config.tools.desktopToolGrants, ...(sent.desktopToolGrants as Record<string, boolean>) } }
                 }
@@ -54,7 +61,7 @@ beforeEach(async () => {
                     config.selfImprovement = { ...config.selfImprovement, ...(body.selfImprovement as Record<string, boolean>) }
                 }
             }
-            return sendJson({ id: agentMatch[1], config, soul: '' })
+            return sendJson({ id: agentMatch[1], config, soul: '', resolvedProvider, resolvedConnectionId })
         }
         sendJson({ error: 'not found' }, 404)
     })
@@ -154,4 +161,80 @@ test('AI provider status is a separate, revocable coworker grant', async () => {
     const revoked = await patchTools(coworker, { group: 'rerun', id: 'aiProviders', enabled: false })
     expect(revoked.status).toBe(200)
     expect(rerunRows(revoked.body).find(row => row.id === 'aiProviders')).toMatchObject({ enabled: false })
+})
+
+test('only offers native Claude sub-agents on the Claude subscription and keeps the saved switch revocable', async () => {
+    const config = agents.get('engine-self')!
+    const nativeRow = async () => ((await readTools(coworker)).body.claude as (ToolRow & {description: string})[]).find(row => row.id === 'claudeSubagents')
+    const change = (enabled: boolean) => patchTools(coworker, { group: 'claude', id: 'claudeSubagents', enabled })
+    for (const provider of ['anthropic', 'kimi-code', 'grok-build', 'devin', 'custom', 'opencode'] as const) {
+        resolvedProvider = provider
+        resolvedConnectionId = 'mac-claude'
+        expect(await nativeRow()).toBeUndefined()
+        expect((await change(true)).status).toBe(400)
+    }
+    resolvedProvider = 'claude'
+    resolvedConnectionId = 'unrelated-connection'
+    expect(await nativeRow()).toBeUndefined()
+    expect((await change(true)).status).toBe(400)
+
+    resolvedConnectionId = 'mac-claude'
+    expect(await nativeRow()).toMatchObject({ available: true, enabled: false, description: expect.stringContaining('your Claude subscription') })
+    expect((await change(true)).status).toBe(200)
+    expect(config.tools.desktopToolGrants).toEqual({ claudeSubagents: true })
+    expect((await nativeRow())?.enabled).toBe(true)
+
+    resolvedProvider = 'custom'
+    expect(await nativeRow()).toMatchObject({ available: false, enabled: true })
+    expect((await change(false)).status).toBe(200)
+    expect(await nativeRow()).toBeUndefined()
+    expect(config.tools.desktopToolGrants).toEqual({ claudeSubagents: false })
+})
+
+test('the pinned Codex runtime explains its limitation and refuses forged native sub-agent grants', async () => {
+    resolvedProvider = 'codex'
+    resolvedConnectionId = 'mac-chatgpt'
+    const { body } = await readTools(coworker)
+    expect(body.claude).toEqual([])
+    expect(body.codex.find((row: ToolRow) => row.id === 'subagents')).toMatchObject({
+        enabled: false, available: false, unavailableReason: expect.stringContaining('permissions'),
+    })
+    expect((await patchTools(coworker, { group: 'codex', id: 'subagents', enabled: true })).status).toBe(400)
+    expect(agentConfigSchema.safeParse({ name: 'engine-self', tools: { desktopCodexGrants: { subagents: true } } }).success).toBe(false)
+    resolvedProvider = 'custom'
+    expect((await readTools(coworker)).body.codex.some((row: ToolRow) => row.id === 'subagents')).toBe(false)
+})
+
+test('a child, managed Foreman, store build or forged rerun group cannot enable subscription sub-agents', async () => {
+    resolvedConnectionId = 'mac-claude'
+    resolvedProvider = 'claude'
+    const config = agents.get('engine-self')!
+    config.ephemeral = true
+    const patch = { group: 'claude', id: 'claudeSubagents', enabled: true }
+    expect((await patchTools(coworker, patch)).status).toBe(400)
+    config.ephemeral = false
+    config.kind = 'foreman'
+    expect((await readTools(coworker)).body.claude).toEqual([])
+    expect((await patchTools(coworker, patch)).status).toBe(400)
+    config.kind = 'user'
+    expect((await patchTools(coworker, { ...patch, group: 'rerun' })).status).toBe(400)
+    process.env.RERUN_DESKTOP_APP_STORE = '1'
+    expect((await readTools(coworker)).body.claude[0]).toMatchObject({ available: false, enabled: false })
+    expect((await patchTools(coworker, patch)).status).toBe(400)
+    expect(config.tools.desktopToolGrants?.claudeSubagents).toBeUndefined()
+})
+
+test('changing a native permission during an active reply explains the conflict and leaves the grant alone', async () => {
+    resolvedConnectionId = 'mac-claude'
+    resolvedProvider = 'claude'
+    const patch = { group: 'claude', id: 'claudeSubagents', enabled: true }
+    expect((await patchTools(coworker, patch)).status).toBe(200)
+    nativeRunActive = true
+    const denied = await patchTools(coworker, { ...patch, enabled: false })
+    expect(denied.status).toBe(409)
+    expect(denied.body.error).toContain('Stop any active replies for this coworker')
+    expect(denied.body.error).not.toContain('fixture engine diagnostic')
+    expect(agents.get('engine-self')!.tools.desktopToolGrants?.claudeSubagents).toBe(true)
+    nativeRunActive = false
+    expect((await patchTools(coworker, { ...patch, enabled: false })).status).toBe(200)
 })

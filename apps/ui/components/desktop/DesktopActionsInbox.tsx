@@ -37,6 +37,8 @@ const KIND_STATUS: Record<DesktopPendingInboxItem['kind'], string> = {
     mcp: 'waiting_human',
     'tool-install': 'awaiting_approval',
     info: 'awaiting_ack',
+    // A started setup waiting for the person's reply: opening it opens that setup chat.
+    setup: 'waiting_human',
 }
 // Upstream #323: more than the tallest list shows. The rest of a long inbox mounts once the card is
 // on screen, so its rows never cut into the card's opening.

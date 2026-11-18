@@ -9,7 +9,8 @@ import type { RunContext } from '../../runtime/context.js'
 import type { DesktopCoworkerCallRuntime } from './runtime.js'
 
 // Original call-agent.ts description, without an engine-id roster. An @mention is text, not a grant.
-const DESCRIPTION = 'Send a one-shot message to another persistent coworker on this engine. Use it whenever your instructions name another coworker to contact (e.g. @someAgent), including from a scheduled task. The called coworker runs in its own fresh session with its own personality, tools and memory. By default the message is dispatched and you move on without waiting; set wait to true when you need the coworker\'s answer to continue. Use delegate_tasks for subtasks of your own work instead. Use the coworker\'s exact name or local id. Duplicate names are refused. An @mention does not grant access.'
+const DESCRIPTION = 'Send a one-shot message to another persistent coworker on this engine. Use it whenever your instructions name another coworker to contact (e.g. @someAgent), including from a scheduled task. The called coworker runs in its own fresh session with its own personality, tools and memory. By default the message is dispatched and you move on without waiting: you get a call id, and check_agent_call with that id tells you later whether it finished and gives its answer. Set wait to true when you need the coworker\'s answer to continue. Sending the same message again from this conversation while the first is still in hand does not send it twice. If the call is refused, the result says why (for example the coworker\'s setup is not finished): tell the person, do not keep retrying. Use delegate_tasks for subtasks of your own work instead. Use the coworker\'s exact name or local id. Duplicate names are refused. An @mention does not grant access.'
+const CHECK_DESCRIPTION = 'See where coworker calls you started with call_agent stand: accepted, working, blocked (waiting on the person for a question, an approval or help, or on the called coworker\'s unfinished setup), completed with its answer, not delivered, failed or stopped. Give the call id call_agent returned to read that call with its whole answer; leave it out to list your latest calls from this conversation. Reading never sends or repeats anything.'
 
 export function desktopCallAgentTools(ctx: RunContext, runtime: DesktopCoworkerCallRuntime): ToolSet {
     return {
@@ -41,5 +42,17 @@ export function desktopCallAgentTools(ctx: RunContext, runtime: DesktopCoworkerC
                 return result.text
             },
         }),
+        ...(runtime.status ? {
+            check_agent_call: tool({
+                description: CHECK_DESCRIPTION,
+                inputSchema: z.object({
+                    callId: z.string().uuid().optional().describe('The call id call_agent returned. Leave it out to list your latest calls from this conversation'),
+                }),
+                execute: async ({ callId }) => {
+                    if (!ctx.runId) return 'This run can no longer read coworker calls.'
+                    return runtime.status!({ caller: { engineAgentId: ctx.agent.id, engineSessionId: ctx.sessionId, engineRunId: ctx.runId }, ...(callId ? { callId } : {}) })
+                },
+            }),
+        } : {}),
     }
 }

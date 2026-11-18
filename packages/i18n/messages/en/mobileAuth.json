@@ -155,7 +155,42 @@
             },
             "openOnMac": "Open on your Mac to approve",
             "intakeTitle": "Finish setup on your Mac",
-            "intakeBody": "The Chief of Staff still has a few questions about your company. Answer them in Rerun on your Mac, then come back here."
+            "intakeBody": "The Chief of Staff still has a few questions about your company. Answer them in Rerun on your Mac, then come back here.",
+            "voice": {
+                "talk": "Talk with the Chief of Staff",
+                "mute": "Mute the microphone",
+                "unmute": "Turn the microphone back on",
+                "close": "End the conversation",
+                "connecting": "Connecting through your Mac…",
+                "listening": "Listening",
+                "thinking": "Thinking",
+                "speaking": "Speaking",
+                "muted": "Muted. Nothing you say is sent.",
+                "micOn": "Microphone on",
+                "you": "You",
+                "chief": "Chief of Staff",
+                "keptAsText": "What you say and hear is saved in this conversation as text.",
+                "tryAgain": "Try again",
+                "openSettings": "Open Settings",
+                "done": "Close",
+                "ended": {
+                    "closed": "The conversation ended.",
+                    "away": "The conversation ended when Rerun left the screen.",
+                    "interrupted": "The conversation ended for a call or another sound on this phone.",
+                    "chief": "The conversation was ended on the other side."
+                },
+                "problems": {
+                    "notSetUp": "Voice is not set up on your Mac. In Rerun on your Mac, turn on Allow voice conversations from paired phones.",
+                    "unavailable": "Your Mac cannot start a voice conversation right now: its voice connection is down. Try again in a moment.",
+                    "notAllowed": "This phone may not send messages. On your Mac, open Connect iPhone and turn on Send messages for it.",
+                    "rateLimited": "Too many tries. Wait a minute, then try again.",
+                    "microphone": "Rerun may not use the microphone. Allow it in Settings, then try again.",
+                    "dropped": "The connection dropped.",
+                    "unreachable": "Could not reach your Mac.",
+                    "removed": "Your Mac no longer accepts this phone.",
+                    "failed": "The voice conversation could not start."
+                }
+            }
         }
     }
 }

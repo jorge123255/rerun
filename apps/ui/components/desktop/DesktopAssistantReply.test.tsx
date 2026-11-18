@@ -697,3 +697,21 @@ test('saved image_generation part rehydrates the same authorized preview without
     }
     expect(urls).toHaveBeenCalledTimes(2)
 })
+
+test('shows each native helper in the chat steps and restores its terminal state without private transcripts', async () => {
+    const started = { type: 'dynamic-tool' as const, toolName: 'native_subagent', toolCallId: 'native-child-1', state: 'input-available' as const, input: { name: 'Claude helper 1', prompt: 'private request' } }
+    await render([started], true)
+    expect(container.textContent).toContain('Running Claude helper 1')
+    const result = { ...started, type: 'tool-native_subagent' as const, state: 'output-available' as const, output: { status: 'completed', content: [{ type: 'text', text: 'private reply' }] } }
+    const [saved] = publicDesktopHistory([{ id: 'engine-helper', role: 'assistant', parts: [result] }])
+    expect(saved!.parts[0]).toMatchObject({ state: 'output-available', input: { preview: 'Claude helper 1' }, output: 'Sub-agent finished.' })
+    expect(JSON.stringify(saved)).not.toContain('private')
+    await render(saved!.parts as UIMessage['parts'])
+    await openSteps()
+    const row = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Claude helper 1'))
+    expect(row).toBeDefined()
+    await act(async () => row!.click())
+    expect(container.textContent).toContain('Sub-agent finished.')
+    const [stopped] = publicDesktopHistory([{ id: 'engine-stopped', role: 'assistant', parts: [{ ...result, output: { status: 'cancelled' } }] }])
+    expect(stopped!.parts[0]).toMatchObject({ state: 'cancelled' })
+})

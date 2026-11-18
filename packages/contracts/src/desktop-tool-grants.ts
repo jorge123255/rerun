@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { foremanAgentFileCatalogEntries } from './desktop-foreman-agent-files.js'
 
-export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'tableViewWrite', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'docs', 'download', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'browserExtraVigilant', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate', 'teamRead', 'workRegister', 'aiProviders', 'vision', 'notify', 'foremanAgentFilesRead', 'foremanAgentFilesWrite', 'foremanWorkspaceRead', 'githubWrite', 'repositoryWorkspace'] as const
+export const desktopRerunGrantIds = ['privateFileWrite', 'workspaceRead', 'workspaceList', 'workspaceSearch', 'sharedFilesRead', 'sharedFilesWrite', 'memoryRecall', 'memoryWrite', 'memoryDelete', 'askUser', 'requestApproval', 'requestSecret', 'cardFile', 'cardTable', 'tableViewWrite', 'selfInstruction', 'verbositySet', 'webFetch', 'webSearch', 'docs', 'download', 'db', 'sharedDb', 'schedule', 'scheduleManage', 'toolInstall', 'guestShell', 'mcp', 'selfMcpRegister', 'localMcpStdio', 'nativeWriteback', 'brain', 'skills', 'services', 'suggestService', 'browser', 'browserExtraVigilant', 'computer', 'terminalLaunch', 'filesLaunch', 'callAgent', 'trigger', 'delegate', 'teamRead', 'workRegister', 'aiProviders', 'vision', 'notify', 'foremanAgentFilesRead', 'foremanAgentFilesWrite', 'foremanWorkspaceRead', 'githubWrite', 'repositoryWorkspace', 'claudeSubagents'] as const
 export const desktopCodexGrantIds = ['workspaceRead', 'workspaceWrite', 'shell', 'webSearch', 'codeMode', 'images'] as const
 export type DesktopRerunGrantId = typeof desktopRerunGrantIds[number]
 export type DesktopCodexGrantId = typeof desktopCodexGrantIds[number]
@@ -55,7 +55,7 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     supported('scheduleManage', 'Manage routines', 'Let this coworker read, create, edit and remove its scheduled tasks. Running routines uses the separate Schedules permission.', 'schedule_list', 'schedule_get', 'schedule_create', 'schedule_update', 'schedule_edit', 'schedule_delete'),
     supported('trigger', 'Triggers', 'Manage URLs that start this coworker while Rerun is open on this Mac.', 'trigger_list', 'trigger_get', 'trigger_create', 'trigger_update', 'trigger_edit', 'trigger_rotate_token', 'trigger_delete'),
     supported('delegate', 'Delegate tasks', 'Run isolated workers on separate tasks, with read-only public web access when granted.', 'delegate_tasks'),
-    supported('callAgent', 'Call coworkers', 'Ask an allowed coworker to work in its own new chat, using its own model and permissions.', 'call_agent'),
+    supported('callAgent', 'Call coworkers', 'Ask an allowed coworker to work in its own new chat, using its own model and permissions.', 'call_agent', 'check_agent_call'),
     supported('browser', 'Use a browser', 'Read pages in this coworker’s isolated browser and ask you to take over. Requires Docker Desktop and Computer control. With Computer control it can also click and type on pages: it asks you before pressing a button labelled as sending, posting, paying, deleting or changing a password. A button with no readable label (an icon, a canvas app, a frame from another site) or with misleading wording is not caught unless Extra vigilant is on.', 'browser_navigate', 'request_takeover'),
     supported('browserExtraVigilant', 'Extra vigilant in the browser', 'Ask you before every button press and form submit on a web page, whatever the button says, and before a click on anything that cannot be read (shown as an unlabelled control). Plain links and text fields do not ask. Off by default; needs Use a browser and Computer control.'),
     supported('vision', 'Vision', 'Inspect a workspace image with the model selected for this coworker. A model that cannot see images is refused. No other model is substituted.', 'vision_analyze'),
@@ -89,6 +89,10 @@ export const desktopRerunToolCatalog: DesktopToolCatalogEntry[] = [
     ...foremanAgentFileCatalogEntries.map(entry => ({ ...entry, tools: [...entry.tools] })),
 ]
 
+export const desktopClaudeToolCatalog: DesktopToolCatalogEntry[] = [
+    supported('claudeSubagents', 'Use Claude Code sub-agents', 'Sub-agents work on parts of a reply and use your Claude subscription.'),
+]
+
 export const desktopCodexToolCatalog: DesktopToolCatalogEntry[] = [
     supported('workspaceRead', 'Include workspace files', 'Copy bounded, visible workspace text files into this coworker’s temporary folder for native commands or edits.'),
     supported('workspaceWrite', 'Edit temporary files', 'Use native Codex edits in this turn’s temporary folder. With Review temporary file changes enabled, changes wait for your review; otherwise they are discarded.', 'apply_patch'),
@@ -97,7 +101,7 @@ export const desktopCodexToolCatalog: DesktopToolCatalogEntry[] = [
     supported('codeMode', 'Code mode', 'Run JavaScript calculations in the bundled Codex host and call the Rerun tools granted to this coworker.', 'functions.exec'),
     supported('images', 'Image generation and editing', 'Generate or edit an image in a ChatGPT (Codex) chat. Each image is kept in this coworker’s Files and shown in the chat.', 'image_generation'),
     pending('browser', 'Browser and computer', 'Use a browser or desktop from Codex.', 'Requires an isolated browser or desktop and its permissions.'),
-    pending('subagents', 'Delegate to subagents', 'Start or continue child agents.', 'Requires scoped child runs, cancellation and activity history.'),
+    pending('subagents', 'Use Codex sub-agents', 'Sub-agents work on parts of a reply and use your ChatGPT subscription.', 'This Codex runtime cannot keep every child within this turn’s permissions.'),
     pending('voice', 'Voice', 'Use the Codex voice input and output tools.', 'Requires a Mac microphone and playback flow.'),
     pending('connectors', 'External connectors', 'Connect external services and servers.', 'Requires configured accounts and scoped credentials.'),
 ]

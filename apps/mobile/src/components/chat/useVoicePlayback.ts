@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 
 import { cachedFile, ownedFileUrl, type FileOwner } from '@/api/files'
 import { useAuth } from '@/auth/AuthProvider'
+import { holdAudio } from '@/lib/audio-yield'
 
 // A recording made in Chrome is WebM, which the iOS player does not read: the bubble still shows its
 // shape and length, with play turned off.
@@ -37,6 +38,9 @@ export function useVoicePlayback(voice: VoiceMessage, owner: FileOwner | null): 
     const [loading, setLoading] = useState(false)
     const readable = playableOnIos(voice.src)
     const playable = Boolean(owner && caller) && readable
+
+    // A voice conversation starting pauses it.
+    useEffect(() => holdAudio(() => player.pause()), [player])
 
     useEffect(() => {
         if (!status.didJustFinish) return

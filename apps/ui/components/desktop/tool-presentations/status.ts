@@ -1,4 +1,4 @@
-import { stripBridgePrefix, unwrapToolOutputEnvelope } from '@rerun/contracts'
+import { nativeSubagentOutcome, stripBridgePrefix, unwrapToolOutputEnvelope } from '@rerun/contracts'
 
 export const DESKTOP_HISTORICAL_OUTPUT_BOUND = 8000
 export const DESKTOP_HISTORICAL_ID_LIMIT = 200
@@ -25,6 +25,7 @@ export type DesktopHistoricalContext = {
 
 export type DesktopHistoricalToolSource = {
     type?: unknown
+    desktopPreview?: unknown
     toolName?: unknown
     toolCallId?: unknown
     state?: unknown
@@ -208,6 +209,11 @@ export function projectDesktopToolStatus(part: DesktopHistoricalToolSource, cont
             return 'pending'
         case 'output-available':
             if (part.preliminary === true) return context?.live === false ? 'unknown' : 'running'
+            if (desktopHistoricalToolName(part) === 'native_subagent') {
+                const outcome = nativeSubagentOutcome(part.output)
+                if (outcome === 'completed' || (part.desktopPreview === true && part.output === 'Sub-agent finished.')) return 'succeeded'
+                return outcome ?? 'unknown'
+            }
             return desktopHistoricalToolName(part) === 'notify_user' ? notificationStatus(part.output) : 'succeeded'
         default:
             return 'unknown'

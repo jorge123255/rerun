@@ -26,6 +26,7 @@ const local = {
         takeover: '{agent} needs your browser help', service: '{agent} needs app setup',
         secret: '{agent} needs credentials', mcp: '{agent} needs tool sign-in',
         install: '{agent} needs package installation review',
+        setup: '{agent}’s setup is waiting for you',
     },
     fr: {
         inactive: 'Inactif',
@@ -50,6 +51,7 @@ const local = {
         takeover: '{agent} a besoin de votre aide dans le navigateur', service: '{agent} a besoin de configurer une application',
         secret: '{agent} a besoin d’identifiants', mcp: '{agent} a besoin d’une connexion à un outil',
         install: '{agent} demande de vérifier l’installation d’un paquet',
+        setup: 'La configuration de {agent} attend votre réponse',
     },
     es: {
         inactive: 'Inactivo',
@@ -75,6 +77,7 @@ const local = {
         takeover: '{agent} necesita tu ayuda en el navegador', service: '{agent} necesita configurar una aplicación',
         secret: '{agent} necesita credenciales', mcp: '{agent} necesita iniciar sesión en una herramienta',
         install: '{agent} necesita que revises la instalación de un paquete',
+        setup: 'La configuración de {agent} espera tu respuesta',
     },
     pt: {
         inactive: 'Inativo',
@@ -100,6 +103,7 @@ const local = {
         takeover: '{agent} precisa da sua ajuda no navegador', service: '{agent} precisa configurar um aplicativo',
         secret: '{agent} precisa de credenciais', mcp: '{agent} precisa fazer login em uma ferramenta',
         install: '{agent} precisa que você revise a instalação de um pacote',
+        setup: 'A configuração de {agent} está aguardando você',
     },
     de: {
         inactive: 'Inaktiv',
@@ -124,6 +128,7 @@ const local = {
         takeover: '{agent} braucht deine Hilfe im Browser', service: '{agent} muss eine App einrichten',
         secret: '{agent} braucht Zugangsdaten', mcp: '{agent} muss sich bei einem Tool anmelden',
         install: '{agent} bittet um Prüfung einer Paketinstallation',
+        setup: 'Die Einrichtung von {agent} wartet auf dich',
     },
 } satisfies Record<Locale, Record<string, string>>
 
@@ -150,6 +155,7 @@ export function desktopActionMessages(locale: Locale, source: typeof kit) {
             mcp: copy.mcp,
             'tool-install': copy.install,
             info: source.inbox.sentences.awaiting_ack,
+            setup: copy.setup,
             done: source.inbox.sentences.done,
         },
     }
