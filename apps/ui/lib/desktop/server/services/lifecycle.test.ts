@@ -1,3 +1,6 @@
+import {mkdtemp,rm} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import {createClient} from '@libsql/client'
 import {afterEach,expect,it,vi} from 'vitest'
 vi.mock('server-only',()=>({}))
@@ -11,6 +14,7 @@ const catalog=vi.hoisted(()=>({manifest:undefined as unknown}))
 vi.mock('./catalog/index',()=>({getDesktopServiceManifest:async()=>({manifest:catalog.manifest}),getDesktopServiceMethodAvailability:async(_slug:string,id:string)=>({id,supported:true})}))
 vi.mock('./skill-resources',async importOriginal=>({...await importOriginal<typeof import('./skill-resources')>(),createServiceSkill:vi.fn(),removeServiceSkill:vi.fn(),verifyServiceSkill:vi.fn(async()=>{})}))
 import {serviceManifestSchema} from '@/lib/services/manifest'
+import { initializeDesktopRound75 } from '../round75-schema'
 import {desktopServicesSchema} from './schema'
 import {serviceStore} from './store'
 import {createServiceSkill,serviceSkillHash} from './skill-resources'
@@ -20,8 +24,8 @@ import {serviceEngineBridge} from './bridge'
 import type {DesktopRuntime} from '../runtime'
 const entries:{db:ReturnType<typeof createClient>;service:ReturnType<typeof localServiceLifecycle>}[]=[]
 afterEach(async()=>{for(const {db,service} of entries.splice(0)){service.shutdown();await service.drain();db.close()}vi.clearAllMocks()})
-async function setup(){
- const db=createClient({url:'file::memory:'});await db.executeMultiple("CREATE TABLE desktop_agents(id TEXT PRIMARY KEY);INSERT INTO desktop_agents VALUES('owner');"+desktopServicesSchema+';'+serviceSkillMigrationSql)
+async function setup(url='file::memory:'){
+ const db=createClient({url});await db.executeMultiple("CREATE TABLE desktop_agents(id TEXT PRIMARY KEY);INSERT INTO desktop_agents VALUES('owner');"+desktopServicesSchema+';'+serviceSkillMigrationSql)
  catalog.manifest=serviceManifestSchema.parse({slug:'microsoft',name:'Microsoft Learn',category:'dev',mcpServers:[{name:'microsoft-learn',transport:'http',url:'https://learn.microsoft.com/api/mcp'}]})
  const store=serviceStore(db,()=>Buffer.alloc(32,7));let grant=true
  const network=vi.fn(async(_url:string,init:RequestInit)=>{if(init.method==='DELETE')return new Response(null,{status:204});const body=JSON.parse(String(init.body));if(!body.id)return new Response(null,{status:202});return Response.json({jsonrpc:'2.0',id:body.id,result:body.method==='initialize'?{protocolVersion:'2025-03-26'}:body.method==='tools/list'?{tools:[{name:'search',inputSchema:{type:'object'}}]}:{content:[]}})})
@@ -111,4 +115,40 @@ it('publishes a Vault app through the Services bridge with the engine result sha
         expect((await post({ ...call, toolCallId: 'call-2' })).status).toBe(400)
         expect(execute).toHaveBeenCalledTimes(1)
     } finally { await bridge.shutdown() }
+})
+
+it('stores each Chief call against its owned turn and rejects duplicate, foreign and late calls', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'chief-service-calls-'))
+    const {db, store, service} = await setup('file:' + join(root, 'apps.db'))
+    await db.executeMultiple(`PRAGMA foreign_keys=ON;
+        CREATE TABLE desktop_schema_migrations(version INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE);
+        CREATE TABLE desktop_foreman_turns(request_id TEXT PRIMARY KEY);
+        INSERT INTO desktop_foreman_turns VALUES('run');`)
+    await initializeDesktopRound75(db)
+    await initializeDesktopRound75(db)
+    const execute = vi.fn(async () => ({ source: 'remote_mcp', untrusted: true, result: { content: [] } }))
+    const ordinary = vi.spyOn(store, 'list')
+    const identity = {engineAgentId: 'foreman', sessionId: 'chat', runId: 'run'}
+    let active = true
+    const bridge = serviceEngineBridge(store, service, async (run, _, action) => {
+        if (run.sessionId !== identity.sessionId || run.runId !== identity.runId || (!active && action !== 'release')) throw new Error('Settled')
+        return 'foreman'
+    }, undefined, async () => [{name:'linear_read',description:'Read',inputSchema:{type:'object'},execute}])
+    const post = (body: object) => bridge.api(new Request('http://127.0.0.1/api/desktop/internal/services', {
+        method: 'POST', headers: {authorization:'Bearer fixture-engine'}, body: JSON.stringify({...identity,...body}),
+    }))
+    try {
+        const catalog = await (await post({action:'catalog'})).json()
+        const call = {action:'call',catalogId:catalog.catalogId, capabilityId:catalog.tools[0].capabilityId, toolCallId:'once',arguments:{}}
+        expect(ordinary).not.toHaveBeenCalled()
+        expect((await post({...call, sessionId:'other'})).status).toBe(400)
+        expect((await post(call)).status).toBe(200)
+        expect((await post(call)).status).toBe(400)
+        active = false
+        expect((await post({...call, toolCallId:'late'})).status).toBe(400)
+        expect((await post({action:'release',catalogId:catalog.catalogId})).status).toBe(200)
+        expect(execute).toHaveBeenCalledTimes(1)
+        expect((await db.execute('SELECT * FROM desktop_foreman_service_calls')).rows).toEqual([{run_id:'run',call_id:'once'}])
+        expect((await db.execute('SELECT * FROM desktop_service_calls')).rows).toEqual([])
+    } finally { await bridge.shutdown(); db.close(); await rm(root, {recursive:true,force:true}) }
 })

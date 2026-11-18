@@ -38,6 +38,7 @@ import { initializeDesktopRound58 } from './round58-schema'
 import { initializeDesktopRound59 } from './round59-schema'
 import { initializeDesktopRound72 } from './round72-schema'
 import { initializeDesktopRound73 } from './round73-schema'
+import { initializeDesktopRound75 } from './round75-schema'
 import { initializeDesktopRound74 } from './round74-schema'
 import { initializeDesktopRound60 } from './round60-schema'
 import { initializeDesktopRound61 } from './round61-schema'
@@ -360,6 +361,7 @@ async function initialize(dataRoot: string): Promise<Client> {
     await initializeDesktopRound72(client)
     await initializeDesktopRound73(client)
     await initializeDesktopRound74(client)
+    await initializeDesktopRound75(client)
     await ensureDesktopDocumentAttachmentsSchema(client)
     if (nativeContext) {
         const assignedIcon = process.env.RERUN_DESKTOP_WORKSPACE_ICON

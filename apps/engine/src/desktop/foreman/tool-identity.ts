@@ -1,4 +1,5 @@
 import type { ToolSet } from 'ai'
+import { isDesktopServiceTool } from '../service-tools.js'
 import { FOREMAN_AGENT_ID } from '@rerun/contracts'
 
 const identities = new WeakMap<object, string>()
@@ -10,5 +11,5 @@ export function registerDesktopForemanTools(tools: ToolSet): ToolSet {
 }
 
 export function isDesktopForemanTool(value: unknown, name: string, agentId: string, kind: string | undefined): boolean {
-    return agentId === FOREMAN_AGENT_ID && kind === 'foreman' && !!value && typeof value === 'object' && identities.get(value) === name
+    return agentId === FOREMAN_AGENT_ID && kind === 'foreman' && !!value && typeof value === 'object' && (identities.get(value) === name || isDesktopServiceTool(value, FOREMAN_AGENT_ID, name))
 }

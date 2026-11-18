@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { DesktopForemanChatRef } from '@rerun/contracts'
 import { DesktopForemanPanel } from './DesktopForemanPanel'
 import type { DesktopForemanColumnProps } from './DesktopForemanColumn'
+import { DESKTOP_CONNECTOR_APPS_CHANGED } from '@/lib/desktop/use-connector-apps'
 import { cancelDraftShutdown } from '@/lib/desktop/draft-writes'
 import { flushDesktopForemanUiSaves } from '@/lib/desktop/foreman-client'
 let column: DesktopForemanColumnProps
@@ -37,6 +38,7 @@ async function mount(target: DesktopForemanChatRef | null, onSelect: (chat: Desk
             posts.push(body.requestId)
             return Response.json({ chat: { workspaceId: '1', chatId: `fmc_${body.requestId}` } })
         }
+        if (url.startsWith('/api/desktop/foreman/apps?')) return Response.json({ chat: home, apps: [{ id: '50000000-0000-4000-8000-000000000001', name: 'Linear', label: 'Shared Linear' }] })
         if (url.startsWith('/api/desktop/foreman/file-permissions')) return Response.json({}, { status: 500 })
         if (url === '/api/desktop/foreman' && init?.method === 'POST') {
             const body = JSON.parse(String(init.body)) as { action: string; model?: unknown }
@@ -74,6 +76,30 @@ it('carries New task, the clock and an overflow menu in the header, with Permiss
 
     expect(posts).toHaveLength(0)
     expect(onSelect).not.toHaveBeenCalled()
+})
+
+it('opens the Chief’s read-only shared Apps list from the board header', async () => {
+    const { fetcher } = await mount(null, vi.fn(async () => {}))
+    const more = actions().querySelector<HTMLButtonElement>('button[aria-label="More"]')!
+    more.focus()
+    await act(async () => { more.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
+    await settle()
+    const apps = document.querySelector<HTMLElement>('[role="menuitem"][data-foreman-apps]')
+    expect(apps?.textContent).toBe('Apps')
+    await act(async () => { apps!.click() })
+    await settle()
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.querySelector('[aria-label="Apps shared with everyone"]')?.textContent).toContain('Shared Linear')
+    expect(dialog.querySelector('[role="switch"], button[aria-label^="Add "], button[aria-label^="Remove "]')).toBeNull()
+    expect(fetcher.mock.calls.some(([url]) => String(url) === '/api/desktop/vault')).toBe(false)
+    // While open, a Vault change must remove the old label even when its refreshed read fails.
+    fetcher.mockResolvedValueOnce(Response.json({}, { status: 409 }))
+    await act(async () => { window.dispatchEvent(new Event(DESKTOP_CONNECTOR_APPS_CHANGED)) })
+    expect(dialog.textContent).not.toContain('Shared Linear')
+    expect(dialog.querySelector('[role="alert"]')?.textContent).toBe('Could not load shared apps.')
+    fetcher.mockResolvedValueOnce(Response.json({ chat: home, apps: [] }))
+    await act(async () => { dialog.querySelector<HTMLButtonElement>('[role="alert"] + button')!.click() })
+    expect(dialog.textContent).toContain('No apps are shared with everyone.')
 })
 
 const newTask = async () => { await act(async () => { actions().querySelector<HTMLButtonElement>('[data-foreman-new-task]')!.click() }); await settle() }

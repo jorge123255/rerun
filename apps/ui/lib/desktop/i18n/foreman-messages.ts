@@ -26,6 +26,10 @@ const en = {
     contextEstimate: 'Estimated context',
     more: 'More',
     permissions: 'Permissions',
+    appsDescription: 'Vault accounts shared with everyone in this workspace.',
+    sharedApps: 'Apps shared with everyone',
+    appsUnavailable: 'Could not load shared apps.',
+    appsEmpty: 'No apps are shared with everyone.',
 }
 
 const mac = {
@@ -52,6 +56,10 @@ const mac = {
         contextEstimate: 'Contexte estimé',
         more: 'Plus',
         permissions: 'Autorisations',
+        appsDescription: 'Comptes du coffre partagés avec tout le monde dans cet espace de travail.',
+        sharedApps: 'Applications partagées avec tout le monde',
+        appsUnavailable: 'Impossible de charger les applications partagées.',
+        appsEmpty: 'Aucune application n’est partagée avec tout le monde.',
     },
     es: {
         conversation: 'Conversación con el Chief of Staff',
@@ -75,6 +83,10 @@ const mac = {
         contextEstimate: 'Contexto estimado',
         more: 'Más',
         permissions: 'Permisos',
+        appsDescription: 'Cuentas de la bóveda compartidas con todos en este espacio de trabajo.',
+        sharedApps: 'Aplicaciones compartidas con todos',
+        appsUnavailable: 'No se pudieron cargar las aplicaciones compartidas.',
+        appsEmpty: 'No hay aplicaciones compartidas con todos.',
     },
     pt: {
         conversation: 'Conversa com o Chief of Staff',
@@ -98,6 +110,10 @@ const mac = {
         contextEstimate: 'Contexto estimado',
         more: 'Mais',
         permissions: 'Permissões',
+        appsDescription: 'Contas do cofre compartilhadas com todos neste espaço de trabalho.',
+        sharedApps: 'Aplicativos compartilhados com todos',
+        appsUnavailable: 'Não foi possível carregar os aplicativos compartilhados.',
+        appsEmpty: 'Nenhum aplicativo é compartilhado com todos.',
     },
     de: {
         conversation: 'Unterhaltung mit dem Chief of Staff',
@@ -121,6 +137,10 @@ const mac = {
         contextEstimate: 'Geschätzter Kontext',
         more: 'Mehr',
         permissions: 'Berechtigungen',
+        appsDescription: 'Tresorkonten, die für alle in diesem Arbeitsbereich freigegeben sind.',
+        sharedApps: 'Für alle freigegebene Apps',
+        appsUnavailable: 'Die freigegebenen Apps konnten nicht geladen werden.',
+        appsEmpty: 'Keine Apps sind für alle freigegeben.',
     },
 } satisfies Record<Locale, typeof en>
 

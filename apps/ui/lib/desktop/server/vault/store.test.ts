@@ -1067,3 +1067,34 @@ test('a restarted coworker discovers only its assigned Composio apps; key rotati
         await rm(f.root, { recursive: true, force: true })
     }
 })
+
+test('Chief uses only a shared catalog account and a captured tool cannot outlive unsharing', async () => {
+    const f = await fixture()
+    const shutdown = new AbortController()
+    try {
+        const add = (token: string, expectedAccounts: number) => f.vault.mutate({ operation: 'add-app', slug: 'linear', methodId: 'api-key', expectedAccounts, values: { LINEAR_API_KEY: token } }, allow)
+        const [shared] = (await add('synthetic-shared', 0)).entries
+        const other = (await add('synthetic-private', 1)).entries.find(entry => entry.id !== shared.id)!
+        await f.vault.assignCoworker(firstAgent, { id: other.id, revision: other.revision, attached: true }, allow)
+        const assigned = (await f.vault.mutate({ operation: 'share', id: shared.id, revision: shared.revision, sharedWithAll: true, agentIds: [] }, allow)).entries.find(entry => entry.id === shared.id)!
+        const called: string[] = []
+        const network: McpNetwork = async (_url, init, guard) => {
+            await guard()
+            expect(new Headers(init.headers).get('authorization')).toBe('Bearer synthetic-shared')
+            const body = JSON.parse(init.body!)
+            if (body.method === 'tools/call') called.push(body.params.name)
+            const result = body.method === 'initialize' ? { protocolVersion: '2025-03-26' }
+                : body.method === 'tools/list' ? { tools: [{ name: 'list', inputSchema: { type: 'object' } }] }
+                : { content: [{ type: 'text', text: 'shared account reply' }] }
+            return body.id === undefined ? new Response(null, { status: 202 }) : Response.json({ jsonrpc: '2.0', id: body.id, result })
+        }
+        const tools = desktopVaultMcpRuntime(f.db, crypto, 7, async () => ({ enabled: true, granted: true }), shutdown.signal, network, allow, undefined, 'catalog')
+        const discovered = await tools.tools('foreman', shutdown.signal, async () => {})
+        expect(discovered.map(t => t.name)).toEqual([shared.name + '_list'])
+        expect(JSON.stringify(await discovered[0].execute({}, shutdown.signal))).toContain('shared account reply')
+        await f.vault.mutate({ operation: 'share', id: assigned.id, revision: assigned.revision, sharedWithAll: false, agentIds: [firstAgent] }, allow)
+        await expect(discovered[0].execute({}, shutdown.signal)).rejects.toThrow()
+        expect(called).toEqual(['list'])
+        expect(await tools.tools('foreman', shutdown.signal, async () => {})).toEqual([])
+    } finally { shutdown.abort(); f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})

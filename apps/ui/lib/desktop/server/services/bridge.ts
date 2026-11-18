@@ -7,7 +7,7 @@ import type {ServiceStore} from './store'
 import type {LocalServices,ServiceRun} from './lifecycle'
 import type {remoteMcpTools} from '../mcp/tools'
 import type {DesktopMcpCallAdmission} from '../mcp/bridge'
-import type {DesktopActivityDecision} from '@rerun/contracts'
+import {FOREMAN_AGENT_ID,type DesktopActivityDecision} from '@rerun/contracts'
 type RemoteTool = Awaited<ReturnType<typeof remoteMcpTools>>[number]
 type VaultTool = Omit<RemoteTool, 'execute' | 'destructive' | 'server'> & { destructive?: boolean; server?: RemoteTool['server'] } & {
  execute(args:Record<string,unknown>,signal:AbortSignal,toolCallId:string):ReturnType<RemoteTool['execute']>
@@ -35,7 +35,7 @@ export function serviceEngineBridge(store:ServiceStore,service:LocalServices,own
     const catalog={owner,run:identity(body),controller,timer,tools};catalogs.set(catalogId,catalog);preparing.set(identity(body),controller)
     try{
      const output=[];const names=new Set<string>()
-     for(const record of await store.list(owner)){
+     for(const record of owner===FOREMAN_AGENT_ID ? [] : await store.list(owner)){
       if(record.state!=='ready')continue
       const active=AbortSignal.any([signal,controller.signal])
       const result=await service.discover(record,body,active)
@@ -57,7 +57,13 @@ export function serviceEngineBridge(store:ServiceStore,service:LocalServices,own
    const catalog=catalogs.get(body.catalogId!);if(!catalog||catalog.owner!==owner||catalog.run!==identity(body))throw new Error('Catalog owner mismatch')
    if(body.action==='release'){release(body.catalogId!);await releaseTransportRun?.(owner,body,signal);return Response.json({released:true})}
    const capability=catalog.tools.get(body.capabilityId);if(!capability)throw new Error('Tool unavailable')
-   const active=AbortSignal.any([signal,catalog.controller.signal]);await service.current(owner,'use',body,active)
+   const active=AbortSignal.any([signal,catalog.controller.signal])
+   const assertCurrent=async()=>{
+    if(owner===FOREMAN_AGENT_ID){
+     if(!('vault' in capability)||body.engineAgentId!==FOREMAN_AGENT_ID||await ownerForRun(body,active,'call')!==owner)throw new Error('Chief service owner changed')
+    }else await service.current(owner,'use',body,active)
+   }
+   await assertCurrent()
    const record='vault' in capability ? undefined : await service.liveRecord(owner,capability.key,capability.revision,active)
    const runtime=record && service.transport(record,body,active)
    // An action that asks first is answered here, before the call is claimed or anything reaches the app.
@@ -65,8 +71,10 @@ export function serviceEngineBridge(store:ServiceStore,service:LocalServices,own
    const held=await admit?.({owner,sessionId:body.sessionId,tool:'vault' in capability?capability.vault.name:capability.name,destructive:'vault' in capability&&capability.vault.destructive===true,arguments:body.arguments,server:'vault' in capability?capability.vault.server:{name:capability.serverName,tool:capability.name}},active,said=>{trail=said})
    active.throwIfAborted()
    if(typeof held==='string')return Response.json({toolCallId:body.toolCallId,result:{source:'local_service',untrusted:true,result:{isError:true,content:[{type:'text',text:held}]}},...(trail&&{trail})})
-   const claimed=await store.db.execute({sql:'INSERT INTO desktop_service_calls(owner,run_id,call_id) VALUES(?,?,?) ON CONFLICT DO NOTHING',args:[owner,body.runId,body.toolCallId]});if(claimed.rowsAffected!==1)throw new Error('Call already submitted; it will not be replayed')
-   await service.current(owner,'use',body,active);active.throwIfAborted()
+   const claimed=owner===FOREMAN_AGENT_ID
+    ? await store.db.execute({sql:'INSERT INTO desktop_foreman_service_calls(run_id,call_id) VALUES(?,?) ON CONFLICT DO NOTHING',args:[body.runId,body.toolCallId]})
+    : await store.db.execute({sql:'INSERT INTO desktop_service_calls(owner,run_id,call_id) VALUES(?,?,?) ON CONFLICT DO NOTHING',args:[owner,body.runId,body.toolCallId]});if(claimed.rowsAffected!==1)throw new Error('Call already submitted; it will not be replayed')
+   await assertCurrent();active.throwIfAborted()
    let result:unknown
    if('vault' in capability){
     const called=await capability.vault.execute(body.arguments,active,body.toolCallId)

@@ -3,7 +3,7 @@
 import { WELCOME_ORB_SIZE, type OrbActivity } from '@rerun/ui/foreman'
 import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
-import { XIcon } from '@/lib/icons'
+import { BlocksIcon, XIcon } from '@/lib/icons'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopForemanOrb } from '../panel-motion/DesktopForemanOrb'
 import { DesktopWorkRegister } from './work/DesktopWorkRegister'
@@ -12,10 +12,11 @@ import { DesktopWorkRegister } from './work/DesktopWorkRegister'
  * The Chief of Staff's column beside its chat in the Simple view, the place a coworker's card has
  * (upstream #317): who it is, the team's work register, then every routine of the workspace.
  */
-export function DesktopForemanDetails({ orbState, shown, onClose, routines }: {
+export function DesktopForemanDetails({ orbState, shown, onClose, onOpenApps, routines }: {
     orbState: OrbActivity
     // False while the column is mounted out of sight: nothing in it moves.
     shown: boolean
+    onOpenApps?: () => void
     onClose: () => void
     // The workspace's routines, the list the Routines tab shows on the board.
     routines: ReactNode
@@ -30,6 +31,9 @@ export function DesktopForemanDetails({ orbState, shown, onClose, routines }: {
             <span className="mt-2 max-w-full truncate text-base leading-tight font-semibold">{t('workspaceView.foreman.name')}</span>
             <span className="text-xs text-muted-foreground">{t('workspaceView.foreman.line')}</span>
         </div>
+        {onOpenApps && <div className="shrink-0 px-3 pb-3">
+            <Button variant="secondary" className="w-full justify-start" onClick={onOpenApps}><BlocksIcon />{t('coworker.destinations.services')}</Button>
+        </div>}
         {/* The team's shared work register and its "Coordinate the team" routine. */}
         <div className="max-h-[50%] shrink-0 overflow-y-auto border-b border-border"><DesktopWorkRegister active={shown} /></div>
         <h3 className="shrink-0 px-4 pt-3 text-xs font-medium tracking-wide text-muted-foreground uppercase">{t('coworker.destinations.scheduled')}</h3>

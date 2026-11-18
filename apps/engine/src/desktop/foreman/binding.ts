@@ -6,6 +6,7 @@ import { readAgentConfig } from '../../agents/loader.js'
 import { getRun } from '../../db/repos/runs.js'
 import { getSession } from '../../db/repos/sessions.js'
 import { desktopApp } from '../policy.js'
+import { desktopForemanSharedApps } from '../service-tools.js'
 import { desktopApprovalTools } from '../approval-tool.js'
 import { askUserTool } from '../../tools/builtin/hitl.js'
 import { foremanTools } from './tools.js'
@@ -95,11 +96,15 @@ export async function desktopForemanTools(ctx: RunContext) {
     } catch { workspaceGranted = false }
     if (workspaceReads && workspaceGranted) Object.assign(tools, workspaceReads.tools({ binding, assertCurrent: current, signal }))
     const calls = readDesktopCoworkerCallRuntime()
-    return {
-        tools: { ...registerDesktopForemanTools(tools), ...readDesktopDelegation()?.tools(ctx),
-            ...(calls && hasDesktopToolGrant(ctx.agent.config, 'callAgent') ? desktopCallAgentTools(ctx, calls) : {}),
-            // The shared work register, on for the Chief of Staff unless the person switched it off.
-            ...desktopWorkRegisterTools(ctx) },
-        close: async () => {},
+    const built = { ...registerDesktopForemanTools(tools), ...readDesktopDelegation()?.tools(ctx),
+        ...(calls && hasDesktopToolGrant(ctx.agent.config, 'callAgent') ? desktopCallAgentTools(ctx, calls) : {}),
+        ...desktopWorkRegisterTools(ctx) }
+    if (!trusted.sharedVaultApps) return { tools: built, close: async () => {} }
+
+    const shared = await desktopForemanSharedApps(ctx, current)
+    if (Object.keys(shared.tools).some(name => Object.hasOwn(built, name))) {
+        await shared.close()
+        throw new Error('A shared app tool conflicts with another Chief of Staff tool.')
     }
+    return { tools: { ...built, ...shared.tools }, close: shared.close }
 }
