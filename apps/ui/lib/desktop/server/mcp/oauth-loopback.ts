@@ -228,12 +228,14 @@ export function loopbackMcpOAuth(store:Pick<RemoteMcpStore,'read'|'readOAuth'|'w
   if(live && live.revision===revision && live.url===server.url)return live.attemptId===attemptId?live.status:{state:'idle'}
   const token=await abortable(store.readOAuth(agent,name),signal);check();signal.throwIfAborted()
   // A refused token is never retried on its own: the person signs in again, once.
-  if(token?.rejected)return {state:'error',message:`${oauthProviderName(token.issuer)} no longer accepts this sign-in. Sign in again.`,reconnect:true}
-  if(token && token.expiresAt<=Date.now()+60_000 && !token.refreshToken)return {state:'error',message:'Authorization expired. Reconnect required.',reconnect:true}
-  if(token?.refreshPending)return {state:'error',message:'Refresh acknowledgement unavailable. Reconnect required.'}
-  if(token?.resource===server.url)return {state:'connected'}
+  const stale:OAuthStatus|null=token?.rejected?{state:'error',message:`${oauthProviderName(token.issuer)} no longer accepts this sign-in. Sign in again.`,reconnect:true}
+   :token && token.expiresAt<=Date.now()+60_000 && !token.refreshToken?{state:'error',message:'Authorization expired. Reconnect required.',reconnect:true}
+   :token?.refreshPending?{state:'error',message:'Refresh acknowledgement unavailable. Reconnect required.'}:null
+  if(!stale && token?.resource===server.url)return {state:'connected'}
+  // The latest attempt's own outcome (declined, expired code, …) is news; an older unusable sign-in is not.
   const previous=terminal.get(slot)
   if(previous?.revision===revision && previous.url===server.url && previous.attemptId===attemptId)return previous.status
+  if(stale)return stale
   // A saved entry whose sign-in can never complete on this Mac says why before anyone presses the button.
   const chosen=plan(server.url)
   return chosen.kind==='unavailable'?{state:'unsupported',message:chosen.message}:{state:'idle'}

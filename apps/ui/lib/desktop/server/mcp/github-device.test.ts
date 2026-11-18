@@ -51,7 +51,7 @@ async function setup(answers:Answer[],options:{start?:Answer;holdAfter?:number}=
  const oauth=loopbackMcpOAuth(store,async()=>({enabled:true,granted:true}),json,store,undefined,vaultSignInPlan(clientId,github.form,sleep));services.push(oauth)
  const signal=new AbortController().signal
  const status=()=>oauth.status('a','github',revision,signal)
- return {db,file,store,revision,oauth,signal,status,sleeps,release,json,...github}
+ return {db,file,store,revision,oauth,signal,status,sleeps,release,json,answers,...github}
 }
 
 it('pending, then slow down, then success: stores a non-expiring token and uses it as the bearer',async()=>{
@@ -146,6 +146,10 @@ it('a token the MCP server refuses asks to sign in again, once, without a loop',
  expect(await t.oauth.reject('a','github',accessToken,t.signal)).toBe(false)
  expect(await t.status()).toEqual(again)
  expect(t.calls).toHaveLength(polls)
+ // Signing in again and being declined shows the decline, not the older refusal.
+ t.answers.push({error:'access_denied'})
+ expect((await t.oauth.start('a','github',t.revision,t.signal)).status.state).toBe('waiting')
+ await vi.waitFor(async()=>expect(await t.status()).toEqual({state:'error',message:'Sign-in was declined on GitHub.'}))
 })
 
 it('without a client ID the sign-in is not offered, and a saved entry says why before any attempt',async()=>{
