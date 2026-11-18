@@ -117,7 +117,10 @@ test('a phone can recover a lost kickoff response after reopening without its or
     const resume = { action: 'continue', requestId: crypto.randomUUID(), expectedRevision: pending.revision }
     await expect(mutateDesktopSetup(reopened, owner, { ...resume, expectedRevision: initial.revision })).rejects.toMatchObject({ status: 409 })
     expect(mocks.chat).toHaveBeenCalledTimes(1)
-    const recovered = await mutateDesktopSetup(reopened, owner, resume)
+    const [recovered, concurrentRetry] = await Promise.all([
+        mutateDesktopSetup(reopened, owner, resume), mutateDesktopSetup(reopened, owner, resume),
+    ])
+    expect(concurrentRetry).toEqual(recovered)
     const restored = await observeDesktopSetup(reopened, owner)
     expect(restored.sessionId).toBe(recovered.sessionId)
     expect(restored.sessionId).toBe(mocks.chat.mock.calls[0][1].sessionId)
