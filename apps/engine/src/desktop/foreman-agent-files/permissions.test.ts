@@ -68,3 +68,14 @@ test('workspace metadata is an independent opt-in and requires the exact prior g
     expect((await f.app.request('/file-permissions', patch({ ...body, enabled: false, expectedGrants: { ...off, foremanWorkspaceRead: true } }))).status).toBe(200)
     expect(f.config().tools.desktopToolGrants).toEqual({ foremanWorkspaceRead: false })
 })
+
+test('the person can switch the Chief of Staff\'s work register off and on, with the exact prior state', async () => {
+    const f = fixture()
+    const body = { ...context, workspaceId: '1', id: 'workRegister', enabled: false }
+    expect(await (await f.app.request('/file-permissions')).json()).toMatchObject({ grants: { workRegister: false } })
+    expect((await f.app.request('/file-permissions', patch({ ...body, enabled: true, expectedGrants: { ...off, workRegister: false } }))).status).toBe(200)
+    expect(f.config().tools.desktopToolGrants).toEqual({ workRegister: true })
+    expect((await f.app.request('/file-permissions', patch({ ...body, expectedGrants: { ...off, workRegister: false } }))).status).toBe(409)
+    expect((await f.app.request('/file-permissions', patch({ ...body, expectedGrants: { ...off, workRegister: true } }))).status).toBe(200)
+    expect(f.config().tools.desktopToolGrants).toEqual({ workRegister: false })
+})

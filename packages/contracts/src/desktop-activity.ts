@@ -154,6 +154,7 @@ const TOOLS: Readonly<Record<string, readonly [string, string]>> = {
     skill_read: ['read a skill', 'read a skill'], skill_propose: ['propose a skill', 'proposed a skill'],
     brain_read: ['read the Brain', 'read the Brain'], brain_search: ['search the Brain', 'searched the Brain'], brain_propose: ['propose a Brain change', 'proposed a Brain change'],
     computer_open_app: ['open an app on its computer', 'opened an app on its computer'], mcp_register: ['propose a connection', 'proposed a connection'],
+    work_list: ['read the work register', 'read the work register'], work_upsert: ['update the work register', 'updated the work register'], work_note: ['add to the work register', 'added to the work register'],
 }
 
 const PAST: Readonly<Record<string, string>> = {

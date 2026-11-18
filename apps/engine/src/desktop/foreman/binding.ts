@@ -18,6 +18,7 @@ import { readDesktopDelegation } from '../delegation/binding.js'
 import { readDesktopCoworkerCallRuntime } from '../coworker-calls/bind.js'
 import { desktopCallAgentTools } from '../coworker-calls/tool.js'
 import { hasDesktopToolGrant } from '../tool-grants.js'
+import { desktopWorkRegisterTools } from '../work-register/tools.js'
 import { bindForemanWorkspaceReads, createDesktopForemanWorkspacePorts, readForemanWorkspaceReads, unbindForemanWorkspaceReads } from '../foreman-workspace-reads/index.js'
 import { parseForemanWorkspaceSnapshot } from '../foreman-workspace-reads/project.js'
 import { assertDesktopRunAdmission } from '../workspace-admission.js'
@@ -90,7 +91,9 @@ export async function desktopForemanTools(ctx: RunContext) {
     const calls = readDesktopCoworkerCallRuntime()
     return {
         tools: { ...registerDesktopForemanTools(tools), ...readDesktopDelegation()?.tools(ctx),
-            ...(calls && hasDesktopToolGrant(ctx.agent.config, 'callAgent') ? desktopCallAgentTools(ctx, calls) : {}) },
+            ...(calls && hasDesktopToolGrant(ctx.agent.config, 'callAgent') ? desktopCallAgentTools(ctx, calls) : {}),
+            // The shared work register, on for the Chief of Staff unless the person switched it off.
+            ...desktopWorkRegisterTools(ctx) },
         close: async () => {},
     }
 }
