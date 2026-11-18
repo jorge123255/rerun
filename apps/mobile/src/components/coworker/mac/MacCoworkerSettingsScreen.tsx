@@ -1,5 +1,5 @@
 import type { MacPhoneCoworkerSettings, MacPhoneCoworkerSettingsChange } from '@rerun/mac-contracts/mac-phone-pairing'
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router'
+import { router, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router'
 import { useCallback, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, View } from 'react-native'
 import { useTranslations } from 'use-intl'
@@ -24,7 +24,11 @@ type SettingsHub = Pick<MacHub, 'readCoworkerSettings' | 'changeCoworkerSettings
 export function MacCoworkerSettingsScreen({ hub }: { hub: SettingsHub }) {
     const { id, page } = useLocalSearchParams<{ id: string; page?: string }>()
     const selected = sections.find(name => name === page)
-    return <MacSettingsPage key={id} hub={hub} agentId={id} page={selected} />
+    return <>
+        {/* On iOS 26, a rightward drag on the effort slider would otherwise start a full-screen Back gesture. Edge-swipe Back remains available. */}
+        <Stack.Screen options={{ fullScreenGestureEnabled: selected === 'model' ? false : undefined }} />
+        <MacSettingsPage key={id} hub={hub} agentId={id} page={selected} />
+    </>
 }
 
 function MacSettingsPage({ hub, agentId, page }: { hub: SettingsHub; agentId: string; page?: Page }) {
