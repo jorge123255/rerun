@@ -25,6 +25,16 @@ describe('a spoken conversation with the Chief of Staff', () => {
         expect(responses.every(item => item.event_id === 1)).toBe(true)
     })
 
+    it('treats a transcript with no words, such as "...", as silence: nothing is sent or spoken', async () => {
+        for (const content of ['...', '…', ' . . ', '?!']) {
+            const { conversation, responses, sent } = start(({ end }) => end())
+            await conversation.transcript([{ role: 'user', content: 'Earlier question.' }, { role: 'agent', content: 'Answer.' }, { role: 'user', content }], 7)
+            await until(() => finals(responses).length === 1)
+            expect(sent).toEqual([])
+            expect(said(responses)).toBe('')
+        }
+    })
+
     it('says "One moment." when no words come within the wait, and only once', async () => {
         const { conversation, responses } = start(async ({ emit, end }) => { await delay(120); emit({ type: 'text', partId: 'a', delta: 'Here it is.' }); end() })
         await conversation.transcript([{ role: 'user', content: 'Slow one.' }], 4)

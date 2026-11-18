@@ -60,7 +60,9 @@ export function createVoiceConversation(options: {
     newRequestId?: () => string
 }) {
     const { chat, chief, respond } = options
-    const fillerMs = options.fillerMs ?? 2_000, retryMs = options.retryMs ?? 400, retries = options.retries ?? 12
+    // Long enough that a normal answer arrives first: said too early, it only adds a sentence before
+    // every reply. ElevenLabs waits up to 15 seconds for the first words.
+    const fillerMs = options.fillerMs ?? 6_000, retryMs = options.retryMs ?? 400, retries = options.retries ?? 12
     let current: Turn | null = null
     let closed = false
     // Set when this conversation stopped a run: the next message waits for that run to settle.
@@ -108,7 +110,9 @@ export function createVoiceConversation(options: {
         }
         if (turn !== current) return
         const text = [...entries].reverse().find(entry => entry.role === 'user')?.content.trim().slice(0, SEND_TEXT_LIMIT) ?? ''
-        if (!text) return finish(turn)
+        // ElevenLabs sends "..." (or nothing but punctuation) when it nudges a silent caller. That is not
+        // something the person said: answering it starts a Chief of Staff turn and speaks "Received."
+        if (!/[\p{L}\p{N}]/u.test(text)) return finish(turn)
         turn.filler = setTimeout(() => { if (!turn.spoke) say(turn, VOICE_FILLER) }, fillerMs)
 
         const stream = createSpokenStream()
