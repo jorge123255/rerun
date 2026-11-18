@@ -7,7 +7,7 @@ export type { McpServer, AgentConfig, AgentSetup, Verbosity } from '@rerun/contr
 // The in-process MCP server both CLI providers expose Rerun's builtin tools under. A custom server
 // registered under the same name would shadow it, so the provider drops it: the agent then shows
 // the server in its config and holds none of its tools.
-export const BRIDGE_SERVER_NAME = 'rerun'
+export { SELF_MCP_RESERVED_NAME as BRIDGE_SERVER_NAME } from '@rerun/contracts'
 
 // Providers that delegate the whole agentic loop to a local CLI: they run their own tools, so
 // Rerun's tools reach them bridged as an MCP server rather than through the AI SDK `tools` param.

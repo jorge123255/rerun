@@ -9,10 +9,11 @@ import { desktopRerunToolCatalog } from './desktop-tool-grants.js'
 // CopilotKit/OpenBot's shared/audit-words.ts and shared/audit-filters.ts (MIT). The storage, the
 // record shape and every phrase here are Rerun's own.
 
-export const DESKTOP_ACTIVITY_OUTCOMES = [
+const ACTION_DECISIONS = [
     'allowed-by-permission', 'allowed-once-by-person', 'declined-by-person', 'asked-person',
     'refused-no-permission', 'refused-policy', 'failed', 'completed',
 ] as const
+export const DESKTOP_ACTIVITY_OUTCOMES = [...ACTION_DECISIONS, 'started', 'cancelled'] as const
 export type DesktopActivityOutcome = (typeof DESKTOP_ACTIVITY_OUTCOMES)[number]
 
 export const DESKTOP_ACTIVITY_SOURCES = ['chat', 'routine', 'trigger', 'delegated', 'call'] as const
@@ -51,7 +52,7 @@ export type DesktopActivityRecord = z.infer<typeof desktopActivityRecordSchema>
  * approval fits the same three fields: how it ended, the rule that decided, and the kind.
  */
 export const desktopActivityDecisionSchema = z.object({
-    outcome: z.enum(DESKTOP_ACTIVITY_OUTCOMES).optional(),
+    outcome: z.enum(ACTION_DECISIONS).optional(),
     rule: z.string().max(120).optional(),
     kind: kind.optional(),
     app: z.string().max(80).optional(),
@@ -147,6 +148,7 @@ const TOOLS: Readonly<Record<string, readonly [string, string]>> = {
     request_secret: ['ask you for a secret', 'asked you for a secret'], request_mcp_sign_in: ['ask you to sign in to an app', 'asked you to sign in to an app'],
     web_fetch: ['read a web page', 'read a web page'], web_search: ['search the web', 'searched the web'], download: ['download a file', 'downloaded a file'],
     shell_exec: ['run a command', 'ran a command'], shell_inspect: ['check a command', 'checked a command'],
+    native_subagent: ['run a sub-agent', 'ran a sub-agent'],
     call_agent: ['ask another coworker', 'asked another coworker'], delegate: ['hand work to a helper', 'handed work to a helper'],
     notify: ['send you a notification', 'sent you a notification'], card_file: ['show a file', 'showed a file'], card_table: ['show a table', 'showed a table'],
     db_query: ['read its database', 'read its database'], db_execute: ['change its database', 'changed its database'],
@@ -201,6 +203,7 @@ const POLICIES: Readonly<Record<string, string>> = {
 function permissionLabel(rule: string | null): string | null {
     if (!rule?.startsWith('permission:')) return null
     const id = rule.slice('permission:'.length)
+    if (id === 'claudeSubagents') return 'Use Claude sub-agents'
     return GRANT_LABELS.get(id) ?? (id === 'mcp' ? 'MCP servers' : null)
 }
 
@@ -226,6 +229,8 @@ export const DESKTOP_ACTIVITY_OUTCOME_WORDS: Readonly<Record<DesktopActivityOutc
     'refused-policy': 'Refused by a policy',
     failed: 'Failed',
     completed: 'Done',
+    started: 'Started',
+    cancelled: 'Stopped',
 }
 
 export const DESKTOP_ACTIVITY_SOURCE_WORDS: Readonly<Record<DesktopActivitySource, string>> = {
@@ -258,6 +263,8 @@ export function desktopActivitySentence(coworker: string, record: Worded): strin
             if (record.rule === 'standing-answer:always') return `${coworker} ${did}${using}: always allowed by you`
             if (record.rule === 'standing-answer:conversation') return `${coworker} ${did}${using}: allowed by you for this conversation`
             return `${coworker} ${did}${using}: allowed by ${permission ?? 'a permission'}`
+        case 'started': return `${coworker} asked to ${ask}`
+        case 'cancelled': return `${coworker} stopped the action: ${ask}`
         case 'completed': return `${coworker} ${did}${using}: done`
     }
 }

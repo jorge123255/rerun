@@ -16,7 +16,7 @@ import { withAgentLock } from './lock.js'
 import { agentConfigSchema, type AgentConfig } from './types.js'
 import { ARCHIVE_ROOTS, listPathsUnder } from './archive.js'
 import { rebaselineSchedules, reindexMemories, rotateTriggers } from './import.js'
-import { writeAgentConfig } from './config-write.js'
+import { clearInheritedClaudeSubagentGrant, writeAgentConfig } from './config-write.js'
 import { parseEnvFile, writeAgentEnv } from './env.js'
 import { agentExists, loadAgentFromDisk } from './loader.js'
 import { defaultSoul } from './soul.js'
@@ -150,7 +150,14 @@ async function makeCopy(id: string, sourceId: string, input: DuplicateAgentInput
         const env = await readStagedEnv(staging)
 
         await mkdir(agentsDir(), { recursive: true })
-        if (desktop) await writeCopyReceipt(staging, sourceId)
+        if (desktop) {
+            // The config becomes readable at rename, even if the process exits
+            // before writing the completed copy receipt.
+            if (clearInheritedClaudeSubagentGrant(config)) {
+                await writeFile(resolve(staging, 'config.json'), JSON.stringify(config, null, 4), 'utf8')
+            }
+            await writeCopyReceipt(staging, sourceId)
+        }
         // A recovered partial copy may already have started using its durable ID.
         if (mode === 'desktop-new') await recordUnusedScreen(id, await realpath(staging))
         await rename(staging, agentDir(id))

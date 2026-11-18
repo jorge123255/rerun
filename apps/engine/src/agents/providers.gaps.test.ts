@@ -391,6 +391,8 @@ describe('resolveModel on the codex subscription', () => {
                 resolveModel(agent, undefined, tools, [external])
                 const settings = codexAppServerCalls.at(-1)!.defaultSettings
                 expect(settings).toMatchObject({ sandboxPolicy: 'read-only', autoApprove: false, approvalPolicy: 'never', configOverrides: { web_search: enabled ? 'live' : 'disabled' } })
+                expect(settings.configOverrides['agents.enabled']).toBe(false)
+                expect(settings.configOverrides['features.multi_agent_v2']).toBe(false)
                 expect(settings.env.RERUN_DESKTOP_CODEX_WEB).toBe(enabled ? '1' : '0')
                 expect(Object.keys(settings.mcpServers)).toEqual(enabled ? ['rerun'] : [])
                 expect(settings.configOverrides['features.code_mode.direct_only_tool_namespaces']).toEqual(enabled ? ['mcp__rerun'] : undefined)

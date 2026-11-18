@@ -88,14 +88,14 @@ function SelfImprovementCard({ row, nested, saving, toggle }: {
 function ToolSections({ agentId, tools, unavailable = false, saving, toggle }: {
     agentId: string; tools: CoworkerTools; unavailable?: boolean; saving: boolean; toggle: (patch: CoworkerToolPatch) => void
 }) {
-    return (['rerun', 'codex'] as const).map(group => {
+    return (['rerun', 'codex', 'claude'] as const).map(group => {
         // A previously granted tool whose prerequisite changed stays visible so it can be revoked.
-        const rows = tools[group].filter(row => unavailable === (!row.available && !row.enabled))
+        const rows = (tools[group] ?? []).filter(row => unavailable === (!row.available && !row.enabled))
         if (!rows.length) return null
         const selfRow = rows.find(row => row.id === 'self')
         const selfNested = rows.filter(row => row.parent === 'self')
         const grid = rows.filter(row => !row.parent && row.id !== 'self')
-        return <PanelSection key={group} label={group === 'rerun' ? 'Rerun tools' : 'Native Codex tools'}>
+        return <PanelSection key={group} label={{ rerun: 'Rerun tools', codex: 'Native Codex tools', claude: 'Native Claude Code tools' }[group]}>
             {group === 'rerun' && <DesktopScreenSetupCard className="mb-2" />}
             {group === 'codex' && !unavailable && <p className="text-xs text-muted-foreground">These permissions apply when this coworker uses ChatGPT (Codex).</p>}
             <PanelGrid className="grid-cols-1 sm:grid-cols-2">
@@ -154,7 +154,7 @@ export function DesktopCoworkerToolsBody({ agent, disabled = false, registerClos
         }
     }
 
-    const unavailableCount = tools ? [...tools.rerun, ...tools.codex].filter(row => !row.available && !row.enabled).length : 0
+    const unavailableCount = tools ? Object.values(tools).flat().filter(row => !row.available && !row.enabled).length : 0
     const description = <>Choose what {agent.name} can do. Tool results, including file contents, may be sent to the selected model.</>
     const content = <PanelScroller className="space-y-4 px-1">
         {!onDone && <p className="text-xs text-muted-foreground">{description}</p>}

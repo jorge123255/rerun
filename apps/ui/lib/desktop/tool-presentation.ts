@@ -1,4 +1,4 @@
-import { desktopRerunToolCatalog, stripBridgePrefix, toolHeadline, desktopDeclinedByPerson, desktopOutcomeForPerson } from '@rerun/contracts'
+import { nativeSubagentName, nativeSubagentOutcome, desktopRerunToolCatalog, stripBridgePrefix, toolHeadline, desktopDeclinedByPerson, desktopOutcomeForPerson } from '@rerun/contracts'
 
 // The model and engine retain their protocol messages. Chat and Run Details show only
 // public fields of an actual tool result, never a serialization of the transport envelope.
@@ -57,6 +57,15 @@ export function desktopToolPresentation(name: string, rawInput: unknown, rawOutp
     const isWrapper = typeof wrapped.type === 'string' && ['text', 'json', 'error-text', 'error-json'].includes(wrapped.type) && 'value' in wrapped
     const output = isWrapper ? wrapped.value : rawOutput
     const item = record(output)
+    if (tool === 'native_subagent') {
+        const name = nativeSubagentName(rawInput)
+        const status = nativeSubagentOutcome(output)
+        const fields = { input: { preview: name } }
+        if (rawError || status === 'failed' || wrapped.type === 'error-json' || wrapped.type === 'error-text') return { ...fields, errorText: 'Sub-agent failed.' }
+        if (status === 'completed' || output === 'Sub-agent finished.') return { ...fields, output: 'Sub-agent finished.' }
+        if (status === 'cancelled') return { ...fields, output: 'Sub-agent stopped.' }
+        return fields
+    }
     if (sensitiveTool.test(tool)) return { ...(rawError && { errorText: 'Credential request failed.' }) }
     const failed = isWrapper && (wrapped.type === 'error-text' || wrapped.type === 'error-json')
     let errorMessage = rawError

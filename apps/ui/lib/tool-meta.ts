@@ -106,6 +106,7 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
 
     vision_analyze: EyeIcon,
 
+    native_subagent: UsersIcon,
     delegate_tasks: UsersIcon,
     call_agent: UsersIcon,
 

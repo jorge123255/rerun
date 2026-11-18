@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { desktopToolPresentation as show } from './tool-presentation'
-import { desktopRunDetailsView } from './run-details'
+import { desktopRunDetailsView, recordedToolOutcome } from './run-details'
 
 describe('public tool activity', () => {
     it('shows the person the plain version of a step they declined', () => {
@@ -76,4 +76,13 @@ describe('public tool activity', () => {
         expect(JSON.parse(row.resultJson!)).toBe('Exit code 0\nwrote sample')
         expect(JSON.stringify(row)).not.toContain('private-value')
     })
+})
+
+it('projects only the native child outcome in Run Details, including cancelled and missing results', () => {
+    for (const [status, expected] of [['completed', 'outcomeSucceeded'], ['failed', 'outcomeFailed'], ['cancelled', 'outcomeCancelled'], ['unconfirmed', 'outcomeNotRecorded']]) {
+        const resultJson = JSON.stringify({ status, content: [{ type: 'text', text: 'private transcript' }] })
+        const [row] = desktopRunDetailsView([], [{ id: 'child', stepNumber: 1, toolName: 'native_subagent', isError: 0, durationMs: 5, resultJson }]).tools
+        expect(recordedToolOutcome(row!)).toBe(expected)
+        expect(JSON.stringify(row)).not.toContain('private transcript')
+    }
 })
