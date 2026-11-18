@@ -1,4 +1,5 @@
 import { desktopBrainSemanticTools } from '../desktop/brain-semantic/tool.js'
+import { desktopWorkRegisterTools } from '../desktop/work-register/tools.js'
 import { isDesktopMcpLoginTool } from '../desktop/mcp-login-tools/admission.js'
 import { desktopMcpLoginTools } from '../desktop/mcp-login-tools/tools.js'
 import { desktopPrivateRegexTools } from '../desktop/private-search/tools.js'
@@ -133,6 +134,7 @@ async function buildRunTools(ctx: RunContext): Promise<{ tools: ToolSet; close: 
         if (calls && hasDesktopToolGrant(ctx.agent.config, 'callAgent') && !ctx.agent.config.ephemeral) Object.assign(tools, desktopCallAgentTools(ctx, calls))
         const teamReads = readDesktopTeamReads()
         if (teamReads && !ctx.agent.config.ephemeral && hasDesktopToolGrant(ctx.agent.config, 'teamRead')) Object.assign(tools, teamReads.tools(ctx))
+        Object.assign(tools, desktopWorkRegisterTools(ctx))
         Object.assign(tools, desktopAiStatusTools(ctx))
         if (hasDesktopToolGrant(ctx.agent.config, 'vision')) Object.assign(tools, desktopVisionTools(ctx))
         if (hasDesktopToolGrant(ctx.agent.config, 'notify')) Object.assign(tools, desktopNotifyTools(ctx))

@@ -21,7 +21,8 @@ test('first boot defaults both file permissions off and later boots preserve eac
     await writeFile(join(location.root, 'config.json'), JSON.stringify({ ...config, tools: { ...config.tools, desktopToolGrants: { foremanAgentFilesRead: true, foremanAgentFilesWrite: false, mcp: true } } }))
     await ensureForeman()
     const restarted = await read()
-    expect(restarted.tools.desktopToolGrants).toEqual({ foremanAgentFilesRead: true, foremanAgentFilesWrite: false })
+    // The work register is on unless the person switched it off.
+    expect(restarted.tools.desktopToolGrants).toEqual({ foremanAgentFilesRead: true, foremanAgentFilesWrite: false, workRegister: true })
     expect(restarted.kind).toBe('foreman')
     expect(restarted.selfImprovement.enabled).toBe(false)
 })
@@ -35,7 +36,7 @@ test('rebuild preserves only an explicit Foreman delegation grant', async () => 
     await writeFile(join(location.root, 'config.json'), JSON.stringify(config))
     await ensureForeman()
     expect((await read()).tools.desktopToolGrants).toEqual({
-        foremanAgentFilesRead: false, foremanAgentFilesWrite: false, delegate: true, callAgent: true,
+        foremanAgentFilesRead: false, foremanAgentFilesWrite: false, delegate: true, callAgent: true, workRegister: true,
     })
 })
 
@@ -53,4 +54,14 @@ test('an existing Foreman profile receives the Chief of Staff name on boot with 
 
     expect(await read()).toMatchObject({ ...model, name: 'foreman', kind: 'foreman', displayName: 'Chief of Staff', tools: { desktopToolGrants: grants } })
     expect(await readFile(join(location.root, 'SOUL.md'), 'utf8')).toMatch(/^# Chief of Staff\n/)
+})
+
+test('the Chief of Staff keeps the work register on by default, and an explicit off survives every boot', async () => {
+    await ensureForeman()
+    const config = await read()
+    expect(config.tools.desktopToolGrants.workRegister).toBe(true)
+    config.tools.desktopToolGrants.workRegister = false
+    await writeFile(join(location.root, 'config.json'), JSON.stringify(config))
+    await ensureForeman()
+    expect((await read()).tools.desktopToolGrants.workRegister).toBe(false)
 })

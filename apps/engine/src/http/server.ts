@@ -1,5 +1,6 @@
 import { createDesktopWorkspaceAdmissionRouter } from '../desktop/workspace-admission.js'
 import { createDesktopWorkspaceRoutineRouter } from '../desktop/workspace-routines/router.js'
+import { createDesktopForemanRoutineRouter } from '../desktop/work-register/routine.js'
 import { createDesktopBrainSemanticRouter } from '../desktop/brain-semantic/router.js'
 import { createDesktopApiConnectionRouter } from '../desktop/api-connections/router.js'
 import { createDesktopCompanyBriefRouter } from '../desktop/company-brief/router.js'
@@ -126,6 +127,7 @@ export function createServer(): Hono {
     if (desktopApp()) {
         api.route('/desktop/workspace-admission', createDesktopWorkspaceAdmissionRouter())
         api.route('/desktop/workspace-routines', createDesktopWorkspaceRoutineRouter())
+        api.route('/desktop/foreman-routine', createDesktopForemanRoutineRouter())
         api.route('/desktop/brain/semantic', createDesktopBrainSemanticRouter())
         api.route('/desktop/company-brief', createDesktopCompanyBriefRouter(getCompanyBriefService))
         // Stateless: nothing is read or called until Foreman's intake asks.

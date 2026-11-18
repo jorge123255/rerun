@@ -8,7 +8,8 @@ import { getAgent } from '../agents/registry.js'
 import { createSession } from '../db/repos/sessions.js'
 import { listSchedules, readSchedule, consumeDesktopSchedule, markFired, type Schedule } from '../schedules/loader.js'
 import { buildScheduledRunMessage } from '../schedules/message.js'
-import { routineParts } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, routineParts } from '@rerun/contracts'
+import { fireDesktopForemanRoutine } from '../desktop/work-register/routine.js'
 import { isDue } from '../schedules/cron.js'
 import { sweepMemoriesIfDue } from '../memory/maintenance.js'
 import { maintainBrainIfDue } from '../brain/maintenance.js'
@@ -319,6 +320,8 @@ async function noteStartFailure(agentId:string,schedule:Schedule,error:unknown,a
 }
 
 async function fire(agentId: string, schedule: Schedule, assertActive:()=>void): Promise<void> {
+    // The Chief of Staff's routine runs in a conversation the app opens, not as a headless run.
+    if (desktopApp() && agentId === FOREMAN_AGENT_ID) return fireDesktopForemanRoutine(schedule, assertActive)
     try {
         await fireSchedule(agentId, schedule,{assertActive})
     } catch (err) {

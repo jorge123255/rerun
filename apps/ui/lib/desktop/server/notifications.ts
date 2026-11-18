@@ -14,6 +14,7 @@ import { DesktopHttpError } from './auth'
 import { desktopInfoNotificationWanted, ensureDesktopUserNotifications, pendingDesktopUserNotificationEvents, takeDesktopUserNotificationDelivery } from './user-notifications'
 import { openDesktopDatabase } from './database'
 import { readDesktopRoutineAutoOffBinding, readDesktopRoutineAutoOffEvents } from './routine-auto-off'
+import { isDesktopWorkNoticeKey, readDesktopWorkNoticeEvents } from './work-register/store'
 import type { DesktopRuntime } from './runtime'
 import { withRosterWrite } from './roster-writes'
 import { findDesktopAgent } from './store'
@@ -359,6 +360,11 @@ export async function readDesktopNotificationEvents(runtime: DesktopRuntime, acc
             if (seen.has(notice.event.key) || !Number.isFinite(notice.at) || notice.at < enabledAtMs) continue
             scored.push(notice)
         }
+        // The Chief of Staff's work register: an approval it recorded, an important blocker, a summary asked for.
+        for (const notice of await readDesktopWorkNoticeEvents(db, String(runtime.workspaceId)).catch(() => [])) {
+            if (seen.has(notice.event.key) || !Number.isFinite(notice.at) || notice.at < enabledAtMs) continue
+            scored.push(notice)
+        }
     }
     for (const event of pendingDesktopUserNotificationEvents(runtime)) {
         if (seen.has(event.key) || scored.some(entry => entry.event.key === event.key)) continue
@@ -406,7 +412,7 @@ export async function admitDesktopNotificationEvents(runtime: DesktopRuntime, ke
         try {
             for (const event of snapshot.events) {
                 if (event.kind === 'info' || !wanted.has(event.key) || (!prefs.toast && event.kind === 'done')) continue
-                const owner = await tx.execute({ sql: `SELECT s.id FROM desktop_sessions s JOIN desktop_agents a ON a.id=s.agent_id
+                const owner = isDesktopWorkNoticeKey(event.key) ? { rows: [event.key] } : await tx.execute({ sql: `SELECT s.id FROM desktop_sessions s JOIN desktop_agents a ON a.id=s.agent_id
                     LEFT JOIN desktop_deletions d ON d.agent_id=a.id WHERE s.id=? AND a.id=? AND a.workspace_id=1 AND d.agent_id IS NULL`, args: [event.sessionId, event.agentId] })
                 if (!owner.rows.length) continue
                 const attemptId = crypto.randomUUID()

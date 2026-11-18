@@ -4,6 +4,7 @@ import { authenticateDesktopEngineRequest, DesktopHttpError } from './auth'
 import { recordDesktopRunTerminal } from './notifications'
 import { isDesktopRoutineAutoOffNotice, recordDesktopRoutineAutoOff } from './routine-auto-off'
 import { handleDesktopScheduleBridge } from './schedules-binding'
+import { handleDesktopWorkRoutineBridge } from './work-register/routine'
 import { adoptDesktopScheduleEvent } from './schedules/adoption'
 import { openDesktopDatabase } from './database'
 import { engineOf } from './settings'
@@ -20,6 +21,11 @@ export async function handleDesktopEngineCallback(request: Request): Promise<Res
         if (body === undefined) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
         const callResponse = await handleDesktopCoworkerCallBridge(runtime, body)
         if (callResponse) return callResponse
+        // A due "Coordinate the team": the Chief of Staff's routine starts in a conversation of its own.
+        const routineResponse = await handleDesktopWorkRoutineBridge(body,
+            async () => ({ db: await openDesktopDatabase(runtime.dataRoot), workspaceId: String(runtime.workspaceId) }),
+            async () => (await import('./work-register/api')).desktopWorkRoutinePorts(runtime))
+        if (routineResponse) return routineResponse
         const scheduleResponse = await handleDesktopScheduleBridge(runtime, body, request.signal)
         if (scheduleResponse) return scheduleResponse
 

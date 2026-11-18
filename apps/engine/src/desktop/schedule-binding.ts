@@ -9,6 +9,7 @@ import { configureDesktopSchedules } from '../runtime/scheduler.js'
 import { desktopScheduleOccurrenceSchema, recoverDesktopScheduleClaims } from '../runtime/desktop-schedule-state.js'
 import { beginDesktopAgentWork, desktopDeletionPending } from './agent-lifecycle.js'
 import { DesktopPlanOutError, initializeUsageGate } from './usage-gate.js'
+import { configureDesktopForemanRoutine } from './work-register/routine.js'
 
 const initialized = new Map<string, Promise<void>>()
 
@@ -136,6 +137,12 @@ export async function bindDesktopSchedules(runtime: Runtime) {
     }
     current = hooks
     configureDesktopSchedules(hooks)
+    // A due "Coordinate the team" is handed to the app, which opens the Chief of Staff's conversation.
+    configureDesktopForemanRoutine(async firing => {
+        active()
+        await callback(runtime, { event: 'desktop.work-routine.fire', ...firing }, stop.signal)
+        active()
+    })
     return {
         authorize,
         /** Close synchronously, then best-effort acknowledge terminal UI admission closure. */

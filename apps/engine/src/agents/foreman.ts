@@ -33,7 +33,7 @@ function foremanConfig(choice: ForemanChoice): AgentConfig {
 }
 
 type ModelPin = Pick<AgentConfig, 'connectionId' | 'provider' | 'model'>
-type ForemanChoice = { model: ModelPin; grants: { foremanAgentFilesRead: boolean; foremanAgentFilesWrite: boolean; delegate?: boolean; callAgent?: boolean; requestApproval?: boolean; foremanWorkspaceRead?: boolean } }
+type ForemanChoice = { model: ModelPin; grants: { foremanAgentFilesRead: boolean; foremanAgentFilesWrite: boolean; delegate?: boolean; callAgent?: boolean; requestApproval?: boolean; foremanWorkspaceRead?: boolean; workRegister: boolean } }
 
 // Preserve only the user's model and explicit desktop permissions; program-owned
 // identity, instructions and every other capability are still rebuilt from code.
@@ -47,9 +47,11 @@ async function currentChoice(): Promise<ForemanChoice> {
             ...(tools.desktopToolGrants?.callAgent === true && { callAgent: true }),
             ...(tools.desktopToolGrants?.requestApproval === true && { requestApproval: true }),
             ...(tools.desktopToolGrants?.foremanWorkspaceRead === true && { foremanWorkspaceRead: true }),
+            // On unless the person switched it off: the register is how the Chief of Staff keeps track of the team's work.
+            workRegister: tools.desktopToolGrants?.workRegister !== false,
         } }
     } catch {
-        return { model: { connectionId: null, provider: null, model: null }, grants: { foremanAgentFilesRead: false, foremanAgentFilesWrite: false } }
+        return { model: { connectionId: null, provider: null, model: null }, grants: { foremanAgentFilesRead: false, foremanAgentFilesWrite: false, workRegister: true } }
     }
 }
 

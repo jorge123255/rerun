@@ -8,10 +8,10 @@ import { unloadAgent } from '../../agents/registry.js'
 import { desktopApp } from '../policy.js'
 import { assertDesktopRunAdmission } from '../workspace-admission.js'
 
-export const foremanFileGrantsSchema = z.strictObject({ foremanAgentFilesRead: z.boolean(), foremanAgentFilesWrite: z.boolean(), delegate: z.boolean().optional(), callAgent: z.boolean().optional(), requestApproval: z.boolean().optional(), foremanWorkspaceRead: z.boolean().optional() })
+export const foremanFileGrantsSchema = z.strictObject({ foremanAgentFilesRead: z.boolean(), foremanAgentFilesWrite: z.boolean(), delegate: z.boolean().optional(), callAgent: z.boolean().optional(), requestApproval: z.boolean().optional(), foremanWorkspaceRead: z.boolean().optional(), workRegister: z.boolean().optional() })
 export const foremanFilePermissionChangeSchema = z.strictObject({
     workspaceId: z.string().min(1).max(128), launchNonce: z.uuid(), expectedGrants: foremanFileGrantsSchema,
-    id: z.enum(['foremanAgentFilesRead', 'foremanAgentFilesWrite', 'delegate', 'callAgent', 'requestApproval', 'foremanWorkspaceRead']), enabled: z.boolean(),
+    id: z.enum(['foremanAgentFilesRead', 'foremanAgentFilesWrite', 'delegate', 'callAgent', 'requestApproval', 'foremanWorkspaceRead', 'workRegister']), enabled: z.boolean(),
 })
 type Context = { workspaceId: string | number; launchNonce: string }
 export type ForemanFilePermissionPorts = {
@@ -28,6 +28,7 @@ const grantsOf = (config: AgentConfig) => ({
     callAgent: config.tools.desktopToolGrants?.callAgent === true,
     requestApproval: config.tools.desktopToolGrants?.requestApproval === true,
     foremanWorkspaceRead: config.tools.desktopToolGrants?.foremanWorkspaceRead === true,
+    workRegister: config.tools.desktopToolGrants?.workRegister === true,
 })
 async function permissionBody(request: Request): Promise<string> {
     const reader = request.body?.getReader()
@@ -87,7 +88,8 @@ export function createForemanFilePermissionRoutes(context: Context | undefined, 
                     || (input.id === 'delegate' || input.expectedGrants.delegate !== undefined) && before.delegate !== input.expectedGrants.delegate
                     || (input.id === 'callAgent' || input.expectedGrants.callAgent !== undefined) && before.callAgent !== input.expectedGrants.callAgent
                     || (input.id === 'requestApproval' || input.expectedGrants.requestApproval !== undefined) && before.requestApproval !== input.expectedGrants.requestApproval
-                    || (input.id === 'foremanWorkspaceRead' || input.expectedGrants.foremanWorkspaceRead !== undefined) && before.foremanWorkspaceRead !== input.expectedGrants.foremanWorkspaceRead) return c.json({ error: 'Foreman permissions changed. Refresh before choosing again.' }, 409)
+                    || (input.id === 'foremanWorkspaceRead' || input.expectedGrants.foremanWorkspaceRead !== undefined) && before.foremanWorkspaceRead !== input.expectedGrants.foremanWorkspaceRead
+                    || (input.id === 'workRegister' || input.expectedGrants.workRegister !== undefined) && before.workRegister !== input.expectedGrants.workRegister) return c.json({ error: 'Foreman permissions changed. Refresh before choosing again.' }, 409)
                 c.req.raw.signal.throwIfAborted()
                 authority.admit(); live()
                 const next = { ...config, tools: { ...config.tools, desktopToolGrants: { ...config.tools.desktopToolGrants, [input.id]: input.enabled } } }

@@ -6,10 +6,11 @@ import { Button } from '@/components/ui/button'
 import { XIcon } from '@/lib/icons'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopForemanOrb } from '../panel-motion/DesktopForemanOrb'
+import { DesktopWorkRegister } from './work/DesktopWorkRegister'
 
 /**
  * The Chief of Staff's column beside its chat in the Simple view, the place a coworker's card has
- * (upstream #317): who it is, then every routine of the workspace.
+ * (upstream #317): who it is, the team's work register, then every routine of the workspace.
  */
 export function DesktopForemanDetails({ orbState, shown, onClose, routines }: {
     orbState: OrbActivity
@@ -29,7 +30,9 @@ export function DesktopForemanDetails({ orbState, shown, onClose, routines }: {
             <span className="mt-2 max-w-full truncate text-base leading-tight font-semibold">{t('workspaceView.foreman.name')}</span>
             <span className="text-xs text-muted-foreground">{t('workspaceView.foreman.line')}</span>
         </div>
-        <h3 className="shrink-0 px-4 pt-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">{t('coworker.destinations.scheduled')}</h3>
+        {/* The team's shared work register and its "Coordinate the team" routine. */}
+        <div className="max-h-[50%] shrink-0 overflow-y-auto border-b border-border"><DesktopWorkRegister active={shown} /></div>
+        <h3 className="shrink-0 px-4 pt-3 text-xs font-medium tracking-wide text-muted-foreground uppercase">{t('coworker.destinations.scheduled')}</h3>
         {routines}
     </div>
 }
