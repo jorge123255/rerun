@@ -1,6 +1,6 @@
 import { type SkillSummary } from '@rerun/contracts'
 import { type Ref, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from 'react'
-import { Text, TextInput, View, type TextInputInstance } from 'react-native'
+import { StyleSheet, Text, TextInput, View, type TextInputInstance } from 'react-native'
 import { useTranslations } from 'use-intl'
 
 import { addPasteImagesListener } from '@/chat/composer-paste'
@@ -65,6 +65,7 @@ export function Composer({ value, onChangeText, attachments = [], onAttachmentsC
     const recording = recorder.status !== 'idle'
     const canRecord = Boolean(voice)
     const expanded = focused || value.length > 0 || attachments.length > 0 || recording
+    const shape = { borderRadius: expanded ? radius.xl : radius.pill, borderCurve: 'continuous' } as const
     const hasText = value.trim().length > 0
     const canSend = hasText || attachments.length > 0
     const inputText = { paddingHorizontal: expanded ? spacing.xs : canAttach ? 0 : spacing.sm, paddingVertical: (CONTROL - LINE_HEIGHT) / 2, fontFamily: fonts.regular, fontSize: 16, lineHeight: LINE_HEIGHT } as const
@@ -141,7 +142,9 @@ export function Composer({ value, onChangeText, attachments = [], onAttachmentsC
     return (
         <View style={{ gap: spacing.sm }}>
             {mention && suggestions.length > 0 && <MentionSuggestions trigger={mention.trigger} items={suggestions} onPick={pickMention} />}
-            <GlassSurface key={theme.scheme} colorScheme={theme.scheme} glassEffectStyle={glass} style={{ borderRadius: expanded ? radius.xl : radius.pill, borderCurve: 'continuous', paddingHorizontal: expanded ? spacing.md : spacing.sm, paddingTop: expanded ? spacing.md : spacing.sm, paddingBottom: spacing.sm, gap: spacing.sm }}>
+            <View style={[shape, { backgroundColor: theme.card, paddingHorizontal: expanded ? spacing.md : spacing.sm, paddingTop: expanded ? spacing.md : spacing.sm, paddingBottom: spacing.sm, gap: spacing.sm }]}>
+                {/* Glass can disappear during a page transition. Keep the editor and its controls in ordinary sibling views. */}
+                <GlassSurface key={theme.scheme} pointerEvents="none" accessible={false} colorScheme={theme.scheme} glassEffectStyle={glass} style={[StyleSheet.absoluteFill, shape]} />
                 {expanded && target && (
                     <View style={{ paddingHorizontal: spacing.xs }}>
                         <TargetPicker target={target.coworker} choices={target.choices} onPick={target.onPick} />
@@ -185,7 +188,7 @@ export function Composer({ value, onChangeText, attachments = [], onAttachmentsC
                         )}
                     </View>
                 )}
-            </GlassSurface>
+            </View>
         </View>
     )
 }

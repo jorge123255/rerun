@@ -847,6 +847,9 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const ownsLiveStop = !!sessionId && liveSessionId === sessionId
     const stopTarget = (busy ? ownsLiveStop : runInFlight) ? sessionId : null
     const stopRunId = stopTarget ? (busy ? liveRunId : engineRunning.runId) : null
+    // A saved request can arrive before its run settles. Keep the draft and Stop
+    // available for that run while the request continues to block ordinary sends.
+    const composerHidden = setupBlocked || (!!pendingRequest && !stopTarget)
     const historyError = history.id === sessionId ? history.error : undefined
     const savedFailure = history.id === sessionId ? replayedRunFailure(history.transcript ?? [], history.lastError ?? engineRunning.failedRunError ?? null) : null
     const stopBanner = reconnectNote || savedFailure || (!reconnecting ? error?.message : undefined)
@@ -1884,7 +1887,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     await decideTakeover(takeover.attempt ?? { action: 'done', takeoverId: takeover.id, requestId: crypto.randomUUID() })
                 }} />
             <MessageFeedbackDialog open={feedback.dialogOpen} rating={feedback.dialogRating} notice="Feedback is stored on this Mac." onOpenChange={feedback.onDialogOpenChange} onSubmit={feedback.submitDetails} />
-            <div inert={chatCovered} className={cn('shrink-0 border-t p-2.5', pendingRequest && 'border-t-0 py-0', chatCovered && 'invisible')}>
+            <div inert={chatCovered} className={cn('shrink-0 border-t p-2.5', pendingRequest && composerHidden && 'border-t-0 py-0', chatCovered && 'invisible')}>
                 {proposalsActive && <DesktopSkillProposalDock proposals={pinnedSkillProposals} pendingId={skillProposals.pendingId} onDecide={skillProposals.decide} onOpenSkill={openProposalSkill} />}
                 {proposalsActive && skillProposals.unavailable && <p role="status" className="mb-2 text-xs text-muted-foreground">Could not check all proposed changes. <Button type="button" variant="link" size="sm" onClick={() => void skillProposals.refresh()}>Retry</Button></p>}
                 {draft.quitting ? <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">Saving drafts before quitting…</p>
@@ -1927,7 +1930,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                         if (!active || inactive || stopping || draft.quitting || !ready || uploadsActive || preparingSend || !!pendingRequest) return
                         composerForm.current?.requestSubmit()
                     }} />
-                <form ref={composerForm} data-slot="desktop-composer" onSubmit={submit} hidden={!!pendingRequest || setupBlocked} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest || setupBlocked ? 'hidden' : 'flex')}>
+                <form ref={composerForm} data-slot="desktop-composer" onSubmit={submit} hidden={composerHidden} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', composerHidden ? 'hidden' : 'flex')}>
                     {uploadDragOver && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] border border-dashed border-brand bg-background/85">
                         <span className="flex items-center gap-2 text-sm font-medium text-brand"><UploadIcon className="size-4" />Drop files to attach</span>
                     </div>}
