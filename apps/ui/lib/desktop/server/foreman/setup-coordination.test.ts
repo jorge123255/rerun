@@ -93,11 +93,47 @@ test.each([
     expect(ports.messages).not.toHaveBeenCalled()
     expect(ports.start).not.toHaveBeenCalled()
 })
-test('withholds stale, missing, hidden, oversized, and sensitive messages from the Chief', async () => {
+test('reads the visible words of a real turn that thought and used tools, never its reasoning or tool data', async () => {
+    const turn = msg('real', 'assistant', [
+        { type: 'reasoning', text: 'hidden chain' },
+        { type: 'tool-call', toolCallId: 'c1', toolName: 'functions.exec', input: { code: 'private tool input' }, providerExecuted: true },
+        { type: 'tool-call', toolCallId: 'c2', toolName: 'team_status', input: { agentId: 'x' }, providerExecuted: true },
+        { type: 'tool-result', toolCallId: 'c2', toolName: 'team_status', output: { type: 'json', value: 'private tool output' } },
+        { type: 'tool-result', toolCallId: 'c1', toolName: 'functions.exec', output: { type: 'text', value: 'private tool output' } },
+        { type: 'reasoning', text: 'more hidden chain' },
+        { type: 'text', text: 'Setup is still pending. Which pull request should I review first?' },
+    ])
+    ports.messages.mockResolvedValue([msg('user', 'user', 'is setup done'), turn])
+    const result = await inspect()
+    expect(result).toMatchObject({ state: 'awaiting_reply', lastMessage: 'Setup is still pending. Which pull request should I review first?' })
+    expect(JSON.stringify(result)).not.toMatch(/hidden chain|private tool/)
+    expect(result.step?.stepId).toBe(createHash('sha256').update(JSON.stringify([turn.id, turn.contentJson])).digest('hex'))
+})
+test('a turn that ends with suggested reply chips is still an ordinary question', async () => {
+    const chips = { ...msg('chips', 'assistant', [{ type: 'text', text: 'Which pull request first?' }]), toolCallsJson: JSON.stringify([{ toolCallId: 'r', toolName: 'suggest_replies', input: { replies: ['Newest'] } }]) }
+    ports.messages.mockResolvedValue([last, chips])
+    expect(await inspect()).toMatchObject({ state: 'awaiting_reply', lastMessage: 'Which pull request first?' })
+    const other = { ...chips, toolCallsJson: JSON.stringify([{ toolCallId: 'x', toolName: 'web_fetch', input: {} }]) }
+    ports.messages.mockResolvedValue([last, other])
+    expect((await inspect()).state).toBe('needs_owner')
+})
+test('hands the Chief the end of a long setup message instead of refusing it', async () => {
+    const long = 'Background. '.repeat(700) + 'Which route do you want to take?'
+    ports.messages.mockResolvedValue([last, msg('long', 'assistant', long)])
+    const result = await inspect()
+    expect(result.state).toBe('awaiting_reply')
+    expect(result.lastMessage!.length).toBeLessThanOrEqual(6000)
+    expect(result.lastMessage!.startsWith('…')).toBe(true)
+    expect(result.lastMessage!.endsWith('Which route do you want to take?')).toBe(true)
+})
+test('withholds stale, missing, unfinished, person-facing and sensitive messages from the Chief', async () => {
     for (const row of [
         msg('user', 'user', 'newer owner response'), msg('tool', 'tool', 'secret tool output'),
-        msg('private', 'assistant', [{ type: 'reasoning', text: 'hidden chain' }, { type: 'text', text: 'Visible?' }]),
-        msg('large', 'assistant', 'x'.repeat(801)), msg('sensitive', 'assistant', 'Authorization: Bearer synthetic-private-string'),
+        msg('unfinished', 'assistant', [{ type: 'text', text: 'Checking.' }, { type: 'tool-call', toolCallId: 'c1', toolName: 'web_fetch', input: {} }]),
+        msg('ended-on-tool', 'assistant', [{ type: 'text', text: 'Checking.' }, { type: 'tool-call', toolCallId: 'c1', toolName: 'web_fetch', input: {} }, { type: 'tool-result', toolCallId: 'c1', toolName: 'web_fetch', output: {} }]),
+        msg('person-facing', 'assistant', [{ type: 'tool-call', toolCallId: 'q', toolName: 'request_secret', input: {} }, { type: 'tool-result', toolCallId: 'q', toolName: 'request_secret', output: {} }, { type: 'text', text: 'Done?' }]),
+        msg('unknown-part', 'assistant', [{ type: 'file', mediaType: 'image/png', data: 'x' }, { type: 'text', text: 'See this?' }]),
+        msg('sensitive', 'assistant', 'Authorization: Bearer synthetic-private-string'),
         msg('credential', 'assistant', 'Please send your API key.'),
     ]) {
         ports.messages.mockResolvedValue([last, row])

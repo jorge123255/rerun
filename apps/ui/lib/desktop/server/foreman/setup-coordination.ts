@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import {
     DESKTOP_TEAM_CHANGE_LIMITS, FOREMAN_AGENT_ID, LEGACY_DESKTOP_WORKSPACE_ID, desktopMcpSignInSourceResponseSchema,
-    desktopSetupReplyQuestion, desktopToolInstallAttention, findDesktopApproval, findDesktopQuestion,
+    desktopSetupQuestionExcerpt, desktopSetupReplyQuestion, desktopToolInstallAttention, findDesktopApproval, findDesktopQuestion,
     findDesktopSecretRequest, findDesktopServiceRequest, findDesktopTakeover, hitlKindOf, redactHistoricalText,
     type DesktopForemanBinding, type DesktopForemanChatRef,
 } from '@rerun/contracts'
@@ -141,10 +141,10 @@ async function observe(runtime: DesktopRuntime, db: Client, contact: Contact, si
     if (idle?.sessionId !== session.id) return { state: 'working' }
     const last = rows.at(-1)
     const question = last && desktopSetupReplyQuestion(last)
-    if (!last || !question || question.length > DESKTOP_TEAM_CHANGE_LIMITS.maxSetupQuestion ||
-        redactHistoricalText(question, question.length) !== question) return owned('original_chat')
+    // The whole message is checked; a long one is handed to the Chief by its end, where the question is.
+    if (!last || !question || redactHistoricalText(question, question.length) !== question) return owned('original_chat')
     if (/\b(?:paste|enter|share|send|provide|supply|type)\s+(?:(?:your|the|a|an|my)\s+)?(?:password|passcode|api[ -]?key|access token|private key|verification code|one[- ]time code)\b/i.test(question)) return owned('secret')
-    return { state: 'awaiting_reply', lastMessage: question, step: { sessionId: session.id, revision: setup.revision,
+    return { state: 'awaiting_reply', lastMessage: desktopSetupQuestionExcerpt(question, DESKTOP_TEAM_CHANGE_LIMITS.maxSetupMessage), step: { sessionId: session.id, revision: setup.revision,
         stepId: createHash('sha256').update(JSON.stringify([last.id, last.contentJson])).digest('hex') } }
 }
 
