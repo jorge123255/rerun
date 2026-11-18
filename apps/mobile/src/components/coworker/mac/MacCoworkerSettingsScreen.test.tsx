@@ -100,7 +100,6 @@ it('re-reads the settings switch when the Mac revokes it between reading and sav
 
 it.each([
     ['model', 'radio', 'Extra', { field: 'model', body: { action: 'coworker', connectionId: 'c', model: 'extra' } }],
-    ['model', 'radio', 'high', { field: 'effort', body: { connectionId: 'c', model: 'terra', effort: 'high' } }],
     ['profile', 'radio', 'Reports', { field: 'box', body: { expectedRevision: 10, spaceId: 'box1', requestId: '930b91e3-d0fb-4225-b144-03e39c752cfa' } }],
     ['setup', 'button', 'Skip setup', { field: 'setup', body: { expectedRevision: 'setup-now', action: 'skip', requestId: '930b91e3-d0fb-4225-b144-03e39c752cfa' } }],
 ] as const)('uses the offered setting and its current scope for %s / %s / %s', async (page, role, name, change) => {
@@ -109,6 +108,23 @@ it.each([
     await render(<MacCoworkerSettingsScreen hub={hub} />)
     await fireEvent.press(await screen.findByRole(role, { name }))
     expect(hub.changeCoworkerSettings).toHaveBeenCalledWith('ada', change, expect.anything())
+})
+
+it('saves the offered reasoning stop and resets the current model using the same slider', async () => {
+    mockParams.page = 'model'
+    const hub = fakeHub()
+    const active = { ...value, model: { ...value.model, effective: { ...value.model.effective, reasoning: { source: 'model' as const, effort: 'high' } } } }
+    hub.readCoworkerSettings.mockResolvedValueOnce(value).mockResolvedValueOnce(active).mockResolvedValue(value)
+    await render(<MacCoworkerSettingsScreen hub={hub} />)
+    const slider = await screen.findByRole('adjustable', { name: 'Reasoning effort' })
+    expect(screen.getByText('Default · Medium')).toBeTruthy()
+    await fireEvent(slider, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } })
+    expect(await screen.findByText('High')).toBeTruthy()
+    await fireEvent.press(screen.getByRole('button', { name: 'Use this model’s default effort' }))
+    expect(hub.changeCoworkerSettings.mock.calls).toEqual(['high', null].map(effort => [
+        'ada', { field: 'effort', body: { connectionId: 'c', model: 'terra', effort } }, expect.anything(),
+    ]))
+    expect(await screen.findByText('Default · Medium')).toBeTruthy()
 })
 
 it.each(['setup', 'profile'] as const)('can retry the original %s action after the Mac advanced its revision before acknowledging', async page => {

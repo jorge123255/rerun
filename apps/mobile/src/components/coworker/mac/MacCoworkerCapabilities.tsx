@@ -8,6 +8,7 @@ import { Switch } from '@/components/ui/Switch'
 import { spacing } from '@/theme/tokens'
 
 import type { SettingsProps } from './MacCoworkerSettingsScreen'
+import { MacModelEffortBar } from './MacModelEffortBar'
 
 export function MacCoworkerModel({ value, disabled, save }: SettingsProps) {
     const t = useTranslations('mobileCoworker.mac')
@@ -17,17 +18,24 @@ export function MacCoworkerModel({ value, disabled, save }: SettingsProps) {
         if (connectionId && model) save({ field: 'effort', body: { connectionId, model, effort: next } })
     }
     return <>
+        {reasoningOptions && reasoningOptions.length > 0 && effective.available && model && connectionId && (
+            <View style={{ gap: spacing.sm }}>
+                <MacModelEffortBar
+                    key={JSON.stringify([connectionId, model, reasoningOptions])}
+                    model={effective.label}
+                    options={reasoningOptions}
+                    chosen={reasoning?.source === 'model' ? reasoning.effort : undefined}
+                    inherited={reasoning?.source !== 'model' ? reasoning?.effort : undefined}
+                    disabled={disabled}
+                    onChoose={effort}
+                />
+                <AppText variant="footnote" tone="muted">{t('effortScope')}</AppText>
+            </View>
+        )}
         <Section>
             <CheckRow label={t('follow')} detail={coworker ? undefined : effective.label} checked={!coworker} disabled={disabled || !coworker} onPress={() => save({ field: 'model', body: { action: 'follow-workspace' } })} />
             {!effective.available && <SettingsRow label={t('unavailable')} value={effective.label} />}
         </Section>
-        {reasoningOptions?.length && effective.available && model && connectionId ? (
-            <Section title={t('effort')}>
-                <AppText variant="footnote" tone="muted" style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md }}>{t('effortScope')}</AppText>
-                <CheckRow label={t('defaultEffort')} detail={reasoning?.source !== 'model' ? reasoning?.effort : undefined} checked={reasoning?.source !== 'model'} disabled={disabled} onPress={() => effort(null)} />
-                {reasoningOptions.map(option => <CheckRow key={option} label={option} checked={reasoning?.source === 'model' && reasoning.effort === option} disabled={disabled} onPress={() => effort(option)} />)}
-            </Section>
-        ) : null}
         {catalog.map(connection => <Section key={connection.connectionId} title={connection.name}>
             {connection.models.map(choice => <CheckRow key={choice.id} label={choice.label}
                 checked={coworker?.connectionId === connection.connectionId && coworker.model === choice.id}
