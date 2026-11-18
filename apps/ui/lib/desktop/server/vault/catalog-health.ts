@@ -22,17 +22,29 @@ export function vaultCatalogHealth(
         if (checking) throw new DesktopHttpError(409, 'A Vault connection check is already running.')
         checking = true
         try {
-            const row = (await db.execute({
+            const read = async () => (await db.execute({
                 sql: `SELECT s.name,s.revision,o.generation
                     FROM desktop_vault_mcp_servers s LEFT JOIN desktop_vault_mcp_oauth o ON o.item_id=s.id
                     WHERE s.id=? AND s.catalog_slug IS NOT NULL`,
                 args: [id],
             })).rows[0]
+            const row = await read()
             if (!row || row.revision !== revision) throw new DesktopHttpError(409, 'This Vault entry changed. Reopen it and try again.')
-            const generation = typeof row.generation === 'string' ? row.generation : null
-            const account = { id, name: String(row.name), revision, generation }
-            const observed = await inspect(account, signal).catch(() => 'failed' as const)
+            let generation = typeof row.generation === 'string' ? row.generation : null
+            let observed = await inspect({ id, name: String(row.name), revision, generation }, signal).catch(() => 'failed' as const)
             assertCurrent()
+            // A check that met the 401 itself has just marked the sign-in refused, which saves it as a
+            // new generation. Look once more at that generation: a refused mark is read without any
+            // request, and a genuinely new sign-in saved meanwhile is checked like any other.
+            if (observed === 'revoked') {
+                const now = await read()
+                const next = typeof now?.generation === 'string' ? now.generation : null
+                if (now?.revision === revision && next !== generation) {
+                    generation = next
+                    observed = await inspect({ id, name: String(now.name), revision, generation }, signal).catch(() => 'failed' as const)
+                    assertCurrent()
+                }
+            }
             const checkedAt = new Date().toISOString()
             let health: DesktopVaultHealthReceipt
             if (observed === 'signed-out') {

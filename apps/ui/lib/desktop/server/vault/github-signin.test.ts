@@ -177,6 +177,18 @@ test('device sign-in in the Vault: the token is stored encrypted, used as Bearer
         expect(contacted.filter(url => url === GITHUB_DEVICE_CODE_URL)).toHaveLength(1)
 
         // Signing in again replaces the refused token.
+        answers.push({ access_token: accessToken + 'c', token_type: 'bearer' })
+        refuse = false
+        expect((await oauth.start(entry.id, entry.name, entry.revision, signal)).status.state).toBe('waiting')
+        await vi.waitFor(async () => expect(await oauth.status(entry.id, entry.name, entry.revision, signal)).toEqual({ state: 'connected' }))
+        // When the connection check is the first to meet the 401, it still records its own result.
+        refuse = true
+        const first = await check(entry.id, entry.revision, signal)
+        renderer.push(first)
+        expect(first).toMatchObject({ state: 'disconnected', message: 'The app no longer accepts this sign-in. Sign in again.' })
+        expect((await f.vault.list()).entries.find(item => item.id === entry.id)).toMatchObject({ signedOut: true, catalog: { health: { state: 'disconnected' } } })
+        expect(await oauth.status(entry.id, entry.name, entry.revision, signal)).toEqual(again)
+
         answers.push({ access_token: accessToken + 'b', token_type: 'bearer' })
         refuse = false
         expect((await oauth.start(entry.id, entry.name, entry.revision, signal)).status.state).toBe('waiting')
