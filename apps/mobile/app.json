@@ -79,7 +79,15 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Rerun uses the microphone to record voice messages."
+          "microphonePermission": "Rerun uses the microphone to record voice messages and to talk with your Chief of Staff."
+        }
+      ],
+      [
+        "@livekit/react-native-expo-plugin",
+        {
+          "ios": {
+            "addPodSources": false
+          }
         }
       ],
       "./plugins/without-background-playback",
