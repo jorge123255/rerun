@@ -165,6 +165,46 @@ describe('useCoworkerChat in the background', () => {
     })
 })
 
+describe('a paired phone observing a Mac-started coworker turn', () => {
+    it('opens before any reply, keeps its own controls idle, and reads the finished answer on screen', async () => {
+        clearLocalCache()
+        jest.clearAllMocks()
+        jest.useFakeTimers()
+        const previousState = AppState.currentState
+        AppState.currentState = 'active'
+        try {
+            mockChat.initialStatus = 'ready'
+            const endpoints = fakeEndpoints(null)
+            const finished = [{ id: 'final', role: 'assistant' as const, parts: [{ type: 'text' as const, text: 'Job complete' }] }]
+            let running = true
+            endpoints.observedRunning = () => running
+            endpoints.messages = jest.fn(async () => running ? [] : finished)
+            const page = await renderHook(({ visible }: { visible: boolean }) => useCoworkerChat({ endpoints, initialSessionId: 's1', visible }), { initialProps: { visible: true } })
+            expect(page.result.current.observedRunning).toBe(true)
+            expect(page.result.current.busy).toBe(false)
+            expect(page.result.current.messages).toEqual([])
+            await page.rerender({ visible: false })
+            await act(async () => jest.advanceTimersByTime(6000))
+            expect(endpoints.messages).toHaveBeenCalledTimes(1)
+            await page.rerender({ visible: true })
+            expect(page.result.current.observedRunning).toBe(true)
+            running = false
+            await act(async () => jest.advanceTimersByTime(3000))
+            expect(mockChat.setMessages).toHaveBeenCalledWith(finished)
+            expect(page.result.current.observedRunning).toBe(false)
+            const reads = jest.mocked(endpoints.messages).mock.calls.length
+            await act(async () => jest.advanceTimersByTime(9000))
+            expect(endpoints.messages).toHaveBeenCalledTimes(reads)
+            expect(mockChat.resumeStream).not.toHaveBeenCalled()
+            expect(endpoints.stop).not.toHaveBeenCalled()
+            await page.unmount()
+        } finally {
+            AppState.currentState = previousState
+            jest.useRealTimers()
+        }
+    })
+})
+
 describe('useCoworkerChat with a kept transcript', () => {
     const kept = [{ id: 'm1', role: 'user' as const, parts: [{ type: 'text' as const, text: 'hello' }] }]
 

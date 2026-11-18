@@ -30,6 +30,7 @@ export type MacHub = {
     rememberChat: (chatId: string, agentId: string) => void
     turnStarted: (chatId: string, agentId: string, requestId: string) => void
     turnEnded: (chatId: string, requestId: string) => void
+    observedRunning: (chatId: string) => boolean
     lastTurn: (chatId: string) => { agentId: string; requestId: string } | null
     // The question a chat waits on, as last read: the Mac takes its answer as an answer, not as a message.
     waitingQuestion: (chatId: string) => NonNullable<NonNullable<MacPhoneChatRead['pending']>['question']> | null
@@ -177,6 +178,7 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
     const agentOfChat = new Map<string, string>()
     const waiting = new Map<string, SessionStatus | null>()
     const running = new Map<string, string>()
+    const observed = new Set<string>()
     const turns = new Map<string, { agentId: string; requestId: string }>()
     const reads = new Set<Promise<unknown>>()
     const stops = new Map<string, Promise<void>>()
@@ -198,7 +200,7 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
         }
     }
 
-    const statusOf = (chatId: string): SessionStatus => (running.has(chatId) ? 'working' : (waiting.get(chatId) ?? 'idle'))
+    const statusOf = (chatId: string): SessionStatus => (running.has(chatId) ? 'working' : (waiting.get(chatId) ?? (observed.has(chatId) ? 'working' : 'idle')))
 
     async function coworkers(signal?: AbortSignal): Promise<MacPhoneCoworker[]> {
         return macPhoneCoworkersSchema.parse(await ask(() => client.listCoworkers(signal))).coworkers
@@ -229,6 +231,8 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
         await stops.get(chatId)
         const agentId = await agentOf(chatId, signal)
         const read = macPhoneChatReadSchema.parse(await ask(() => client.openSavedChat(agentId, chatId, signal)))
+        if (read.running === true) observed.add(chatId)
+        if (read.running === false) observed.delete(chatId)
         waiting.set(chatId, waitingOf(read))
         if (read.pending?.question) questions.set(chatId, read.pending.question)
         else questions.delete(chatId)
@@ -422,6 +426,7 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
         turnEnded(chatId, requestId) {
             if (running.get(chatId) === requestId) running.delete(chatId)
         },
+        observedRunning: chatId => observed.has(chatId),
         lastTurn: chatId => turns.get(chatId) ?? null,
         waitingQuestion: chatId => questions.get(chatId) ?? null,
         waitingApproval: chatId => approvals.get(chatId) ?? null,

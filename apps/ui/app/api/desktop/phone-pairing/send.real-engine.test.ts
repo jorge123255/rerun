@@ -35,10 +35,15 @@ test.runIf(process.env.RERUN_PHONE_SEND_ACCEPTANCE === '1')('a phone reconnects 
         expect(seeded.status).toBe(200)
         const seedStream = seeded.text()
         await engine.waitForProviderRequest(1)
-        engine.finishReply()
-        await seedStream
         const chatId = seeded.headers.get('x-session-id')
         const path = endpoint + `?agentId=${agent.id}&chatId=${chatId}`
+        const observing = await (await GET(request(path))).json()
+        expect(observing.running).toBe(true)
+        expect(observing.messages.filter((message: { role: string }) => message.role === 'assistant')).toEqual([])
+        expect(observing).not.toHaveProperty('runId')
+        engine.finishReply()
+        await seedStream
+        await expect.poll(async () => (await (await GET(request(path))).json()).running).toBe(false)
         const body = { runId: '4ce8e801-9bbd-8c6e-8221-2e326471724c', text: 'A message from the paired phone' }
         expect((await POST(request(path, 'POST', { ...body, modelChoice: { model: 'other' } }))).status).toBe(400)
         setDesktopWorkspaceFrozen(runtime, true)

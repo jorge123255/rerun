@@ -109,6 +109,7 @@ export type MacPhonePending = z.infer<typeof macPhonePendingSchema>
 export const macPhoneChatReadSchema = z.object({
     chat: macPhoneChatSchema.extend({ acceptsMessages: z.boolean() }),
     messages: z.array(macPhoneMessageSchema),
+    running: z.boolean().optional(),
     pending: macPhonePendingSchema.optional(),
     permissions: sendPermission.optional(),
 })

@@ -3,6 +3,7 @@ import type { UIMessage } from 'ai'
 import { randomUUID } from 'expo-crypto'
 
 import { fetchActiveRun, fetchMessages, stopConversation } from '@/api/chat'
+import { macHub } from '@/api/client'
 import type { FileOwner } from '@/api/files'
 import { fetchForemanActiveRun, fetchForemanMessages, stopForeman } from '@/api/foreman'
 
@@ -17,6 +18,7 @@ export type ChatEndpoints = {
     sendBody: (sessionId: string | null, text: string) => Record<string, unknown>
     bornSessionOf: (response: Response) => string | null
     messages: (caller: Caller, sessionId: string) => Promise<UIMessage[]>
+    observedRunning?: (sessionId: string) => boolean
     activeRun: (caller: Caller, sessionId: string) => Promise<string | null>
     stop: (caller: Caller, sessionId: string, runId: string | null) => Promise<void>
     // Where the conversation's uploads go, before its first send included.
@@ -31,6 +33,7 @@ export function coworkerEndpoints(agentId: string, { general = false }: { genera
         sendBody: (sessionId, text) => (general && !sessionId ? { agentId, kind: 'general', text } : { agentId, sessionId: sessionId ?? undefined, text }),
         bornSessionOf: response => response.headers.get('X-Session-Id'),
         messages: async (caller, sessionId) => (await fetchMessages(caller, sessionId)) as UIMessage[],
+        observedRunning: macHub?.observedRunning,
         activeRun: fetchActiveRun,
         stop: (caller, sessionId) => stopConversation(caller, sessionId),
         fileOwner: () => ({ kind: 'agent', agentId }),
