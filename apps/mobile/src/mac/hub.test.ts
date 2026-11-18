@@ -143,6 +143,19 @@ describe('the hub paths a paired Mac answers', () => {
         expect(allowed.hub.waitingApproval('chat-1')).toEqual(pending.approval)
     })
 
+    it('observes a Mac-started turn on a cold read without a stream or Stop capability', async () => {
+        const openSavedChat = jest.fn().mockResolvedValueOnce({ ...READ, messages: [], running: true }).mockResolvedValueOnce({ ...READ, running: false })
+        const { hub, client } = setup({ openSavedChat })
+        expect(await hub.api('/api/v1/conversations/chat-1/messages')).toEqual([])
+        expect(hub.observedRunning('chat-1')).toBe(true)
+        expect(hub.observedRunning('chat-0')).toBe(false)
+        expect(await hub.api('/api/v1/conversations/chat-1/active-run')).toEqual({ runId: null })
+        await hub.api('/api/v1/conversations/chat-1/stop', { method: 'POST' })
+        expect(client.stopSentTurn).not.toHaveBeenCalled()
+        expect(await hub.api('/api/v1/conversations/chat-1/messages')).toHaveLength(2)
+        expect(hub.observedRunning('chat-1')).toBe(false)
+    })
+
     it('follows and stops only the turn this phone started', async () => {
         const { hub, client } = setup()
         expect(await hub.api('/api/v1/conversations/chat-1/active-run')).toEqual({ runId: null })

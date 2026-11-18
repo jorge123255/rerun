@@ -124,7 +124,14 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
     const [endpoints] = useState(makeEndpoints)
     // A message the engine refused while a run held the conversation waits behind it, as on the web.
     const enqueueRef = useRef<(text: string, behindRunId: string | null) => void>(() => {})
-    const chat = useCoworkerChat({ endpoints, initialSessionId, onSessionCreated, onRefused: (text, behindRunId) => enqueueRef.current(text, behindRunId) })
+    const [focused, setFocused] = useState(true)
+    useFocusEffect(
+        useCallback(() => {
+            setFocused(true)
+            return () => setFocused(false)
+        }, [])
+    )
+    const chat = useCoworkerChat({ endpoints, visible: onScreen && focused, initialSessionId, onSessionCreated, onRefused: (text, behindRunId) => enqueueRef.current(text, behindRunId) })
     const queue = useQueuedMessage(`${coworker.id}-${chat.sessionId ?? 'new'}`)
     const proposals = useSkillProposals(coworker.kind === 'coworker' ? chat.sessionId : null, chat.busy)
     // A decision lifts the wait the proposal raised on the session, as on the web.
@@ -156,13 +163,6 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
     const [screenBox, setScreenBox] = useState<{ y: number; height: number } | null>(null)
     // The full screen opened over the conversation drives the coworker's screen: the thread lets go
     // of its own connection meanwhile, as the web hides its thumbnail.
-    const [focused, setFocused] = useState(true)
-    useFocusEffect(
-        useCallback(() => {
-            setFocused(true)
-            return () => setFocused(false)
-        }, [])
-    )
     const [footerHeight, setFooterHeight] = useState(0)
     const gated = setupBlocksChat(setup?.view ?? null, chat.sessionId)
     const installStatus = onMac && coworker.kind === 'coworker' ? pairedInstallStatus(setup?.error ? null : setup?.view, coworker.id, chat.sessionId) : undefined
@@ -173,7 +173,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
     reloadSetupChat.current = chat.reload
     const lastSetupSession = useRef<string | null>(null)
     useEffect(() => {
-        if (!onScreen || !focused || chat.busy || !chat.sessionId) return
+        if (!onScreen || !focused || chat.busy || chat.observedRunning || !chat.sessionId) return
         const active = claimedSetup && !!setup?.view?.pending && !setup.view.skipped && !!setup.view.canContinue
         const justFinished = !!setup?.view?.completedAt && lastSetupSession.current === chat.sessionId
         if (!active && !justFinished) return
@@ -192,7 +192,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
         const timer = active ? setInterval(() => void poll(), 3000) : null
         const foreground = AppState.addEventListener('change', state => { if (state === 'active') void poll() })
         return () => { disposed = true; if (timer) clearInterval(timer); foreground.remove() }
-    }, [claimedSetup, setup?.view?.pending, setup?.view?.skipped, setup?.view?.completedAt, setup?.view?.canContinue, onScreen, focused, chat.busy, chat.sessionId, onStatusChange])
+    }, [claimedSetup, setup?.view?.pending, setup?.view?.skipped, setup?.view?.completedAt, setup?.view?.canContinue, onScreen, focused, chat.busy, chat.observedRunning, chat.sessionId, onStatusChange])
 
     const keyboard = useKeyboardHeight()
     const lift = useAnimatedStyle(() => ({ paddingBottom: Math.max(keyboard.height.value + spacing.sm, insets.bottom) }))
@@ -223,7 +223,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
     const unknownCall = pending || alert || !settled || !waitingOnHuman ? null : findUnknownPendingCall(chat.messages)
     const replies = !settled || pending || unknownCall || lastAssistant < 0 || lastAssistant !== chat.messages.length - 1 ? [] : quickRepliesOf(chat.messages[lastAssistant])
     // A General with no message yet but threads already opened shows them, not the empty state, as on the web.
-    const empty = chat.history === 'ready' && chat.messages.length === 0 && !chat.busy && threadRows.leading.length === 0
+    const empty = chat.history === 'ready' && chat.messages.length === 0 && !chat.busy && !chat.observedRunning && threadRows.leading.length === 0
     // A takeover the app can draw is asked on the screen it is about, not in a block of its own.
     const takeoverPending = pending?.kind === 'takeover' && replacesComposer ? pending : null
     const runOnScreen = useMemo(() => runUsesScreen(chat.messages), [chat.messages])
@@ -534,7 +534,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
                                 )}
                                 {unknownCall && <UnknownCallBlock call={unknownCall} coworkerName={coworker.name} webUrl={webUrl} />}
                                 {chat.error && <ErrorCard message={chat.error.message} onRetry={chat.regenerate} {...errorActions} />}
-                                {chat.busy && !screenInThread && !stepGroupShowsActivity(chat.messages.at(-1)) && <RunStatus coworker={coworker} phase={phase} />}
+                                {(chat.observedRunning || (chat.busy && !screenInThread && !stepGroupShowsActivity(chat.messages.at(-1)))) && <RunStatus coworker={coworker} phase={phase} />}
                             </View>
                         </LayoutAnimationConfig>
                     )}

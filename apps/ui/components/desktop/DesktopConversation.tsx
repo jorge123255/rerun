@@ -63,7 +63,7 @@ import { cn } from '@/lib/utils'
 import type { DesktopAgentView, DesktopSessionView } from './DesktopApp'
 import { DesktopCoworkerSettings } from './DesktopCoworkerSettings'
 import { DesktopCoworkerMemories } from './DesktopCoworkerMemories'
-import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, parseVoiceMessage, type DesktopVoiceSendReceipt, type BoxDefaultModel, type ConnectionSummary } from '@rerun/contracts'
+import { desktopServiceRequestViewSchema, parseHitlReply, parseInstallMessage, parseVoiceMessage, stripAttachmentsRef, stripVoiceMarker, visibleText, type DesktopVoiceSendReceipt, type BoxDefaultModel, type ConnectionSummary } from '@rerun/contracts'
 import { DesktopServiceRequestBlock, type DesktopServiceRequestBlockProps } from './service-requests/DesktopServiceRequestBlock'
 import { DesktopServiceRequestReceipt } from './service-requests/DesktopServiceRequestReceipt'
 import { DesktopMcpSignInBlock } from './mcp-sign-in/DesktopMcpSignInBlock'
@@ -152,7 +152,7 @@ class AcceptedResponseDecoder extends DefaultChatTransport<UIMessage> {
 }
 async function serviceRequestFor(sessionId: string, signal: AbortSignal) {
     const response = await fetch(`/api/desktop/sessions/${encodeURIComponent(sessionId)}/service-requests`, { signal, cache: 'no-store' })
-    if (!response.ok) throw new Error('Could not load the coworker’s app request. Try again.')
+    if (!response.ok) throw new Error('Could not load the coworker’s app request. Try again.', { cause: response.status })
     const value = desktopServiceRequestViewSchema.parse(await response.json()).request
     return value?.receipt?.accepted ? null : value
 }
@@ -165,7 +165,7 @@ const takeoverUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURICom
 async function takeoverFor(sessionId: string, signal: AbortSignal) {
     const response = await fetch(takeoverUrl(sessionId), { signal })
     const body = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(body.error ?? 'Could not load the browser request.')
+    if (!response.ok) throw new Error(body.error ?? 'Could not load the browser request.', { cause: response.status })
     return desktopTakeoverViewSchema.parse(body).takeover
 }
 
@@ -173,7 +173,7 @@ const approvalUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURICom
 async function approvalFor(sessionId: string, signal: AbortSignal) {
     const response = await fetch(approvalUrl(sessionId), { signal })
     const body = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not load the coworker’s approval request. Try again.')
+    if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not load the coworker’s approval request. Try again.', { cause: response.status })
     return desktopApprovalViewSchema.parse(body).approval
 }
 
@@ -181,7 +181,7 @@ const questionUrl = (sessionId: string) => `/api/desktop/sessions/${encodeURICom
 async function questionFor(sessionId: string, signal: AbortSignal) {
     const response = await fetch(questionUrl(sessionId), { signal })
     const body = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not load the coworker’s question. Try again.')
+    if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'Could not load the coworker’s question. Try again.', { cause: response.status })
     return desktopQuestionViewSchema.parse(body).question
 }
 
@@ -220,6 +220,26 @@ function scheduledRunOf(message: UIMessage) {
     // The desktop saved-history pipeline preserves the original marker; the hosted API can
     // instead lift it into metadata. Rerun's exact whole-message parser supports both paths.
     return parseScheduledRun(prompt)
+}
+
+type ReadOnlyMessage = { id: string; role: 'user' | 'assistant'; text: string }
+
+// While request state is unknown, render only the conversation's public words. Tool inputs,
+// results, request receipts, attachment references and action controls stay out of this view.
+function readOnlyMessages(messages: UIMessage[]): ReadOnlyMessage[] {
+    const lines: ReadOnlyMessage[] = []
+    for (const message of messages) {
+        if (message.role !== 'user' && message.role !== 'assistant') continue
+        const reply = desktopRoutineReplyOf(message)?.message ?? message
+        let text = visibleText(reply.parts, '\n')
+        if (message.role === 'user') {
+            if (parseHitlReply(text) || parseDesktopSecretReceiptSummary(text) || parseTriggerPayload(text)
+                || message.metadata && typeof message.metadata === 'object' && 'savedDecision' in message.metadata) continue
+            text = parseInstallMessage(text)?.guide ?? scheduledRunOf(message)?.prompt ?? stripVoiceMarker(stripAttachmentsRef(text))
+        }
+        if (text.trim()) lines.push({ id: message.id, role: message.role, text })
+    }
+    return lines
 }
 
 const WIDE_WINDOW = '(min-width: 1280px)'
@@ -538,7 +558,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
         })
         batchUpload.current = work
     }, [imageUploads.start, textUploads.start, imageUploads.failureVersion, textUploads.failureVersion, documents.add, reportUploadNotice])
-    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; mcpSignIn?: DesktopMcpSignInResponse | null; error?: string; loadedGeneration?: number; lastError?: string | null; activeRunId?: string | null; runsUnavailable?: boolean; runVersion?: string | null }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null, mcpSignIn: null })
+    const [history, setHistory] = useState<{ id: string | null | undefined; transcript?: UIMessage[]; readOnly?: ReadOnlyMessage[]; question?: DesktopPendingQuestion | null; approval?: DesktopPendingApproval | null; takeover?: DesktopPendingTakeover | null; serviceRequest?: ServiceRequest | null; secretRequest?: DesktopSecretRequestView | null; mcpSignIn?: DesktopMcpSignInResponse | null; error?: string; loadedGeneration?: number; lastError?: string | null; activeRunId?: string | null; runsUnavailable?: boolean; runVersion?: string | null }>({ id: null, question: null, approval: null, takeover: null, serviceRequest: null, secretRequest: null, mcpSignIn: null })
     const responding = useRef<{ sessionId: string; payload: DesktopQuestionAnswer | DesktopApprovalAnswer | DesktopTakeoverTerminal; onAccepted?: () => void; url: string; receiptHeader: string; receiptId: string; accepted: boolean; error?: Error } | null>(null)
     const quickReplyRequest = useRef<{ sessionId: string; requestId: string; accepted: boolean } | null>(null)
     const quickReplyIds = useRef(new Map<string, string>())
@@ -827,13 +847,16 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
     const ownsLiveStop = !!sessionId && liveSessionId === sessionId
     const stopTarget = (busy ? ownsLiveStop : runInFlight) ? sessionId : null
     const stopRunId = stopTarget ? (busy ? liveRunId : engineRunning.runId) : null
+    // A saved request can arrive before its run settles. Keep the draft and Stop
+    // available for that run while the request continues to block ordinary sends.
+    const composerHidden = setupBlocked || (!!pendingRequest && !stopTarget)
     const historyError = history.id === sessionId ? history.error : undefined
     const savedFailure = history.id === sessionId ? replayedRunFailure(history.transcript ?? [], history.lastError ?? engineRunning.failedRunError ?? null) : null
     const stopBanner = reconnectNote || savedFailure || (!reconnecting ? error?.message : undefined)
     // The SDK throttles message updates. Show the verified snapshot immediately when switching,
     // even if its subscription still holds the previous chat's messages.
     const showSaved = ready && (!busy || regenerationSource === sessionId && !!sessionId)
-    const transcript = showSaved ? history.transcript ?? messages : busy ? messages : []
+    const transcript = historyError ? [] : showSaved ? history.transcript ?? messages : busy ? messages : []
     const routineThread = useMemo(() => transcript.some(message => scheduledRunOf(message) !== null), [transcript])
     const { savedReceipts, answeredCalls } = useMemo(() => {
         const savedReceipts = new Map<string, NonNullable<ReturnType<typeof desktopSavedChatReceiptOf>>>()
@@ -886,14 +909,34 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
         if (busy) return
         const controller = new AbortController()
         const emptyHistory: DesktopHistoryRead = { messages: [], lastError: null, activeRunId: null, runsUnavailable: false }
-        const read = sessionId ? Promise.all([historyFor(sessionId, controller.signal), questionFor(sessionId, controller.signal), approvalFor(sessionId, controller.signal), takeoverFor(sessionId, controller.signal), serviceRequestFor(sessionId, controller.signal), secretRequestFor(sessionId, controller.signal), readDesktopMcpSignIn(sessionId, { signal: controller.signal })]) : Promise.resolve([emptyHistory, null, null, null, null, null, null] as [DesktopHistoryRead, null, null, null, null, null, null])
+        let unavailable: Error | undefined
+        // A temporary request-status failure still allows a fresh, authorized history read to be
+        // shown. Any denied or unrecognized read fails the whole snapshot, including the transcript.
+        function readStatus<T>(request: Promise<T>): Promise<T | null> {
+            return request.catch((cause: unknown) => {
+                if (!(cause instanceof Error) || typeof cause.cause !== 'number' || cause.cause < 500) throw cause
+                unavailable ??= cause
+                return null
+            })
+        }
+        const signal = controller.signal
+        const read = sessionId ? Promise.all([
+            historyFor(sessionId, signal),
+            readStatus(questionFor(sessionId, signal)), readStatus(approvalFor(sessionId, signal)),
+            readStatus(takeoverFor(sessionId, signal)), readStatus(serviceRequestFor(sessionId, signal)),
+            readStatus(secretRequestFor(sessionId, signal)), readStatus(readDesktopMcpSignIn(sessionId, { signal })),
+        ]) : Promise.resolve([emptyHistory, null, null, null, null, null, null] as [DesktopHistoryRead, null, null, null, null, null, null])
         void read.then(([result, pending, approval, takeover, serviceRequest, secretRequest, mcpSignIn]) => {
             if (controller.signal.aborted) return
+            if (unavailable) {
+                setHistory({ id: sessionId, readOnly: readOnlyMessages(result.messages), error: unavailable.message || 'Could not load conversation requests. Try again.' })
+                return
+            }
             if ([pending, approval, takeover, serviceRequest, secretRequest?.receipt ? null : secretRequest, mcpSignIn?.request?.receipt ? null : mcpSignIn?.request].filter(Boolean).length > 1) throw new Error('This conversation changed while loading. Reload it to see the current request.')
             setMessages(result.messages)
             setHistory({ id: sessionId, transcript: result.messages, question: pending, approval, takeover, serviceRequest, secretRequest, mcpSignIn, loadedGeneration: historyGeneration, lastError: result.lastError, activeRunId: result.activeRunId, runsUnavailable: result.runsUnavailable, runVersion: result.runVersion })
         }).catch(cause => {
-            if (!controller.signal.aborted) setHistory({ id: sessionId, error: cause instanceof Error ? cause.message : 'Could not load history' })
+            if (!controller.signal.aborted) setHistory({ id: sessionId, error: cause instanceof Error && cause.message ? cause.message : 'Could not load history' })
         })
         return () => controller.abort()
     }, [sessionId, setMessages, busy, attempt, historyGeneration])
@@ -1516,7 +1559,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
             case 'signin': return { kind: 'mcp', label: t('chatRequestCue.mcpNamed', { name: request.value.name }) }
         }
     }
-    if (active && wrappedWebhook) {
+    if (!historyError && active && wrappedWebhook) {
         const request = wrappedWebhook.request
         const waiting = request && wrappedWebhook.phase === 'pending' && wrappedWebhook.availability === 'ready' && wrappedWebhook.runStatus === 'done'
         addRequest(`webhook:${wrappedWebhook.key}`, request?.kind === 'takeover'
@@ -1561,7 +1604,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                 if (payload.action === 'done' || payload.action === 'skip') await decideTakeover(payload)
             }} />, { kind: 'takeover', label: t('chatRequestCue.takeover') })
     }
-    if (active && sessionId) {
+    if (!historyError && active && sessionId) {
         // Connector actions that ask first. The answer goes back to the coworker as the next message.
         addRequest(`connector-approvals:${sessionId}`,
             <DesktopConnectorApprovals sessionId={sessionId} coworkerName={agent.name} generating={generating || stopping} disabled={draft.quitting || inactive || !ready}
@@ -1685,7 +1728,10 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                             </Suggestions>}
                         </ConversationEmptyState>
                     )}
-                    {sessionId && active && <DesktopNativeWritebackReview agentId={agent.id} sessionId={sessionId} refreshKey={`${status}/${transcript.length}`}/>}
+                    {!historyError && sessionId && active && <DesktopNativeWritebackReview agentId={agent.id} sessionId={sessionId} refreshKey={`${status}/${transcript.length}`}/>}
+                    {historyError && history.readOnly?.map(message => <Message key={message.id} from={message.role}>
+                        <MessageContent className={cn('whitespace-pre-wrap wrap-anywhere', message.role === 'user' && [USER_BUBBLE_SHAPE, USER_BUBBLE_INK])}>{message.text}</MessageContent>
+                    </Message>)}
                     <div ref={findTranscript} className="contents">{transcript.map((message, messageIndex) => {
                         const branches = threadRows.after.get(messageIndex) ?? []
                         const createdAt = messageTimes[messageIndex]
@@ -1783,10 +1829,10 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                             </div>
                         )
                     })}</div>
-                    {sessionId && <DesktopToolInstallPending agentId={agent.id} sessionId={sessionId} messages={transcript} active={active && ready} disabled={draft.quitting || inactive || generating || stopping} />}
+                    {!historyError && sessionId && <DesktopToolInstallPending agentId={agent.id} sessionId={sessionId} messages={transcript} active={active && ready} disabled={draft.quitting || inactive || generating || stopping} />}
                     {active && stopping
                         ? <DesktopChatActivity agentId={agent.id} stopping />
-                        : generating && sessionId
+                        : !historyError && generating && sessionId
                             ? <DesktopComputerPanel key={sessionId} agentId={agent.id} sessionId={sessionId} active={active} takeoverPending={!!takeover} fullViewerOpen={screenOpen !== null} onOpen={() => setScreenOpen('manual')} fallback={chatActivity} />
                             : chatActivity}
                     {stopError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopError}</div>}
@@ -1794,14 +1840,11 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     {reconnecting && <p role="status" className="text-sm text-muted-foreground">Reconnecting to this reply…</p>}
                     {historyError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
                         {historyError}
-                        <Button type="button" size="sm" variant="outline" className="ml-2" onClick={() => {
-                            setHistory({ id: undefined })
-                            setAttempt(n => n + 1)
-                        }}>Retry conversation</Button>
+                        <Button type="button" size="sm" variant="outline" className="ml-2" onClick={() => setAttempt(n => n + 1)}>Retry conversation</Button>
                     </div>}
                     {!recovery.notice && stopBanner && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{stopBanner}</div>}
-                    {usageWait.status?.wait && <DesktopUsageWaitPill wait={usageWait.status.wait} busy={usageWait.busy} onCancel={() => void usageWait.cancel(usageWait.status!.wait!.id)} />}
-                    {recovery.notice && <DesktopProviderErrorNotice
+                    {!historyError && usageWait.status?.wait && <DesktopUsageWaitPill wait={usageWait.status.wait} busy={usageWait.busy} onCancel={() => void usageWait.cancel(usageWait.status!.wait!.id)} />}
+                    {!historyError && recovery.notice && <DesktopProviderErrorNotice
                         usage={recovery.notice.kind === 'usage_limit' && usageWait.status ? {
                             plan: usageWait.status.plan, queued: usageWait.status.wait?.state === 'waiting' || usageWait.status.wait?.state === 'sending',
                             busy: usageWait.busy, error: usageWait.error,
@@ -1844,7 +1887,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     await decideTakeover(takeover.attempt ?? { action: 'done', takeoverId: takeover.id, requestId: crypto.randomUUID() })
                 }} />
             <MessageFeedbackDialog open={feedback.dialogOpen} rating={feedback.dialogRating} notice="Feedback is stored on this Mac." onOpenChange={feedback.onDialogOpenChange} onSubmit={feedback.submitDetails} />
-            <div inert={chatCovered} className={cn('shrink-0 border-t p-2.5', pendingRequest && 'border-t-0 py-0', chatCovered && 'invisible')}>
+            <div inert={chatCovered} className={cn('shrink-0 border-t p-2.5', pendingRequest && composerHidden && 'border-t-0 py-0', chatCovered && 'invisible')}>
                 {proposalsActive && <DesktopSkillProposalDock proposals={pinnedSkillProposals} pendingId={skillProposals.pendingId} onDecide={skillProposals.decide} onOpenSkill={openProposalSkill} />}
                 {proposalsActive && skillProposals.unavailable && <p role="status" className="mb-2 text-xs text-muted-foreground">Could not check all proposed changes. <Button type="button" variant="link" size="sm" onClick={() => void skillProposals.refresh()}>Retry</Button></p>}
                 {draft.quitting ? <p role="status" className="mb-2 px-1 text-xs text-muted-foreground">Saving drafts before quitting…</p>
@@ -1887,7 +1930,7 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                         if (!active || inactive || stopping || draft.quitting || !ready || uploadsActive || preparingSend || !!pendingRequest) return
                         composerForm.current?.requestSubmit()
                     }} />
-                <form ref={composerForm} data-slot="desktop-composer" onSubmit={submit} hidden={!!pendingRequest || setupBlocked} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', pendingRequest || setupBlocked ? 'hidden' : 'flex')}>
+                <form ref={composerForm} data-slot="desktop-composer" onSubmit={submit} hidden={composerHidden} className={cn('relative min-w-0 flex-col rounded-xl border border-input bg-muted/40 focus-within:border-ring', composerHidden ? 'hidden' : 'flex')}>
                     {uploadDragOver && <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[inherit] border border-dashed border-brand bg-background/85">
                         <span className="flex items-center gap-2 text-sm font-medium text-brand"><UploadIcon className="size-4" />Drop files to attach</span>
                     </div>}

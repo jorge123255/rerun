@@ -14,7 +14,7 @@ import { engineOf } from '@/lib/desktop/server/settings'
 import { findDesktopAgent, findDesktopSession, listDesktopAgents, listDesktopSessions } from '@/lib/desktop/server/store'
 import { desktopThreadViews } from '@/lib/desktop/server/thread-views'
 import { desktopSessionView } from '@/lib/desktop/server/views'
-import { cancelRun, EngineRequestError, getRun, reconnectRun } from '@/lib/engine/client'
+import { cancelRun, EngineRequestError, getRun, listRuns, reconnectRun } from '@/lib/engine/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -96,6 +96,12 @@ export async function GET(request: Request): Promise<Response> {
             }
             return Response.json({ status: run.status }, options)
         }
+        // Observe before reading history: a turn reported as finished has already saved its reply.
+        // Older engines may ignore the filters. Share only a boolean for this exact chat and owner.
+        const running = await listRuns(engineOf(runtime), agent.engineAgentId,
+            { sessionId: chat.engineSessionId, status: 'running' }, { signal: AbortSignal.timeout(1000) })
+            .then(runs => runs.some(run => run.agentId === agent.engineAgentId && run.sessionId === chat.engineSessionId && run.status === 'running'))
+            .catch(() => undefined)
         const history = await readDesktopHistory(runtime, chatId, { acknowledgeAlternate: false })
         const { id: savedId, title, createdAt, updatedAt, kind } = desktopSessionView(chat)
         const messages = history.flatMap(message => {
@@ -103,7 +109,7 @@ export async function GET(request: Request): Promise<Response> {
             return text ? [{ id: message.id, role: message.role, createdAt: message.metadata?.createdAt,
                 content: { type: 'text', text } }] : []
         })
-        return Response.json({ chat: { id: savedId, agentId, title, createdAt, updatedAt, kind, acceptsMessages: agent.enabled }, messages, pending: await readPhonePending(runtime, db, chat) }, options)
+        return Response.json({ chat: { id: savedId, agentId, title, createdAt, updatedAt, kind, acceptsMessages: agent.enabled }, running, messages, pending: await readPhonePending(runtime, db, chat) }, options)
     })
 }
 

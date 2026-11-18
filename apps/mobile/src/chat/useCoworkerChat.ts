@@ -19,7 +19,7 @@ const GRACE_MARGIN_S = 5
 // chat across that birth instead of starting over.
 // `onRefused` gets back a message the engine turned down because a run still held the conversation,
 // so it can wait for that run rather than vanish.
-export function useCoworkerChat({ endpoints, initialSessionId, onSessionCreated, onRefused }: { endpoints: ChatEndpoints; initialSessionId: string | null; onSessionCreated?: (sessionId: string) => void; onRefused?: (text: string, behindRunId: string | null) => void }) {
+export function useCoworkerChat({ endpoints, initialSessionId, onSessionCreated, onRefused, visible = true }: { visible?: boolean; endpoints: ChatEndpoints; initialSessionId: string | null; onSessionCreated?: (sessionId: string) => void; onRefused?: (text: string, behindRunId: string | null) => void }) {
     const { session, me } = useAuth()
     const callerRef = useRef<ChatCaller | null>(null)
     const sessionRef = useRef(initialSessionId)
@@ -36,6 +36,7 @@ export function useCoworkerChat({ endpoints, initialSessionId, onSessionCreated,
     const [history, setHistory] = useState<HistoryState>(initialSessionId && !cached ? 'loading' : 'ready')
     // False while what is on screen is only the kept transcript: nothing that acts on the run's
     // current state (a question to answer, quick replies) is offered on it.
+    const [observedRunning, setObservedRunning] = useState(false)
     const [fresh, setFresh] = useState(!initialSessionId)
     const [pageId] = useState(() => initialSessionId ?? `new-${endpoints.agentId}-${Date.now()}`)
     // When the run on screen began, for the timer under the last message.
@@ -86,6 +87,7 @@ export function useCoworkerChat({ endpoints, initialSessionId, onSessionCreated,
             // A send left while the read was on its way: the hub's copy predates it, and the stream
             // on screen is already the one to follow. The end of that run reads the transcript again.
             if (statusRef.current === 'submitted' || statusRef.current === 'streaming') return
+            setObservedRunning(!runId && (endpoints.observedRunning?.(id) ?? false))
             if (!sameTranscript(messages, shownRef.current)) setMessages(messages)
             if (!runId) return
             runRef.current = runId
@@ -111,6 +113,25 @@ export function useCoworkerChat({ endpoints, initialSessionId, onSessionCreated,
     const [away, setAway] = useState(false)
     const awayRef = useRef(false)
     const busy = status === 'streaming' || status === 'submitted' || away
+    // A Mac-started turn has no stream or Stop authority on this phone. Follow its saved
+    // transcript only while it is running on the visible page and the app is in front.
+    useEffect(() => {
+        if (!observedRunning || !visible || busy) return
+        let reading = false
+        const timer = setInterval(async () => {
+            if (reading || AppState.currentState !== 'active') return
+            reading = true
+            try { await refresh({ resume: false }) } catch { /* Retry on the next tick. */ }
+            finally { reading = false }
+        }, 3000)
+        return () => clearInterval(timer)
+    }, [observedRunning, visible, busy, refresh])
+    // The pager preloads its neighbours. A job may have started since this page was read.
+    const wasVisible = useRef(visible)
+    useEffect(() => {
+        if (endpoints.observedRunning && visible && !wasVisible.current && !busy) refresh({ resume: true }).catch(failToLoad)
+        wasVisible.current = visible
+    }, [visible, busy, endpoints, refresh, failToLoad])
     const busyRef = useRef(busy)
     useEffect(() => {
         busyRef.current = busy
@@ -281,5 +302,5 @@ export function useCoworkerChat({ endpoints, initialSessionId, onSessionCreated,
     // The run holding the conversation, as last named by the hub: what a queued message waits behind.
     const activeRunId = useCallback(() => runRef.current, [])
 
-    return { messages: chat.messages, status, runStartedAt, activeRunId, regenerate, error: error && !error.message.includes('run_in_flight') ? error : undefined, busy, sessionId, history, fresh, send, stop, retry: () => refresh({ resume: true }).catch(() => setHistory('error')), reload: () => refresh({ resume: true }).catch(() => {}) }
+    return { messages: chat.messages, status, runStartedAt, activeRunId, regenerate, error: error && !error.message.includes('run_in_flight') ? error : undefined, busy, observedRunning, sessionId, history, fresh, send, stop, retry: () => refresh({ resume: true }).catch(() => setHistory('error')), reload: () => refresh({ resume: true }).catch(() => {}) }
 }

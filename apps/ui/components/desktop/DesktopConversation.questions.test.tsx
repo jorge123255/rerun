@@ -208,6 +208,34 @@ test('a newly pending question rejects an ordinary send without losing its typed
     expect(composer().value).toBe(draft)
 })
 
+test('keeps the draft and Stop visible while a running reply also has a saved question', async () => {
+    running = true
+    await render('one', { text: 'Keep writing here' })
+    const form = composer().form!
+    expect(form.hidden).toBe(false)
+    expect(composer().value).toBe('Keep writing here')
+    expect(composer().disabled).toBe(false)
+    expect(composer().readOnly).toBe(false)
+    composer().focus()
+    expect(document.activeElement).toBe(composer())
+    await typeDraft('Keep writing here while the question is waiting')
+    const stop = button('Stop')
+    expect(form.contains(stop)).toBe(true)
+    expect(stop.disabled).toBe(false)
+    expect(button('Send').disabled).toBe(true)
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
+    expect(normalPosts).toHaveLength(0)
+    expect(questionPosts).toHaveLength(0)
+    await click('Stop')
+    expect(running).toBe(false)
+    expect(container.textContent).toContain(question.questions[0].question)
+    expect(form.hidden).toBe(true)
+    expect(composer().value).toBe('Keep writing here while the question is waiting')
+    await choose()
+    expect(form.hidden).toBe(false)
+    expect(composer().value).toBe('Keep writing here while the question is waiting')
+})
+
 test('holds manual and automatic queued sends while a saved question waits for an answer', async () => {
     const queued = queueItem(); queues.set('one', queued); running = true
     await render('one', { text: 'Keep my newer draft' })

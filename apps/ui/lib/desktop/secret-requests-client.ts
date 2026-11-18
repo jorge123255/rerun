@@ -7,7 +7,7 @@ const url = (sessionId: string) => `/api/desktop/sessions/${encodeURIComponent(s
 export async function readDesktopSecretRequest(sessionId: string, options: { signal?: AbortSignal } = {}): Promise<DesktopSecretRequestView | null> {
     const response = await fetch(url(sessionId), { cache: 'no-store', signal: options.signal })
     const body = await response.json().catch(() => null)
-    if (!response.ok) throw new Error(typeof body?.error === 'string' ? body.error : 'Could not load the credential request.')
+    if (!response.ok) throw new Error(typeof body?.error === 'string' ? body.error : 'Could not load the credential request.', { cause: response.status })
     return desktopSecretRequestResponseSchema.parse(body).request
 }
 
