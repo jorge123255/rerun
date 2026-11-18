@@ -57,6 +57,7 @@ import { widgetFor } from './hitl/registry'
 import { HITL_WIDGETS } from './hitl/widgets'
 import { mentionAgentsOf } from './mentions'
 import { MessageView } from './MessageView'
+import { pairedInstallStatus } from './origins/paired-install-status'
 import { runPhase, stepGroupShowsActivity } from './run-phase'
 import { RunStatus } from './RunStatus'
 import { ChatScreen } from './screen/ChatScreen'
@@ -164,6 +165,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
     )
     const [footerHeight, setFooterHeight] = useState(0)
     const gated = setupBlocksChat(setup?.view ?? null, chat.sessionId)
+    const installStatus = onMac && coworker.kind === 'coworker' ? pairedInstallStatus(setup?.error ? null : setup?.view, coworker.id, chat.sessionId) : undefined
     const claimedSetup = !!chat.sessionId && setup?.view?.sessionId === chat.sessionId
     // A kickoff launched by the Mac has no phone-owned stream. Refresh the saved transcript
     // first, then the tab status derived from its pending question/approval. Never start a turn.
@@ -496,7 +498,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
                                     authorOf={authorId => (isForeman ? undefined : profileOf(authorId))}
                                     renderMessage={(message, index, stamp) => (
                                         <Fragment key={message.id}>
-                                            <MessageView message={message} isLastAssistant={index === lastAssistant} running={chat.busy} agentId={isForeman ? null : coworker.id} fileOwner={endpoints.fileOwner(chat.sessionId)} coworkerName={coworker.name} hiddenCallId={alert?.toolCallId ?? null} skillProposals={skillProposals} onStopTask={stopTask} onRegenerate={pending ? undefined : () => void chat.regenerate()} feedback={feedback} stamp={stamp} paidSources={paidSourcesByTurn.get(message.id)} />
+                                            <MessageView message={message} installStatus={installStatus} isLastAssistant={index === lastAssistant} running={chat.busy} agentId={isForeman ? null : coworker.id} fileOwner={endpoints.fileOwner(chat.sessionId)} coworkerName={coworker.name} hiddenCallId={alert?.toolCallId ?? null} skillProposals={skillProposals} onStopTask={stopTask} onRegenerate={pending ? undefined : () => void chat.regenerate()} feedback={feedback} stamp={stamp} paidSources={paidSourcesByTurn.get(message.id)} />
                                             {threadBranches(threadRows.after.get(index))}
                                         </Fragment>
                                     )}

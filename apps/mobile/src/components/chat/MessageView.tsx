@@ -19,6 +19,7 @@ import { FileCardView } from './cards/FileCardView'
 import { TableCardView } from './cards/TableCardView'
 import { ApprovalReceipt, CancelledReceipt, McpReceipt, QuestionReceipt, SecretReceipt, ServiceReceipt, SpendReceipt, TakeoverReceipt } from './hitl/Receipts'
 import { attachmentsOf, userTextOf, voiceOf } from './message-text'
+import type { PairedInstallStatus } from './origins/paired-install-status'
 import { InstallDivider, ScheduledRunDivider, WebhookRunDivider } from './origins/RunOrigins'
 import { AssistantMessage, UserBubble } from './Messages'
 import { MessageTimeReveal, type MessageStamp } from './MessageTimeReveal'
@@ -62,6 +63,7 @@ function originOf(message: UIMessage): Origin | null {
 type MessageViewProps = {
     message: UIMessage
     isLastAssistant: boolean
+    installStatus?: PairedInstallStatus
     running: boolean
     // The coworker whose files a card points at; the Foreman's live elsewhere, and its cards stay steps.
     agentId: string | null
@@ -85,12 +87,12 @@ type MessageViewProps = {
 
 type Block = { key: string; node: React.ReactNode }
 
-export function MessageView({ message, isLastAssistant, running, agentId, fileOwner, coworkerName, hiddenCallId, skillProposals, onStopTask, onRegenerate, feedback, stamp, paidSources }: MessageViewProps) {
+export function MessageView({ message, isLastAssistant, running, installStatus, agentId, fileOwner, coworkerName, hiddenCallId, skillProposals, onStopTask, onRegenerate, feedback, stamp, paidSources }: MessageViewProps) {
     const t = useTranslations('mobileChat.messages')
     const tTools = useTranslations('tools')
     if (message.role === 'user') {
         const origin = originOf(message)
-        if (origin?.kind === 'install') return <InstallDivider agentName={origin.agentName} guide={origin.guide} installing={running} owner={fileOwner} />
+        if (origin?.kind === 'install') return <InstallDivider agentName={origin.agentName} guide={origin.guide} installing={running} status={installStatus} owner={fileOwner} />
         if (origin?.kind === 'scheduled') return <ScheduledRunDivider run={origin} owner={fileOwner} />
         if (origin?.kind === 'webhook') return <WebhookRunDivider payload={origin.payload} owner={fileOwner} />
         const text = userTextOf(message)
