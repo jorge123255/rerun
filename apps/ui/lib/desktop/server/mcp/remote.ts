@@ -14,6 +14,10 @@ export function abortable<T>(work:Promise<T>, signal:AbortSignal):Promise<T> {
 }
 export type McpNetwork = (url: string, init: RequestInit & { signal: AbortSignal; body?: string }, guard: () => Promise<void>) => Promise<Response>
 export type McpAccess = (agent: string) => Promise<{ enabled: boolean; granted: boolean }>
+export const preferredMcpHttpVersion = '2025-11-25'
+export function isMcpHttpVersion(value: unknown): value is string {
+    return value === preferredMcpHttpVersion || value === '2025-06-18' || value === '2025-03-26'
+}
 const LIMIT = 1024 * 1024
 export async function boundedText(response: Response, signal: AbortSignal, limit = LIMIT, replyId?: number): Promise<string> {
     const reader = response.body?.getReader()
@@ -64,6 +68,7 @@ export function remoteMcpRuntime(store: Pick<RemoteMcpStore, 'read' | 'readOAuth
         let material = emptyMcpMaterialLease()
         try { if (materials) material = await materials(agent, name, revision, call ? 'invocation' : 'discovery', signal) }
         catch (error) { controller.abort(); clearTimeout(timer); stop?.removeEventListener('abort',cancel); throw error }
+        let protocolVersion: string | null = null
         let bearer = '', session = '', id = 0, configuredUrl = '', configuredBearer = ''
         const execute = async () => {
         try {
@@ -84,7 +89,7 @@ export function remoteMcpRuntime(store: Pick<RemoteMcpStore, 'read' | 'readOAuth
                 const requestId = ++id
                 const body = JSON.stringify({jsonrpc:'2.0',...(notification ? {} : {id:requestId}),method,params})
                 if (Buffer.byteLength(body) > 65536) throw new Error('MCP request exceeds limit')
-                const response = await network(url,{method:'POST', redirect:'manual',credentials:'omit', signal, headers:{...material.material.headers,'Content-Type':'application/json',Accept:'application/json, text/event-stream','MCP-Protocol-Version':'2025-03-26',...(bearer ? {Authorization:`Bearer ${bearer}`} : {}),...(session ? {'Mcp-Session-Id':session} : {})},body}, guard)
+                const response = await network(url,{method:'POST', redirect:'manual',credentials:'omit', signal, headers:{...material.material.headers,'Content-Type':'application/json',Accept:'application/json, text/event-stream','MCP-Protocol-Version':protocolVersion ?? preferredMcpHttpVersion,...(bearer ? {Authorization:`Bearer ${bearer}`} : {}),...(session ? {'Mcp-Session-Id':session} : {})},body}, guard)
                 if (!response.ok) { if(response.body)await abortable(response.body.cancel(),signal); throw new Error('MCP HTTP request failed') }
                 const nextSession = response.headers.get('mcp-session-id')
                 if (nextSession) { if (!/^[\x21-\x7e]{1,1024}$/.test(nextSession)) throw new Error('Invalid MCP session'); session = nextSession }
@@ -103,8 +108,9 @@ export function remoteMcpRuntime(store: Pick<RemoteMcpStore, 'read' | 'readOAuth
                 await guard()
                 return material.protect(redact(decoded)) as Record<string,unknown>
             }
-            const init = await rpc('initialize',{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'rerun-desktop',version:'1.0.0'}})
-            if (init.protocolVersion !== '2025-03-26') throw new Error('Unsupported MCP protocol version')
+            const init = await rpc('initialize',{protocolVersion:preferredMcpHttpVersion,capabilities:{},clientInfo:{name:'rerun-desktop',version:'1.0.0'}})
+            if (!isMcpHttpVersion(init.protocolVersion)) throw new Error('Unsupported MCP protocol version')
+            protocolVersion = init.protocolVersion
             await rpc('notifications/initialized',{},true)
             const tools: RemoteTool[] = []; let cursor: string | undefined
             for (let page=0; page<8; page++) {
@@ -131,7 +137,7 @@ export function remoteMcpRuntime(store: Pick<RemoteMcpStore, 'read' | 'readOAuth
         } finally {
             // Delete a server session only while its configured identity and grant still match.
             // Use a separate short deadline so an aborted run does not strand session state.
-            if (session && configuredUrl && !signal.aborted) {
+            if (protocolVersion && session && configuredUrl && !signal.aborted) {
                 const cleanupSignal=AbortSignal.any([signal,AbortSignal.timeout(1000)])
                 try {
                     const [permission,current] = await abortable(Promise.all([access(agent),store.read(agent,name)]),cleanupSignal)
@@ -141,7 +147,7 @@ export function remoteMcpRuntime(store: Pick<RemoteMcpStore, 'read' | 'readOAuth
                     const sameCredential=!oauthCredential || !credential?.refreshPending && (credential?.accessToken ?? current.bearer)===bearer && (!credential || credential.resource===configuredUrl)
                     await material.check()
                     if (sameCredential && permission.enabled && permission.granted && current.revision === revision && current.url === configuredUrl && current.bearer === configuredBearer) {
-                        const closed = await abortable(network(configuredUrl,{method:'DELETE',redirect:'manual',credentials:'omit',signal:cleanupSignal,headers:{...material.material.headers,'Mcp-Session-Id':session,'MCP-Protocol-Version':'2025-03-26',...(bearer ? {Authorization:`Bearer ${bearer}`} : {})}}, publish),cleanupSignal)
+                        const closed = await abortable(network(configuredUrl,{method:'DELETE',redirect:'manual',credentials:'omit',signal:cleanupSignal,headers:{...material.material.headers,'Mcp-Session-Id':session,'MCP-Protocol-Version':protocolVersion,...(bearer ? {Authorization:`Bearer ${bearer}`} : {})}}, publish),cleanupSignal)
                         if(closed.body)await abortable(closed.body.cancel(),cleanupSignal)
                     }
                 } catch { /* Never log server errors or credentials. */ }

@@ -3,7 +3,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 
-vi.mock('./DesktopManagedApps', () => ({ DesktopManagedApps: () => <section aria-label="Managed apps" /> }))
+vi.mock('./DesktopManagedApps', () => ({ DesktopManagedApps: ({ onChooseCoworkers }: { onChooseCoworkers: (name: string) => void }) =>
+    <section aria-label="Managed apps"><button onClick={() => onChooseCoworkers('composio')}>Choose coworkers for Composio</button></section> }))
 vi.mock('@/components/ui/panel-steps', () => ({ PanelSteps: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }))
 vi.mock('./DesktopVaultCatalog', () => ({ DesktopVaultCatalog: ({ slug, listHeader }: { slug?: string; listHeader?: React.ReactNode }) => <div>{listHeader}<p data-testid="catalog">{slug ?? 'all'}</p></div> }))
 // The browser sign-in panel asks the engine where the sign-in stands; that is its own test's business.
@@ -164,4 +165,17 @@ it('opened from a chat suggestion it goes straight to that app and offers no way
     expect(document.querySelector('[data-testid=catalog]')?.textContent).toBe('notion')
     expect(control('Add')).toBeUndefined()
     expect(document.querySelector('[data-vault-apps]')).toBeNull()
+})
+
+
+it('opens the existing Composio connector assignment from managed apps without granting anything on navigation', async () => {
+    const connector = { ...server, name: 'composio', url: 'https://connect.composio.dev/mcp', headerName: 'x-consumer-api-key', hasBearer: false, sharedWithAll: false }
+    const listing = { ...full, entries: [{ ...server, id: uuid(0) }, connector, app] }
+    const posts = serve(listing)
+    await mount(<DesktopVaultDialog onClose={() => {}} />)
+    await press('Choose coworkers for Composio')
+    expect(document.querySelector('h3')?.textContent).toBe('composio')
+    expect(posts).toEqual([])
+    await act(async () => { toggle('Bo').click() })
+    expect(posts).toEqual([{ url: '/api/desktop/vault', operation: 'share', id: connector.id, revision: connector.revision, agentIds: [bo.id], sharedWithAll: false }])
 })

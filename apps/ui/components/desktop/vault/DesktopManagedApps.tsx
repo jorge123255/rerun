@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react'
 import { desktopManagedAppsResultSchema, desktopManagedAppsViewSchema, type DesktopManagedAppsAction, type DesktopManagedAppsView } from '@rerun/contracts'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Button } from '@/components/ui/button'
@@ -15,12 +15,12 @@ const URL_PATH = '/api/desktop/managed-apps'
  * person's own Composio account. The key is typed here once and kept sealed on this Mac; the
  * sign-in to each app is held by Composio, which the section says before a key is given.
  */
-export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged }: { coworkers: readonly { id: string; name: string }[]; disabled?: boolean; onVaultChanged?: () => void }) {
+export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged, onChooseCoworkers, initialSearch = '' }: { coworkers: readonly { id: string; name: string }[]; disabled?: boolean; onVaultChanged?: () => void; onChooseCoworkers?: (connector: string) => void; initialSearch?: string }) {
     const [view, setView] = useState<DesktopManagedAppsView | null>(null)
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState('')
     const [key, setKey] = useState('')
-    const [query, setQuery] = useState('')
+    const [query, setQuery] = useState(initialSearch)
     const [removeKey, setRemoveKey] = useState(false)
     // The accounts Composio could not be asked to sign out when the key was last removed: the key was kept for them.
     const [notSignedOut, setNotSignedOut] = useState<readonly string[]>([])
@@ -28,36 +28,77 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
     // The account another one is being added beside, and the label typed for it.
     const [another, setAnother] = useState<{ id: string; label: string } | null>(null)
 
+    const request = useRef<AbortController | null>(null)
+    const [browserLink, setBrowserLink] = useState<{ id: string; href: string } | null>(null)
     const read = useCallback(async () => {
+        if (request.current) return
+        const controller = new AbortController()
+        request.current = controller
         try {
-            const response = await fetch(URL_PATH, { cache: 'no-store' })
-            if (response.ok) setView(desktopManagedAppsViewSchema.parse(await response.json()))
-        } catch { /* The rest of the Vault works without this section. */ }
+            const response = await fetch(URL_PATH, { cache: 'no-store', signal: controller.signal })
+            if (!response.ok) throw new Error()
+            const result = desktopManagedAppsViewSchema.parse(await response.json())
+            if (!controller.signal.aborted) setView(result)
+        } catch {
+            if (!controller.signal.aborted) setError('Could not load managed apps from the Vault.')
+        } finally { if (request.current === controller) request.current = null }
     }, [])
-    useEffect(() => { void read() }, [read])
+    useEffect(() => {
+        void read()
+        return () => { request.current?.abort(); request.current = null }
+    }, [read])
+
+    const checkBrowserAccount = useEffectEvent(() => {
+        const id = browserLink?.id
+        if (id && !disabled && view?.accounts.some(row => row.id === id && row.status === 'pending')) void send({ action: 'refresh', id })
+    })
+    useEffect(() => {
+        const onFocus = () => checkBrowserAccount()
+        window.addEventListener('focus', onFocus)
+        return () => window.removeEventListener('focus', onFocus)
+    }, [])
 
     async function act(action: DesktopManagedAppsAction): Promise<boolean> {
         return (await send(action)) !== null
     }
     async function send(action: DesktopManagedAppsAction) {
+        if (request.current) return null
+        const controller = new AbortController()
+        request.current = controller
         setBusy(true); setError('')
         try {
-            const response = await fetch(URL_PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(action) })
+            const response = await fetch(URL_PATH, { method: 'POST', signal: controller.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify(action) })
             const body = await response.json().catch(() => null)
+            if (controller.signal.aborted) return null
             if (!response.ok) { setError(typeof body?.error === 'string' ? body.error : 'That did not go through. Try again.'); return null }
             const result = desktopManagedAppsResultSchema.parse(body)
             setView(result.view)
             if (action.action === 'attach') invalidateDesktopConnectorApps(action.agentId)
+            else invalidateDesktopConnectorApps()
             // A Composio Connect key became a Vault connector: the Vault list above is read again to show it.
             if (result.addedToVault) { setAdded(result.addedToVault); onVaultChanged?.() }
             // The sign-in page opens in the browser; the app only ever asks Composio whether it finished.
-            if (result.signIn) window.open(result.signIn, '_blank', 'noopener,noreferrer')
+            if (result.signIn && (action.action === 'connect' || action.action === 'refresh' && action.retry)) {
+                const id = action.action === 'refresh' ? action.id : result.view.accounts.find(account =>
+                    account.slug === action.slug && (account.label ?? '') === (action.label ?? '') && account.status === 'pending')?.id ?? null
+                const href = new URL(result.signIn)
+                if (href.protocol !== 'https:' || href.username || href.password) throw new Error('Invalid sign-in page')
+                setBrowserLink(id && result.view.accounts.some(account => account.id === id && account.status === 'pending') ? { id, href: href.href } : null)
+                window.open(href.href, '_blank', 'noopener,noreferrer')
+            } else {
+                setBrowserLink(previous => previous && result.view.accounts.some(account => account.id === previous.id && account.status === 'pending') ? previous : null)
+            }
             return result
-        } catch { setError('That did not go through. Try again.'); return null }
-        finally { setBusy(false) }
+        } catch { if (!controller.signal.aborted) setError('That did not go through. Try again.'); return null }
+        finally { if (request.current === controller) { request.current = null; setBusy(false) } }
     }
 
-    if (!view) return null
+    if (!view) return <section aria-label="Managed apps" className="space-y-2 rounded-lg border border-border p-3">
+        <h3 className="font-medium">Managed apps</h3>
+        {error ? <><p role="alert" className="text-sm text-destructive">{error}</p>
+            <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={() => { setError(''); void read() }}>Retry managed apps</Button></>
+            : <p role="status" className="text-sm text-muted-foreground">Loading managed apps…</p>}
+    </section>
     const locked = busy || disabled
     const taken = new Set(view.accounts.map(account => account.slug))
     const signsOut = view.keyRemovalSignsOut ?? 0
@@ -71,12 +112,13 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
                 <h3 className="font-medium">Managed apps</h3>
                 <p className="text-sm text-muted-foreground">
                     {view.connector
-                        ? `Every app Composio offers: ${view.apps.length} to choose from. Connect one and sign in in your browser. Coworkers given “${view.connector}” in the list above can then use it.`
+                        ? `Every app Composio offers: ${view.apps.length} to choose from. Connect one and sign in in your browser. Assigning this connector gives the selected coworkers access to all its signed-in apps when their Custom MCP servers permission is on.`
                         : view.configured
                         ? `Every app in your Composio account: ${view.apps.length} to choose from. Their sign-ins are held by Composio.`
                         : 'Gmail, Google Calendar, Outlook and every other app Composio offers. They need your own Composio key, and you pay Composio for it.'}
                 </p>
             </div>
+            {view.connector && onChooseCoworkers && <Button type="button" size="sm" variant="outline" disabled={locked} onClick={() => onChooseCoworkers(view.connector!)}>Choose coworkers for Composio</Button>}
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             {added && <p role="status" className="text-sm text-foreground">
                 Composio was added to the Vault as “{added}”. Open it in the list above and choose its coworkers, then connect your apps below. A coworker’s sends and deletes still wait for your answer.
@@ -94,7 +136,7 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
                 </form>
             ) : (
                 <>
-                    {view.accounts.map(account => {
+                    {view.accounts.filter(account => `${account.name} ${account.label ?? ''} ${account.slug}`.toLowerCase().includes(query.trim().toLowerCase())).map(account => {
                         // Two accounts of one app are told apart by the label given to the second.
                         const title = account.label ? `${account.name} · ${account.label}` : account.name
                         const waiting = account.status !== 'active'
@@ -107,12 +149,13 @@ export function DesktopManagedApps({ coworkers, disabled = false, onVaultChanged
                                     <p className={account.status === 'expired' ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>{account.status === 'active' ? 'Signed in' : account.status === 'expired' ? 'The sign-in has expired. Sign in again to give it back to its coworkers.' : 'Waiting for you to finish signing in in your browser'}</p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
-                                    {waiting && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id }) }}>Check sign-in</Button>}
-                                    {waiting && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id, retry: true }) }}>{account.status === 'expired' ? 'Sign in again' : 'Open sign-in again'}</Button>}
+                                    {(waiting || view.connector) && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id }) }}>Check sign-in</Button>}
+                                    {waiting && browserLink?.id === account.id && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => window.open(browserLink.href, '_blank', 'noopener,noreferrer')}>Open sign-in page</Button>}
+                                    {waiting && <Button type="button" variant="outline" size="sm" disabled={locked} onClick={() => { void act({ action: 'refresh', id: account.id, retry: true }) }}>{account.status === 'expired' ? 'Sign in again' : browserLink?.id === account.id ? 'Get a new sign-in link' : 'Open sign-in again'}</Button>}
                                     <Button type="button" variant="ghost" size="sm" disabled={locked} aria-label={`Remove ${title}`} onClick={() => { void act({ action: 'remove', id: account.id }) }}>Remove</Button>
                                 </div>
                             </div>
-                            {account.status === 'active' && view.connector && <p className="text-xs text-muted-foreground">Coworkers given “{view.connector}” can use it. Removing it signs it out at Composio too.</p>}
+                            {account.status === 'active' && view.connector && <p className="text-xs text-muted-foreground">Shared through the “{view.connector}” connector. Removing this account signs it out at Composio.</p>}
                             {account.status === 'active' && !view.connector && (coworkers.length === 0
                                 ? <p className="text-xs text-muted-foreground">No coworkers in this workspace yet.</p>
                                 : <fieldset className="flex flex-wrap gap-x-4 gap-y-1" disabled={locked}>

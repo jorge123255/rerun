@@ -1,3 +1,4 @@
+import { desktopManagedAppsViewSchema } from '@rerun/contracts'
 import { z } from 'zod'
 
 // What the Mac answers when a chat asks which apps its coworker's tool rows belong to.
@@ -15,8 +16,13 @@ const app = {
 }
 export const desktopConnectorServerSchema = z.strictObject({ server: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), ...app, custom: z.literal(true).optional() })
 export const desktopConnectorToolkitSchema = z.strictObject({ key: z.string().regex(/^[a-z0-9]{1,128}$/), ...app })
+export const desktopAssignedManagedAccountSchema = desktopManagedAppsViewSchema.shape.accounts.element
+    .omit({ agentIds: true }).extend({ source: z.enum(['assignment', 'connect']) })
+export type DesktopAssignedManagedAccount = z.infer<typeof desktopAssignedManagedAccountSchema>
 export const desktopCoworkerConnectorsSchema = z.strictObject({
     agentId: z.string().min(1).max(200),
+    // The known accounts this coworker has actually been assigned, distinct from tool-row artwork.
+    managedAccounts: z.array(desktopAssignedManagedAccountSchema).max(200).optional(),
     // Apps reached through a named server: its tools are `<server>_<tool>`.
     servers: z.array(desktopConnectorServerSchema).max(200),
     // Apps whose tools carry only a toolkit name ("GMAIL_SEND_EMAIL"), keyed by that name in lower case without punctuation.

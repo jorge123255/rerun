@@ -92,3 +92,22 @@ it('owner transition reserves admission until successful persistence settles; sh
  lifecycle.shutdown()
  expect(()=>lifecycle.admit('a','x',new AbortController())).toThrow()
 })
+
+it.each(['2025-03-26','2025-06-18','2025-11-25','unrecognized'])('uses only an agreed protocol for coworker tool calls and session cleanup (%s)', async selected => {
+    const store = { lifecycle: remoteMcpLifecycle(), read: async () => ({ name: 'x', url: 'https://example.com/mcp', revision: '1', bearer: '' }) } as unknown as RemoteMcpStore
+    const calls: [string, string | null][] = []
+    const result = remoteMcpRuntime(store, async () => ({ enabled: true, granted: true }), async (_url, init) => {
+        const body = init.method === 'DELETE' ? { method: 'DELETE' } : JSON.parse(String(init.body))
+        calls.push([body.method, new Headers(init.headers).get('mcp-protocol-version')])
+        if (body.method === 'DELETE' || body.method === 'notifications/initialized') return new Response(null, { status: 202 })
+        const reply = body.method === 'initialize' ? { protocolVersion: selected } : body.method === 'tools/list' ? { tools: [{ name: 'read', inputSchema: { type: 'object' } }] } : { content: [] }
+        return Response.json({ jsonrpc: '2.0', id: body.id, result: reply }, { headers: { 'mcp-session-id': 'fixture' } })
+    }).call('agent','x','1','read',{})
+    if (selected === 'unrecognized') {
+        await expect(result).rejects.toThrow()
+        expect(calls.map(([method]) => method)).toEqual(['initialize'])
+    } else {
+        await expect(result).resolves.toMatchObject({ result: { content: [] } })
+        expect(calls.slice(1)).toEqual(['notifications/initialized','tools/list','tools/call','DELETE'].map(method => [method, selected]))
+    }
+})

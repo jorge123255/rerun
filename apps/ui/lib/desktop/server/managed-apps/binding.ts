@@ -27,7 +27,9 @@ export async function openDesktopManagedApps(runtime: DesktopRuntime) {
             if (!row || row.url !== COMPOSIO_CONNECT || row.credential_header !== COMPOSIO_CONNECT_HEADER || typeof row.sealed !== 'string') return null
             const opened = await crypto.open({ domain: 'vault', agentId: String(row.id), key: JSON.stringify([COMPOSIO_CONNECT, COMPOSIO_CONNECT_HEADER]), version: 1, workspaceId: runtime.workspaceId, revision: String(row.credential_revision) }, row.sealed).catch(() => null)
             if (!opened) return null
-            try { return managedAppsConnectClient(Buffer.from(opened).toString('utf8')) } finally { opened.fill(0) }
+            try {
+                return { ...managedAppsConnectClient(Buffer.from(opened).toString('utf8')), identity: { id: String(row.id), revision: String(row.credential_revision) } }
+            } finally { opened.fill(0) }
         },
     })
 }

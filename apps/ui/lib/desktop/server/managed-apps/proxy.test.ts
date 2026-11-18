@@ -1,3 +1,5 @@
+import { seedConnectCredential } from './connect-owner-fixture'
+import { connectToolList } from './connect-test-fixture'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -38,7 +40,8 @@ function connectServer(signedIn = true) {
     const calls: { name: string; arguments: Record<string, unknown> }[] = []
     const network = (async (_input: RequestInfo | URL, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body))
-        if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: body.id, result: {} }, { headers: { 'mcp-session-id': 's1' } })
+        if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-03-26' } }, { headers: { 'mcp-session-id': 's1' } })
+        if (body.method === 'tools/list') return connectToolList(body.id)
         if (body.method !== 'tools/call') return new Response(null, { status: 202 })
         calls.push(body.params)
         const reply = (data: unknown) => Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ successful: true, data }) }] } })
@@ -51,7 +54,8 @@ function connectServer(signedIn = true) {
 
 test('with Composio Connect a signed-in GitHub reads one repository path, and nothing else', async () => {
     const server = connectServer()
-    const apps = desktopManagedApps(db, crypto, 1, { returnUrl: 'http://127.0.0.1/return', coworkerExists: async () => true, connect: async () => managedAppsConnectClient('ck_fixture_consumer', server.network) })
+    const identity = await seedConnectCredential(db)
+    const apps = desktopManagedApps(db, crypto, 1, { returnUrl: 'http://127.0.0.1/return', coworkerExists: async () => true, connect: async () => ({ ...managedAppsConnectClient('ck_fixture_consumer', server.network), identity }) })
     expect(await apps.githubReader()).toBeNull()
     await apps.act({ action: 'connect', slug: 'github' })
     const read = await apps.githubReader()
@@ -65,7 +69,8 @@ test('with Composio Connect a signed-in GitHub reads one repository path, and no
 
 test('a GitHub sign-in that is still pending reads nothing', async () => {
     const server = connectServer(false)
-    const apps = desktopManagedApps(db, crypto, 1, { returnUrl: 'http://127.0.0.1/return', coworkerExists: async () => true, connect: async () => managedAppsConnectClient('ck_fixture_consumer', server.network) })
+    const identity = await seedConnectCredential(db)
+    const apps = desktopManagedApps(db, crypto, 1, { returnUrl: 'http://127.0.0.1/return', coworkerExists: async () => true, connect: async () => ({ ...managedAppsConnectClient('ck_fixture_consumer', server.network), identity }) })
     await apps.act({ action: 'connect', slug: 'github' })
     expect(await apps.githubReader()).toBeNull()
 })
@@ -79,4 +84,19 @@ test('with a project key the read names the connected account and is a GET', asy
     expect(await managedAppsClient('fixture-key', network).proxyGet('ca_7', '/repos/acme/secret/readme')).toEqual({ status: 200, data: { name: 'secret' } })
     expect(sent).toEqual([{ path: '/api/v3.1/tools/execute/proxy', body: { connected_account_id: 'ca_7', endpoint: '/repos/acme/secret/readme', method: 'GET' }, key: 'fixture-key' }])
     await expect(managedAppsClient('fixture-key', network).proxyGet('ca_7', 'https://evil.example/x')).rejects.toThrow('cannot be read')
+})
+
+test('an open GitHub reader stops before the next read if its Connect key has been replaced', async () => {
+    const server = connectServer()
+    const identity = await seedConnectCredential(db)
+    const apps = desktopManagedApps(db, crypto, 1, {
+        returnUrl: 'http://127.0.0.1/return', coworkerExists: async () => true,
+        connect: async () => ({ ...managedAppsConnectClient('ck_fixture_consumer', server.network), identity }),
+    })
+    await apps.act({ action: 'connect', slug: 'github' })
+    const read = await apps.githubReader()
+    const calls = server.calls.length
+    await db.execute("UPDATE desktop_vault_mcp_servers SET credential_revision='changed'")
+    await expect(read!('/repos/fixture/demo', never)).rejects.toMatchObject({ status: 409 })
+    expect(server.calls).toHaveLength(calls)
 })

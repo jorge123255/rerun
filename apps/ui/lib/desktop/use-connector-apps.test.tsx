@@ -9,7 +9,7 @@ import { invalidateDesktopConnectorApps, resetDesktopConnectorAppsForTest, useDe
 
 const listing = (agentId: string) => ({ agentId, servers: [{ server: 'linear', slug: 'linear', name: 'Linear', icon: '/services/linear.svg', category: 'productivity' }], toolkits: [] })
 let calls: string[] = []
-let answer: (url: string) => Response
+let answer: (url: string) => Response | Promise<Response>
 beforeEach(() => {
     calls = []
     answer = url => Response.json(listing(decodeURIComponent(url.split('/')[4]!)))
@@ -76,4 +76,20 @@ test('a reply with no app step reads nothing, yet follows what a sibling read', 
     expect(calls).toHaveLength(1)
     expect(quiet.container.textContent).toBe('Create Issue')
     await quiet.close(); await asking.close()
+})
+
+
+test('a pending chat annotation read cannot hide a newer assignment', async () => {
+    let settle!: (response: Response) => void
+    answer = () => new Promise(resolve => { settle = resolve })
+    const view = await mount(<Row agentId="agent-5" tool="linear_create_issue" />)
+    answer = () => Response.json(listing('agent-5'))
+    await act(async () => {
+        invalidateDesktopConnectorApps()
+        settle(Response.json({ agentId: 'agent-5', servers: [], toolkits: [] }))
+        await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(calls).toHaveLength(2)
+    expect(view.container.textContent).toBe('Create Issue')
+    await view.close()
 })

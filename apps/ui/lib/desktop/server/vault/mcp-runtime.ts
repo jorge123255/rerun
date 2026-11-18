@@ -16,6 +16,7 @@ import type { OAuthJson } from '../mcp/oauth-network'
 import { vaultCatalogHealth } from './catalog-health'
 import { vaultMcpOAuth } from './mcp-oauth'
 import { vaultMcpHttps } from './mcp-network'
+import { assignedManagedAccounts } from '../managed-apps/assigned'
 
 type VaultSseOptions = Pick<DesktopSseRuntimeDeps, 'store' | 'key' | 'authorizeRun' | 'network'> & {
     remoteAccess: McpAccess
@@ -287,9 +288,23 @@ export function desktopVaultMcpRuntime(db: Client, crypto: DesktopSecretCrypto, 
                 }
             })
         },
-        tools(owner: string, signal: AbortSignal, authorizeRun?: (signal: AbortSignal) => Promise<void>) {
+        async tools(owner: string, signal: AbortSignal, authorizeRun?: (signal: AbortSignal) => Promise<void>) {
             const active = AbortSignal.any([signal, shutdown])
-            if (!authorizeRun) return remoteMcpTools(owner, store, runtime, active)
+            if (!authorizeRun) {
+                const tools = await remoteMcpTools(owner, store, runtime, active)
+                const search = tools.find(tool => tool.server.name === 'composio' && tool.server.tool === 'COMPOSIO_SEARCH_TOOLS' && tool.server.host === 'connect.composio.dev')
+                if (search) {
+                    const accounts = await assignedManagedAccounts(db, workspaceId, owner)
+                    const slugs = accounts.filter(account => account.source === 'connect').map(account => account.slug)
+                    if (slugs.length) {
+                        // Composio exposes a search tool, not one tool per login. List only validated toolkit identifiers.
+                        const hint = 'Signed-in toolkits assigned to this coworker: ' + slugs.slice(0, 40).join(', ') + '.'
+                        search.description = (hint + '\n' + search.description).slice(0, 8_000)
+                    }
+                    active.throwIfAborted()
+                }
+                return tools
+            }
             const guardedNetwork: McpNetwork = (input, init, guard) => watched(input, init, async () => {
                 await authorizeRun(init.signal)
                 await guard()

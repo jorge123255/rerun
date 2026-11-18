@@ -6,6 +6,8 @@ import { openDesktopDatabase } from './database'
 import type { DesktopRuntime } from './runtime'
 import bundledCatalog from './services/catalog/bundled-services.json'
 import { openDesktopVault } from './vault/binding'
+import { assignedManagedAccounts } from './managed-apps/assigned'
+import { COMPOSIO_CONNECT, COMPOSIO_CONNECT_HEADER } from './managed-apps/client'
 
 // Which app a chat tool row belongs to. Everything here is read from this Mac's own database and
 // the catalog the app ships: no connector is opened, no credential is read and nothing is fetched,
@@ -53,7 +55,7 @@ export function desktopConnectorApps(agentId: string, sources: ConnectorSources)
         if (entry.kind === 'mcp' && entry.catalog) {
             const app = bundled.get(entry.catalog.slug)
             add({ server: entry.name, slug: entry.catalog.slug, name: app?.name ?? entry.catalog.name, ...(entry.catalog.label ? { label: entry.catalog.label } : {}), icon: app?.icon ?? null, category: app?.category ?? 'other' })
-        } else if (entry.kind === 'mcp' && entry.name === COMPOSIO_SERVER) {
+        } else if (entry.kind === 'mcp' && entry.name === COMPOSIO_SERVER && entry.url === COMPOSIO_CONNECT && entry.headerName === COMPOSIO_CONNECT_HEADER) {
             composio = true
             add({ server: entry.name, slug: 'composio', name: 'Composio', icon: null, category: 'other' })
         } else add(custom(entry.name))
@@ -106,5 +108,6 @@ export async function readConnectorSources(db: Client, agentId: string): Promise
 export async function desktopCoworkerConnectors(runtime: DesktopRuntime, agentId: string): Promise<DesktopCoworkerConnectors> {
     const vault = (await (await openDesktopVault(runtime)).forCoworker(agentId)).attached
     const db = await openDesktopDatabase(runtime.dataRoot)
-    return desktopConnectorApps(agentId, { vault, ...await readConnectorSources(db, agentId) })
+    const [sources, managedAccounts] = await Promise.all([readConnectorSources(db, agentId), assignedManagedAccounts(db, runtime.workspaceId, agentId)])
+    return { ...desktopConnectorApps(agentId, { vault, ...sources }), managedAccounts }
 }

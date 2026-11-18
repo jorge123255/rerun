@@ -1,3 +1,5 @@
+import { seedConnectCredential } from './connect-owner-fixture'
+import { connectToolList } from './connect-test-fixture'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -122,7 +124,7 @@ test('connect, sign in, attach to a coworker, call, detach and remove', async ()
     expect(tools.map(tool => tool.name)).toEqual(['GMAIL_SEND_EMAIL', 'GMAIL_FETCH_EMAILS'])
     const sent = await tools[0]!.execute({ to: 'pat@example.test' }, signal, 'call-1')
     expect(sent).toEqual({ source: 'remote_mcp', untrusted: true, result: { content: [{ type: 'text', text: '{"id":"msg_1"}' }] } })
-    expect(fake.state.executed).toEqual([{ user_id: fake.state.user, arguments: { to: 'pat@example.test' } }])
+    expect(fake.state.executed).toEqual([{ user_id: fake.state.user, connected_account_id: 'ca_1', arguments: { to: 'pat@example.test' } }])
     expect(fake.state.user).toMatch(/^rerun_mac_w1_[0-9a-f-]{36}$/)
     expect((await tools[1]!.execute({}, signal, 'call-2')).result).toEqual({ content: [{ type: 'text', text: '{"error":"quota"}' }], isError: true })
     expect(fake.seen.filter(call => call.path.startsWith('/tools?')).length).toBe(1)
@@ -239,6 +241,7 @@ function connectServer() {
         const body = JSON.parse(String(init?.body)) as { id?: number; method: string; params?: { name: string; arguments: { toolkits: { name: string; action: string; account_id?: string }[] } } }
         if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-03-26' } }, { headers: { 'mcp-session-id': 'session-1' } })
         expect(sent.get('mcp-session-id')).toBe('session-1')
+        if (body.method === 'tools/list') return connectToolList(body.id!)
         if (body.method === 'notifications/initialized') return new Response(null, { status: 202 })
         asked.push(body.params!)
         const results = Object.fromEntries(body.params!.arguments.toolkits.map(toolkit => {
@@ -262,9 +265,12 @@ test('with a Connect key in the Vault every Composio app is offered and connecte
     const server = connectServer()
     const crypto = createDesktopSecretCrypto(() => Buffer.alloc(32, 7))
     let inVault = false
+    const identity = await seedConnectCredential(db)
+    const connector = { ...managedAppsConnectClient('ck_fixture_consumer', server.network), identity }
+    const startSignIn = vi.spyOn(connector, 'connect')
     const apps = desktopManagedApps(db, crypto, 1, {
         returnUrl: 'http://127.0.0.1:4000/api/desktop/managed-apps/return', coworkerExists: async () => true,
-        connect: async () => inVault ? managedAppsConnectClient('ck_fixture_consumer', server.network) : null,
+        connect: async () => inVault ? connector : null,
     })
     // Without the Vault entry the section still asks for a key.
     expect((await apps.view()).configured).toBe(false)
@@ -289,6 +295,10 @@ test('with a Connect key in the Vault every Composio app is offered and connecte
     expect((await apps.act({ action: 'refresh', id: account.id, retry: true })).signIn).toBe('https://connect.composio.dev/link/lk_fixture')
     server.state.signedIn = true
     expect((await apps.act({ action: 'refresh', id: account.id })).view.accounts[0]!.status).toBe('active')
+
+    // A completed browser flow discovered on a later reopen must leave the active connection intact.
+    expect((await apps.act({ action: 'refresh', id: account.id, retry: true })).signIn).toBeUndefined()
+    expect(startSignIn.mock.calls).toEqual([['gmail', undefined], ['gmail', undefined, 'renew']])
 
     // Coworkers and the key belong to the Vault entry, and no coworker gets tools from this list.
     await expect(apps.act({ action: 'attach', id: account.id, agentId: 'coworker-1', attached: true })).rejects.toMatchObject({ status: 409 })
