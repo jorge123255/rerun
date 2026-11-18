@@ -124,6 +124,10 @@ async function initialize(dataRoot: string): Promise<Client> {
             board_row INTEGER NOT NULL,
             completed INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS desktop_description_checks (
+            agent_id TEXT PRIMARY KEY REFERENCES desktop_agents(id) ON DELETE CASCADE,
+            description TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS desktop_rename_checks (
             agent_id TEXT PRIMARY KEY REFERENCES desktop_agents(id) ON DELETE CASCADE,
             name TEXT NOT NULL,

@@ -82,3 +82,11 @@ describe('saying so when a preset is not on its first choice', () => {
         expect(desktopPresetFallbackNote(null, '')).toBeNull()
     })
 })
+
+it('identifies the real provider behind a saved coworker preset only while a plan resolves', () => {
+    const base = { workspace: null, coworker: null, conversation: null, presets: true, coworkerPreset: 'smart' as const, now }
+    const provider = (connections: ConnectionSummary[]) => buildDesktopModelView({ ...base, connections }).effective.presetProvider
+    expect(provider([claude, chatgpt])).toBe('codex')
+    expect(provider([claude, { ...chatgpt, connected: false }])).toBe('claude')
+    expect(provider([])).toBeUndefined()
+})

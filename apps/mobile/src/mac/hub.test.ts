@@ -1,5 +1,7 @@
 import { foremanEngineConversationSchema, foremanEngineFilesSchema, foremanEngineMessagesSchema, foremanStateSchema, agentConversationsOverviewSchema, agentViewSchema, boardAgentSchema, boxSchema, conversationMessageSchema, conversationSchema, findPendingHitl, inboxSchema, meSchema } from '@rerun/contracts'
 
+import type { MacPhoneCoworkerSettingsChange } from '@rerun/mac-contracts/mac-phone-pairing'
+
 import type { MacClient } from './client'
 import { chiefMessagesOf, createMacHub, messagesOf, NOT_ON_A_MAC, waitingOf } from './hub'
 
@@ -31,6 +33,47 @@ function setup(overrides: Partial<Record<keyof MacClient, jest.Mock>> = {}) {
 }
 
 describe('the hub paths a paired Mac answers', () => {
+    it('passes only a settings refusal’s public message through to the coworker settings page', async () => {
+        const message = 'Stop this coworker’s current reply before editing its tools.'
+        const refusal = Object.assign(new Error('settings_refused'), { status: 409, body: { error: 'settings_refused', message } })
+        const read = jest.fn().mockRejectedValueOnce(refusal)
+        const change = jest.fn().mockRejectedValueOnce(refusal)
+        const { hub, onRevoked } = setup({ readCoworkerSettings: read, changeCoworkerSettings: change })
+        const body = { field: 'enabled' as const, body: { enabled: false } }
+        await expect(hub.readCoworkerSettings('ada')).rejects.toMatchObject({ message, status: 409 })
+        await expect(hub.changeCoworkerSettings('ada', body)).rejects.toMatchObject({ message, status: 409 })
+        expect(change).toHaveBeenCalledWith('ada', body, undefined)
+        expect(onRevoked).not.toHaveBeenCalled()
+        change.mockRejectedValueOnce(Object.assign(new Error('settings_not_allowed'), { status: 403, body: { message: 'unvetted error details' } }))
+        await expect(hub.changeCoworkerSettings('ada', body)).rejects.toMatchObject({ message: 'settings_not_allowed' })
+        change.mockRejectedValueOnce(Object.assign(new Error('revoked'), { status: 401 }))
+        await expect(hub.changeCoworkerSettings('ada', body)).rejects.toMatchObject({ message: 'revoked' })
+        expect(onRevoked).toHaveBeenCalledTimes(1)
+    })
+
+    it.each(['setup', 'box'] as const)('reuses exactly the pending %s request on ambiguity, then retires it on admission or refusal', async field => {
+        const send = jest.fn()
+        const { hub } = setup({ changeCoworkerSettings: send })
+        const edit = (requestId: string, revision = 3): MacPhoneCoworkerSettingsChange => field === 'setup'
+            ? { field, body: { requestId, action: 'start', expectedRevision: 'saved-' + revision } }
+            : { field, body: { requestId, spaceId: 'reports', expectedRevision: revision } }
+        send.mockRejectedValueOnce(new Refusal(503, 'unavailable'))
+        await expect(hub.changeCoworkerSettings('ada', edit('first'))).rejects.toThrow()
+        expect(hub.unconfirmedSettingsChange('ada', field)).toEqual(edit('first'))
+        expect(hub.unconfirmedSettingsChange('other', field)).toBeNull()
+        await hub.changeCoworkerSettings('other', edit('other-owner'))
+        await hub.changeCoworkerSettings('ada', edit('new-revision', 4))
+        await hub.changeCoworkerSettings('ada', edit('retry'))
+        expect(hub.unconfirmedSettingsChange('ada', field)).toBeNull()
+        expect(send.mock.calls.map(([id, change]) => [id, change])).toEqual([
+            ['ada', edit('first')], ['other', edit('other-owner')], ['ada', edit('new-revision', 4)], ['ada', edit('first')],
+        ])
+        send.mockRejectedValueOnce(new Refusal(409, 'conflict'))
+        await expect(hub.changeCoworkerSettings('ada', edit('next'))).rejects.toThrow()
+        await hub.changeCoworkerSettings('ada', edit('after-refusal'))
+        expect(send.mock.calls.slice(-2).map(([, change]) => change.body.requestId)).toEqual(['next', 'after-refusal'])
+    })
+
     it('gives the Home its coworkers, their latest chat and one Box, in the hub shapes', async () => {
         const { hub } = setup()
         const agents = boardAgentSchema.array().parse(await hub.api('/api/v1/agents'))

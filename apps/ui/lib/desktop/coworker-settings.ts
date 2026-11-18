@@ -2,6 +2,7 @@ import { verbositySchema, type Verbosity } from '@rerun/contracts'
 import { z } from 'zod'
 
 export type DesktopCoworkerSettings = {
+    description?: string
     soul: string
     verbosity: Verbosity
     soulEditable: boolean
@@ -15,6 +16,7 @@ export type DesktopCoworkerSettings = {
 }
 
 export const coworkerSettingsPatch = z.strictObject({
+    description: z.string().trim().max(2000).optional(),
     soul: z.string().trim().min(1).optional(),
     verbosity: verbositySchema.optional(),
     workspaceReadEnabled: z.boolean().optional(),

@@ -91,3 +91,12 @@ phone names no model, instructions, attachment or run, and the ids the Mac sees
 are made from the phone and its request. Cards that change things (a plan to
 build, team changes, a starter pack) arrive as words only, and nothing a phone
 can call settles one: they are approved on the Mac.
+
+## Coworker settings
+
+An approved phone can read its coworker's settings with `readCoworkerSettings`.
+The Mac owner enables **Change settings** separately for each phone. The client
+then sends a named change with `changeCoworkerSettings`. Setup, Box moves and
+call targets use the revision or selection from the last read. The Mac checks
+the live permission and the coworker again when it handles the change.
+Vault entries, provider sign-ins, MCP secrets and service accounts stay on the Mac.

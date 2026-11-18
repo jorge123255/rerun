@@ -705,7 +705,11 @@ importers:
         specifier: ^5
         version: 5.9.3
 
-  packages/mac-pairing-client: {}
+  packages/mac-pairing-client:
+    dependencies:
+      '@rerun/mac-contracts':
+        specifier: workspace:@rerun/contracts@*
+        version: link:../contracts
 
   packages/ui:
     dependencies:

@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('desktopApp', {
         decline: deviceId => ipcRenderer.invoke('desktop:phone-pairing-decline', deviceId),
         setSendMessages: (deviceId, enabled) => ipcRenderer.invoke('desktop:phone-pairing-send-permission', deviceId, enabled === true),
         setApproveRequests: (deviceId, enabled) => ipcRenderer.invoke('desktop:phone-pairing-approve-permission', deviceId, enabled === true),
+        setChangeSettings: (deviceId, enabled) => ipcRenderer.invoke('desktop:phone-pairing-settings-permission', deviceId, enabled === true),
         revoke: deviceId => ipcRenderer.invoke('desktop:phone-pairing-revoke', deviceId),
     },
 })

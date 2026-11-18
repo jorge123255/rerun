@@ -1,7 +1,10 @@
 import { FOREMAN_AGENT_ID, type AgentConversationsOverview, type AgentModels, type AgentView, type BoardAgent, type Box, type Conversation, type ConversationMessage, type ForemanStateResponse, type Inbox, type InboxItem, type Me, type SessionStatus } from '@rerun/contracts'
 import { macPhoneChatReadSchema, macPhoneChatsSchema, macPhoneChiefChatSchema, macPhoneChiefSchema, macPhoneCoworkersSchema, macPhoneInboxSchema, macPhoneVoiceSessionSchema, type MacPhoneChat, type MacPhoneChiefCard, type MacPhoneChiefChat, type MacPhoneInboxItem, type MacPhoneChatRead, type MacPhoneCoworker, type MacPhoneVoiceSession } from '@rerun/mac-contracts/mac-phone-pairing'
 
+import type { MacPhoneCoworkerSettings, MacPhoneCoworkerSettingsChange } from '@rerun/mac-contracts/mac-phone-pairing'
+
 import type { MacClient } from './client'
+import { settingsWithReceipts } from './settings-retries'
 import type { MacLink } from './session'
 import { turnOf } from './turns'
 
@@ -17,6 +20,9 @@ export type MacHubRequest = { method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELET
 type Fail = (status: number, message: string, body?: unknown) => Error
 
 export type MacHub = {
+    readCoworkerSettings(agentId: string, signal?: AbortSignal): Promise<MacPhoneCoworkerSettings>
+    unconfirmedSettingsChange(agentId: string, field: 'setup' | 'box'): MacPhoneCoworkerSettingsChange | null
+    changeCoworkerSettings(agentId: string, change: MacPhoneCoworkerSettingsChange, signal?: AbortSignal): Promise<void>
     api: <T>(path: string, request?: MacHubRequest) => Promise<T>
     // What the chat tells the hub as it sends: which coworker a new chat belongs to, and the turn the
     // phone last started in a chat, the only one it can follow or stop.
@@ -180,10 +186,12 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
         try {
             return await call()
         } catch (error) {
-            const refusal = error as { status?: number; message?: string }
+            const refusal = error as { status?: number; message?: string; body?: { error?: string; message?: string } }
             if (typeof refusal.status !== 'number') throw error
             if (refusal.status === 401 && refusal.message === MAC_REVOKED) onRevoked()
-            throw fail(refusal.status, refusal.message ?? 'request_failed', { error: refusal.message })
+            const detail = refusal.message === 'settings_refused' && refusal.body?.error === 'settings_refused' && typeof refusal.body.message === 'string'
+                ? refusal.body.message : refusal.message
+            throw fail(refusal.status, detail ?? 'request_failed', { error: refusal.message })
         }
     }
 
@@ -383,6 +391,10 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
     ]
 
     return {
+        readCoworkerSettings: (agentId, signal) => ask(() => client.readCoworkerSettings(agentId, signal)),
+        ...settingsWithReceipts(async (agentId, change, signal) => {
+            await ask(() => client.changeCoworkerSettings(agentId, change, signal))
+        }),
         async api<T>(path: string, request: MacHubRequest = {}): Promise<T> {
             const method = request.method ?? 'GET'
             const [pathname, search = ''] = path.split('?')

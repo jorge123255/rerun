@@ -69,6 +69,12 @@ phone may send: the Mac records the answer against the question it saved, the wa
 and takes nothing else in that chat until then. An approval is shown and decided on the Mac, unless the phone may approve requests. The Mac's
 Actions inbox is served too.
 
+Tap a coworker’s name in its chat to open its Mac settings. All approved phones can read them.
+Turn on **Change settings** for the phone in **File → Connect iPhone…** on the Mac to edit its
+profile, model, reasoning effort, tools, allowed coworkers, Box or setup. Permissions that reach
+the Mac ask for confirmation before the phone turns them on. Vault entries, provider sign-ins,
+MCP secrets and service accounts can be configured only on the Mac.
+
 The Chief of Staff (the Foreman's page here) is served from the Mac: General and its task threads as
 text, a message, a new task thread, the live text of the reply, stop, and its question card, for a
 phone that may send (any approved phone reads). While the Mac's Chief of Staff still asks its first-run
