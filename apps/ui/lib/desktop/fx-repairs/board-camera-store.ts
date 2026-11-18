@@ -1,5 +1,6 @@
 import 'server-only'
 import type { Client, Transaction } from '@libsql/client'
+import { setTimeout as delay } from 'node:timers/promises'
 import { openDesktopDatabase } from '@/lib/desktop/server/database'
 import { authenticateDesktopRequest, DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
@@ -25,30 +26,47 @@ function snapshot(workspaceId: number, row: Awaited<ReturnType<typeof rowOf>>): 
 export function createFxCameraWorkspaceStore(db: Pick<Client, 'execute' | 'transaction'>, workspaceId: number) {
     return {
         async read(): Promise<FxCameraSnapshot> { return snapshot(workspaceId, await rowOf(db, workspaceId)) },
-        async write(raw: FxCameraWrite, signal: AbortSignal): Promise<FxCameraResult> {
+        async write(raw: FxCameraWrite, signal: AbortSignal, verifyOwner?: () => Promise<void>): Promise<FxCameraResult> {
             const input = fxCameraWriteSchema.parse(raw)
             if (input.workspaceId !== workspaceId) throw new DesktopHttpError(409, 'Workspace changed.')
             signal.throwIfAborted()
             const intent = JSON.stringify({ expectedRevision: input.expectedRevision, camera: input.camera })
-            const tx = await db.transaction('write')
-            try {
+            const deadline = Date.now() + 2_000
+            for (;;) {
                 signal.throwIfAborted()
-                const row = await rowOf(tx, workspaceId), before = snapshot(workspaceId, row)
-                if (row?.request_id === input.requestId) {
-                    if (row.intent_json !== intent) throw new DesktopHttpError(409, 'Retry the exact board view request.')
+                // A fresh read transaction can recheck the revision after a competing writer finishes.
+                // Never replay a commit whose outcome is unknown.
+                const tx = await db.transaction('deferred')
+                let committing = false
+                try {
+                    await verifyOwner?.()
+                    signal.throwIfAborted()
+                    const row = await rowOf(tx, workspaceId), before = snapshot(workspaceId, row)
+                    if (row?.request_id === input.requestId) {
+                        if (row.intent_json !== intent) throw new DesktopHttpError(409, 'Retry the exact board view request.')
+                        await tx.rollback()
+                        return { status: 'saved', requestId: input.requestId, snapshot: before }
+                    }
+                    if (before.revision !== input.expectedRevision) { await tx.rollback(); return { status: 'conflict', snapshot: before } }
+                    const revision = before.revision + 1
+                    await tx.execute({ sql: `INSERT INTO desktop_fx_board_camera(workspace_id,revision,camera_json,request_id,intent_json) VALUES(?,?,?,?,?)
+                        ON CONFLICT(workspace_id) DO UPDATE SET revision=excluded.revision,camera_json=excluded.camera_json,request_id=excluded.request_id,intent_json=excluded.intent_json`,
+                        args: [workspaceId, revision, JSON.stringify(input.camera), input.requestId, intent] })
+                    signal.throwIfAborted()
+                    committing = true
                     await tx.commit()
-                    return { status: 'saved', requestId: input.requestId, snapshot: before }
-                }
-                if (before.revision !== input.expectedRevision) { await tx.rollback(); return { status: 'conflict', snapshot: before } }
-                const revision = before.revision + 1
-                await tx.execute({ sql: `INSERT INTO desktop_fx_board_camera(workspace_id,revision,camera_json,request_id,intent_json) VALUES(?,?,?,?,?)
-                    ON CONFLICT(workspace_id) DO UPDATE SET revision=excluded.revision,camera_json=excluded.camera_json,request_id=excluded.request_id,intent_json=excluded.intent_json`,
-                    args: [workspaceId, revision, JSON.stringify(input.camera), input.requestId, intent] })
-                signal.throwIfAborted()
-                await tx.commit()
-                return { status: 'saved', requestId: input.requestId, snapshot: { workspaceId, revision, camera: input.camera } }
-            } catch (error) { await tx.rollback().catch(() => {}); throw error }
-            finally { tx.close() }
+                    return { status: 'saved', requestId: input.requestId, snapshot: { workspaceId, revision, camera: input.camera } }
+                } catch (error) {
+                    const busy = error instanceof Error && 'code' in error && (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_BUSY_SNAPSHOT')
+                    if (!committing && busy && Date.now() < deadline) {
+                        await tx.rollback()
+                    } else {
+                        await tx.rollback().catch(() => {})
+                        throw error
+                    }
+                } finally { tx.close() }
+                await delay(50, undefined, { signal })
+            }
         },
     }
 }
@@ -68,8 +86,7 @@ export const fxBoardCameraHandlers = {
         const input = fxCameraWriteSchema.parse(await readDesktopJson(request, 4096))
         if (input.workspaceId !== runtime.workspaceId) throw new DesktopHttpError(409, 'Workspace changed.')
         const db = await openDesktopDatabase(runtime.dataRoot)
-        await current(request, runtime)
-        const result = await createFxCameraWorkspaceStore(db, runtime.workspaceId).write(input, request.signal)
+        const result = await createFxCameraWorkspaceStore(db, runtime.workspaceId).write(input, request.signal, () => current(request, runtime))
         await current(request, runtime)
         return Response.json(result)
     }),
