@@ -161,6 +161,32 @@ describe('POST /agents/:id/chat', () => {
         } finally { vi.unstubAllEnvs() }
     })
 
+    it('admits an approved setup reply to a real turn that thought and used tools before asking', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const { createHash } = await import('node:crypto')
+            const { appendMessage, listMessages } = await import('../../db/repos/messages.js')
+            const owner = 'setup-reply-tools'
+            await seed(owner, { name: 'Code reviewer', setup: { required: true } })
+            await writeFile(installPath(owner), 'Learn which pull requests to review.')
+            const { claimDesktopSetupSession } = await import('../../desktop/setup/service.js')
+            const claim = await claimDesktopSetupSession(owner)
+            if (!('session' in claim)) throw new Error('Expected a new setup session')
+            const sessionId = claim.session.id
+            const turn = await appendMessage(owner, sessionId, { role: 'assistant', content: [
+                { type: 'reasoning', text: 'Checking the repository first.' },
+                { type: 'tool-call', toolCallId: 'read', toolName: 'team_status', input: {}, providerExecuted: true },
+                { type: 'tool-result', toolCallId: 'read', toolName: 'team_status', output: { type: 'json', value: {} } },
+                { type: 'text', text: 'Which pull request would you like me to review first?' },
+            ] })
+            const stepId = createHash('sha256').update(JSON.stringify([turn.id, turn.contentJson])).digest('hex')
+            const res = await chat(owner, { sessionId, message: 'Start with the newest open one.', author: { id: 'foreman', name: 'Chief of Staff' }, desktopQueuedTurn: { runId: crypto.randomUUID(), setupReplyStepId: stepId } })
+            expect(res.status).toBe(200)
+            await res.text()
+            expect((await listMessages(owner, sessionId)).filter(row => row.role === 'user')).toMatchObject([{ authorId: 'foreman', authorName: 'Chief of Staff' }])
+        } finally { vi.unstubAllEnvs() }
+    })
+
     it('admits the exact app result once, resumes after its source is settled, and binds replay to its guard kind', async () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')
         try {

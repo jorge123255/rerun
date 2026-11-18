@@ -1,5 +1,8 @@
 import { z } from 'zod'
 import { isContextPart, visibleText } from './chat-context.js'
+import { hitlKindOf } from './chat-hitl.js'
+import { QUICK_REPLIES_TOOL } from './chat-quick-replies.js'
+import { stripBridgePrefix } from './chat-tool-name.js'
 import { desktopRerunToolCatalog } from './desktop-tool-grants.js'
 
 // Changes to the team that the Chief of Staff may propose on the Mac. It only proposes: the app
@@ -18,25 +21,56 @@ export const DESKTOP_TEAM_CHANGE_CHIEF = 'Chief of Staff'
 /** In `targets`: every other coworker. */
 export const DESKTOP_TEAM_CHANGE_EVERYONE = 'everyone'
 export type DesktopTeamChangeAction = (typeof DESKTOP_TEAM_CHANGE_ACTIONS)[number]
-export const DESKTOP_TEAM_CHANGE_LIMITS = { maxChanges: 80, maxSummary: 300, maxSetupReply: 1200, maxSetupQuestion: 800 } as const
+export const DESKTOP_TEAM_CHANGE_LIMITS = { maxChanges: 80, maxSummary: 300, maxSetupReply: 1200, maxSetupQuestion: 800, maxSetupMessage: 6000 } as const
 
 const short = (max: number) => z.string().trim().min(1).max(max)
 export const desktopInspectCoworkerSetupSchema = z.strictObject({
     coworker: short(120).describe('The exact name of the coworker whose guided setup you want to check.'),
 })
-/** Only a standalone, visible assistant message can be answered as plain setup text. */
+/**
+ * A finished assistant turn that ended in words to the person can be answered as plain setup
+ * text. Real coworkers think and use tools before they reply, so reasoning and tool calls that
+ * each have their result are allowed in the same message. Only the visible words are returned:
+ * reasoning, tool inputs and tool results never are. A tool still waiting for its result, a
+ * person-facing request (question, approval, secret, sign-in, app, browser) or a turn that ended
+ * on a tool step is not an ordinary reply.
+ */
 export function desktopSetupReplyQuestion(row: { role: string; contentJson: string; toolCallsJson?: string | null }): string | null {
     if (row.role !== 'assistant') return null
     try {
         if (row.toolCallsJson != null) {
+            // Suggested reply chips are cut from the coworker's own words and never wait for a result.
             const calls: unknown = JSON.parse(row.toolCallsJson)
-            if (!Array.isArray(calls) || calls.length) return null
+            if (!Array.isArray(calls) || calls.some(call => typeof call?.toolName !== 'string' || stripBridgePrefix(call.toolName) !== QUICK_REPLIES_TOOL)) return null
         }
         const content: unknown = JSON.parse(row.contentJson)
-        if (typeof content !== 'string' && !(Array.isArray(content) && content.every(part =>
-            part?.type === 'text' && typeof part.text === 'string' && !isContextPart(part)))) return null
-        return visibleText(content, '\n').trim() || null
+        if (typeof content === 'string') return content.trim() || null
+        if (!Array.isArray(content)) return null
+        const calls = new Set<string>()
+        const results = new Set<string>()
+        let lastStep: 'text' | 'tool' | null = null
+        for (const part of content as { type?: unknown; text?: unknown; toolCallId?: unknown; toolName?: unknown }[]) {
+            if (part?.type === 'text') {
+                if (typeof part.text !== 'string') return null
+                if (!isContextPart(part)) lastStep = 'text'
+                continue
+            }
+            if (part?.type === 'reasoning') continue
+            if (part?.type !== 'tool-call' && part?.type !== 'tool-result') return null
+            if (typeof part.toolCallId !== 'string' || typeof part.toolName !== 'string' || hitlKindOf(part.toolName)) return null
+            if (part.type === 'tool-call' && stripBridgePrefix(part.toolName) === QUICK_REPLIES_TOOL) continue
+            ;(part.type === 'tool-call' ? calls : results).add(part.toolCallId)
+            lastStep = 'tool'
+        }
+        if (lastStep !== 'text' || calls.size !== results.size || [...calls].some(id => !results.has(id))) return null
+        const words = content.filter(part => part?.type === 'text' && !isContextPart(part))
+        return visibleText(words, '\n').trim() || null
     } catch { return null }
+}
+
+/** The end of a long setup message, where its question usually is, within `max` characters. */
+export function desktopSetupQuestionExcerpt(text: string, max: number = DESKTOP_TEAM_CHANGE_LIMITS.maxSetupQuestion): string {
+    return text.length <= max ? text : '…' + text.slice(text.length - (max - 1)).trimStart()
 }
 
 export const desktopTeamSetupReplySchema = z.strictObject({

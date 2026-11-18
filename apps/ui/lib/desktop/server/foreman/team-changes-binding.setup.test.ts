@@ -34,6 +34,15 @@ test('read only named setup conversations and preserve useful answers when anoth
     expect(result.changes).toMatchObject([{ agentId: 'id-0', setupReply: { ...step, question: 'Which platform?', text: 'Use iOS.' } }])
     expect(result.refused).toHaveLength(1)
 })
+test('shows the end of a long setup message on the card within its limit', async () => {
+    const long = 'Context line. '.repeat(400) + 'Which route do you want to take?'
+    ports.inspect.mockResolvedValue({ agentId: 'id-0', state: 'awaiting_reply', step, lastMessage: long.slice(-5999) })
+    const result = await propose([{ action: 'reply_setup', coworker: 'Developer', stepId: step.stepId, reply: 'Paste the data yourself.' }])
+    const question = result.changes[0]!.setupReply!.question!
+    expect(question.length).toBeLessThanOrEqual(800)
+    expect(question.startsWith('…')).toBe(true)
+    expect(question.endsWith('Which route do you want to take?')).toBe(true)
+})
 test('resumes a skipped setup on its original claim and starts one only when no claim exists', async () => {
     ports.setup.mockImplementation(async (_runtime, id) => ({
         skipped: true, pending: false, canStart: id === 'id-0', canContinue: id === 'id-1', canSkip: false, revision: id, sessionId: id === 'id-1' ? 'original' : null,

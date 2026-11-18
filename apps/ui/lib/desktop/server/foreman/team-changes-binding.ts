@@ -1,6 +1,6 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
-import { desktopTeamChangesInputSchema, type DesktopForemanBinding, type DesktopTeamModelOption } from '@rerun/contracts'
+import { desktopSetupQuestionExcerpt, desktopTeamChangesInputSchema, type DesktopForemanBinding, type DesktopTeamModelOption } from '@rerun/contracts'
 import type { DesktopRuntime } from '../runtime'
 import { readDesktopProviders } from '../settings'
 import { observeDesktopSetup } from '../setup/service'
@@ -36,7 +36,8 @@ export async function desktopTeamWorkspace(runtime: DesktopRuntime, db: Client, 
                 throw error
             })
             if (inspection?.agentId === agent.id && inspection.state === 'awaiting_reply' && inspection.step) {
-                coworker.setupStep = { ...inspection.step, ...(inspection.lastMessage ? { question: inspection.lastMessage } : {}) }
+                // The card shows the end of a long message, where its question is; the full text stays in the setup chat.
+                coworker.setupStep = { ...inspection.step, ...(inspection.lastMessage ? { question: desktopSetupQuestionExcerpt(inspection.lastMessage) } : {}) }
             }
         }
         return coworker
