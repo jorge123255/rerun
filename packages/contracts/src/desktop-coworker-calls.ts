@@ -150,6 +150,38 @@ export function desktopCoworkerCallSnapshotOf(input: DesktopCoworkerCallPublicFi
     return desktopCoworkerCallSnapshotSchema.parse({ ...input, revision: String(input.revision) })
 }
 
+// What the coworker that started a call can read about it later (check_agent_call). Distinct from
+// the board snapshot: it names the state in the caller's terms and carries the answer.
+// accepted: handed over, its chat is being opened. working: the called coworker is on it.
+// blocked: it waits on the person (a question, an approval, help in its browser, an app to
+// connect, credentials) or, for a call it never received, on its unfinished setup.
+// not-delivered: the call was refused or failed before the called coworker started.
+export const desktopCoworkerCallCallerStates = ['accepted', 'working', 'blocked', 'completed', 'not-delivered', 'failed', 'stopped'] as const
+export type DesktopCoworkerCallCallerState = (typeof desktopCoworkerCallCallerStates)[number]
+export const desktopCoworkerCallWaitingOn = ['question', 'approval', 'takeover', 'service', 'secret', 'setup', 'person'] as const
+export type DesktopCoworkerCallWaitingOn = (typeof desktopCoworkerCallWaitingOn)[number]
+/** How many of a conversation's latest calls one read lists. */
+export const DESKTOP_COWORKER_CALL_STATUS_LIST = 10
+/** In a list, each answer is cut to this; reading one call by its id gives the whole answer. */
+export const DESKTOP_COWORKER_CALL_STATUS_PREVIEW_CHARS = 2_000
+
+export const desktopCoworkerCallCallerViewSchema = z.strictObject({
+    callId: z.string().uuid(),
+    coworker: z.string().trim().min(1).max(DESKTOP_COWORKER_CALL_NAME_MAX_CHARS),
+    state: z.enum(desktopCoworkerCallCallerStates),
+    waitingOn: z.enum(desktopCoworkerCallWaitingOn).nullable(),
+    detail: z.string().max(2_000).nullable(),
+    result: z.string().max(DESKTOP_COWORKER_CALL_RESULT_MAX_CHARS).nullable(),
+    resultCut: z.boolean(),
+    startedAt: z.string().min(1).max(40),
+    updatedAt: z.string().min(1).max(40),
+})
+export type DesktopCoworkerCallCallerView = z.infer<typeof desktopCoworkerCallCallerViewSchema>
+
+/** The app's answer when the called coworker's setup is not finished or skipped. No person's name. */
+export const desktopCoworkerCallSetupRefusal = (name: string) =>
+    `${name} is still in its setup. Ask the person to finish or skip its setup, then try again.`
+
 export const desktopCoworkerCallFanoutError = () =>
     `This run already has ${DESKTOP_COWORKER_CALL_MAX_FANOUT} coworker calls. The limit is ${DESKTOP_COWORKER_CALL_MAX_FANOUT} and another call was not started.`
 

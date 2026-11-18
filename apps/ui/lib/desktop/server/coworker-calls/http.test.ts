@@ -483,3 +483,102 @@ test.each(['epoch', 'call session'] as const)('adopt-session refuses a changed %
     expect(await listDesktopSessions(db, bob.id)).toEqual([])
     expect(fetcher).not.toHaveBeenCalled()
 })
+
+// Coworker messaging that says what happened: the setup refusal in the caller's words, a repeated
+// send that finds the earlier call, and the caller's own read of where its calls stand.
+function plainCall(overrides: Partial<CoworkerCallRecord> = {}): CoworkerCallRecord {
+    const toolCallId = overrides.toolCallId ?? `tool-${crypto.randomUUID()}`
+    return {
+        callId: crypto.randomUUID(), revision: 1,
+        sourceKey: JSON.stringify([caller.engineAgentId, caller.engineSessionId, caller.engineRunId, toolCallId]),
+        requestFingerprint: 'a'.repeat(64), parentAgentId: ann.id, parentSessionId: parentSession.id,
+        parentRunId: crypto.randomUUID(), toolCallId, targetAgentId: bob.id,
+        targetSessionId: null, targetName: bob.name, wait: false, status: 'queued', phase: 'reserved',
+        launchEpoch: EPOCH, launchClaimed: false,
+        engineParentAgentId: caller.engineAgentId, engineParentSessionId: caller.engineSessionId, engineParentRunId: caller.engineRunId,
+        engineTargetAgentId: bob.engineAgentId, engineTargetSessionId: null, engineChildRunId: null,
+        depth: 0, ancestors: [ann.id], progress: { steps: 0, toolCalls: 0, failures: 0, preview: '', calls: [] },
+        pendingToolCallId: null, resultText: null, error: null, stopRequestId: null,
+        createdAt: NOW, updatedAt: NOW, ...overrides,
+    }
+}
+
+test('a target still in its setup is refused by name with what the person can do, before any model or child work', async () => {
+    const { DesktopSetupPendingError } = await import('../setup/errors')
+    const { desktopCoworkerCallSetupRefusal } = await import('@rerun/contracts')
+    mocks.setup.mockRejectedValue(new DesktopSetupPendingError(true))
+    const response = await bridge()
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({ ok: false, error: desktopCoworkerCallSetupRefusal('Bob') })
+    expect(desktopCoworkerCallSetupRefusal('Bob')).toBe('Bob is still in its setup. Ask the person to finish or skip its setup, then try again.')
+    expect(mocks.model).not.toHaveBeenCalled()
+    await noChildEffects()
+})
+
+test('the same request sent again from the same conversation returns the delivered earlier call, never a second one', async () => {
+    const delivered = plainCall({ toolCallId: 'first', status: 'dispatched', phase: 'launched', launchClaimed: true, engineChildRunId: 'child-1' })
+    await insertDesktopCoworkerCall(db, delivered)
+    const again = plainCall({ toolCallId: 'second' })
+    expect(await insertDesktopCoworkerCall(db, again)).toEqual({ inserted: false, reason: 'duplicate', row: delivered })
+    // Through the bridge, as the engine sends it.
+    const response = await bridge(envelope('insert', { row: plainCall({ toolCallId: 'third' }) }))
+    expect(await response.json()).toMatchObject({ ok: true, result: { inserted: false, reason: 'duplicate', row: { callId: delivered.callId } } })
+    // Another message, or a call that only got as far as its reservation, is not the same call.
+    expect((await insertDesktopCoworkerCall(db, plainCall({ toolCallId: 'other', requestFingerprint: 'b'.repeat(64) }))).inserted).toBe(true)
+    await patchDesktopCoworkerCall(db, delivered.callId, {}, { status: 'error', phase: 'terminal', error: 'provider down' }, NOW)
+    expect((await insertDesktopCoworkerCall(db, plainCall({ toolCallId: 'after-failure' }))).inserted).toBe(true)
+    expect((await db.execute('SELECT call_id FROM desktop_coworker_calls')).rows).toHaveLength(3)
+})
+
+test('the caller reads where its own calls stand, with answers, setup blocks and nothing of anyone else\'s', async () => {
+    const { DesktopSetupPendingError } = await import('../setup/errors')
+    const done = plainCall({ toolCallId: 'done', status: 'completed', phase: 'terminal', launchClaimed: true, engineChildRunId: 'child-done', resultText: 'The figures are in the report.', createdAt: '2026-11-05T00:00:03.000Z' })
+    const working = plainCall({ toolCallId: 'working', requestFingerprint: 'c'.repeat(64), status: 'dispatched', phase: 'launched', launchClaimed: true, engineChildRunId: 'child-working', resultText: 'Message dispatched to Bob (call id x).', createdAt: '2026-11-05T00:00:02.000Z' })
+    const asking = plainCall({ toolCallId: 'asking', requestFingerprint: 'd'.repeat(64), status: 'waiting-human', phase: 'launched', launchClaimed: true, engineChildRunId: 'child-asking', createdAt: '2026-11-05T00:00:01.000Z',
+        progress: { steps: 1, toolCalls: 1, failures: 0, preview: '', calls: [{ tool: 'request_approval', status: 'running' }] } })
+    const refused = plainCall({ toolCallId: 'refused', requestFingerprint: 'e'.repeat(64), status: 'error', phase: 'terminal', launchClaimed: true, error: 'Bob is still in its setup. Ask the person to finish or skip its setup, then try again.', resultText: '(error calling Bob: …)' })
+    for (const row of [done, working, asking, refused]) await insertDesktopCoworkerCall(db, row)
+    mocks.setup.mockRejectedValue(new DesktopSetupPendingError(true))
+
+    const listed = await bridge(envelope('status', { caller }))
+    const { result } = await listed.json() as { result: { calls: Record<string, unknown>[] } }
+    expect(result.calls.map(call => [call.callId, call.state, call.waitingOn])).toEqual([
+        [done.callId, 'completed', null], [working.callId, 'working', null], [asking.callId, 'blocked', 'approval'], [refused.callId, 'blocked', 'setup'],
+    ])
+    expect(result.calls[0]).toMatchObject({ coworker: 'Bob', result: 'The figures are in the report.', resultCut: false })
+    // An acknowledgement is never presented as the answer.
+    expect(result.calls[1]).toMatchObject({ result: null })
+    expect(result.calls[3]).toMatchObject({ result: null, detail: 'Bob has not received this message: its setup is not finished. Ask the person to finish or skip its setup, then send it again.' })
+    expect(JSON.stringify(result)).not.toContain('engine-')
+
+    // Once the setup is done, the same refused call reads as not delivered, with the reason given at the time.
+    mocks.setup.mockResolvedValue(undefined)
+    const one = await (await bridge(envelope('status', { caller, callId: refused.callId }))).json() as { result: { calls: Record<string, unknown>[] } }
+    expect(one.result.calls).toEqual([expect.objectContaining({ callId: refused.callId, state: 'not-delivered', waitingOn: null, detail: refused.error })])
+
+    // Another coworker's call is not readable, even by its id.
+    const cy = await createDesktopAgent(db, { name: 'Cy', engineAgentId: 'engine-cy' })
+    const theirs = plainCall({ toolCallId: 'theirs', parentAgentId: cy.id, sourceKey: 'their-source' })
+    await insertDesktopCoworkerCall(db, theirs)
+    const refusedRead = await bridge(envelope('status', { caller, callId: theirs.callId }))
+    expect(refusedRead.status).toBe(404)
+    expect(await refusedRead.json()).toEqual({ ok: false, error: 'No call with this id was started by you.' })
+})
+
+test('a status read needs the caller\'s live call permission', async () => {
+    grant = false
+    const response = await bridge(envelope('status', { caller }))
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({ ok: false, error: 'Call coworkers is turned off for this coworker.' })
+})
+
+test('a long answer is cut in a list and whole when read by its id', async () => {
+    const long = 'z'.repeat(5_000)
+    const row = plainCall({ toolCallId: 'long', status: 'completed', phase: 'terminal', launchClaimed: true, engineChildRunId: 'child-long', resultText: long })
+    await insertDesktopCoworkerCall(db, row)
+    const listed = await (await bridge(envelope('status', { caller }))).json() as { result: { calls: { result: string; resultCut: boolean }[] } }
+    expect(listed.result.calls[0]).toMatchObject({ resultCut: true })
+    expect(listed.result.calls[0]!.result).toHaveLength(2_000)
+    const whole = await (await bridge(envelope('status', { caller, callId: row.callId }))).json() as { result: { calls: { result: string; resultCut: boolean }[] } }
+    expect(whole.result.calls[0]).toMatchObject({ result: long, resultCut: false })
+})

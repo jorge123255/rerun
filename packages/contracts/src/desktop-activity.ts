@@ -147,7 +147,7 @@ const TOOLS: Readonly<Record<string, readonly [string, string]>> = {
     request_secret: ['ask you for a secret', 'asked you for a secret'], request_mcp_sign_in: ['ask you to sign in to an app', 'asked you to sign in to an app'],
     web_fetch: ['read a web page', 'read a web page'], web_search: ['search the web', 'searched the web'], download: ['download a file', 'downloaded a file'],
     shell_exec: ['run a command', 'ran a command'], shell_inspect: ['check a command', 'checked a command'],
-    call_agent: ['ask another coworker', 'asked another coworker'], delegate: ['hand work to a helper', 'handed work to a helper'],
+    call_agent: ['ask another coworker', 'asked another coworker'], check_agent_call: ['check on a coworker call', 'checked on a coworker call'], delegate: ['hand work to a helper', 'handed work to a helper'],
     notify: ['send you a notification', 'sent you a notification'], card_file: ['show a file', 'showed a file'], card_table: ['show a table', 'showed a table'],
     db_query: ['read its database', 'read its database'], db_execute: ['change its database', 'changed its database'],
     shared_db_query: ['read the shared database', 'read the shared database'], shared_db_execute: ['change the shared database', 'changed the shared database'],

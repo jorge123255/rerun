@@ -250,7 +250,19 @@ export async function inboundDesktopCoworkerCall(db: Reader, engineRunId: string
     return one(db, `${SELECT} WHERE engine_child_run_id = ?`, [engineRunId])
 }
 
-export async function insertDesktopCoworkerCall(db: Client, row: CoworkerCallRecord): Promise<{ inserted: true; row: CoworkerCallRecord } | { inserted: false; reason: 'exists' | 'fanout'; row: CoworkerCallRecord | null }> {
+/**
+ * The same caller conversation sending the same request (name, message, context, wait) to the same
+ * coworker again under a new tool call, typically a retry after a timeout. It is the earlier call
+ * while that one is still in hand, or when it finished or waits on the person within the same run.
+ * A call that failed, was stopped or never got past its reservation never blocks a new send.
+ * Mirrors `repeatsCoworkerCall` in the engine's memory store.
+ */
+const REPEATED = `${SELECT} WHERE parent_agent_id = ? AND parent_session_id = ? AND engine_parent_agent_id = ? AND target_agent_id = ? AND request_fingerprint = ?
+    AND source_key != ? AND phase != 'reserved'
+    AND ((status IN ('queued', 'running', 'dispatched', 'waiting-human') AND phase != 'terminal') OR (engine_parent_run_id = ? AND status IN ('completed', 'waiting-human')))
+    ORDER BY created_at DESC, call_id LIMIT 1`
+
+export async function insertDesktopCoworkerCall(db: Client, row: CoworkerCallRecord): Promise<{ inserted: true; row: CoworkerCallRecord } | { inserted: false; reason: 'exists' | 'fanout' | 'duplicate'; row: CoworkerCallRecord | null }> {
     const parsed = coworkerCallRowSchema.parse(row)
     const tx = await db.transaction('write')
     try {
@@ -261,6 +273,8 @@ export async function insertDesktopCoworkerCall(db: Client, row: CoworkerCallRec
             if (existing.requestFingerprint !== parsed.requestFingerprint) throw new DesktopHttpError(409, 'This coworker call request changed.')
             await tx.commit(); return { inserted: false, reason: 'exists', row: existing }
         }
+        const repeated = await one(tx, REPEATED, [parsed.parentAgentId, parsed.parentSessionId, parsed.engineParentAgentId, parsed.targetAgentId, parsed.requestFingerprint, parsed.sourceKey, parsed.engineParentRunId])
+        if (repeated) { await tx.commit(); return { inserted: false, reason: 'duplicate', row: repeated } }
         const count = await tx.execute({ sql: 'SELECT COUNT(*) AS n FROM desktop_coworker_calls WHERE engine_parent_run_id = ?', args: [parsed.engineParentRunId] })
         if (Number(count.rows[0]?.n ?? 0) >= DESKTOP_COWORKER_CALL_MAX_FANOUT) { await tx.commit(); return { inserted: false, reason: 'fanout', row: null } }
         const sibling = await one(tx, `${SELECT} WHERE engine_parent_run_id = ? LIMIT 1`, [parsed.engineParentRunId])

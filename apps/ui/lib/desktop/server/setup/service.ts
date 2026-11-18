@@ -13,6 +13,7 @@ import { assertDesktopCreationSettled } from '../creation-guard'
 import type { DesktopRuntime } from '../runtime'
 import { findDesktopAgent, findDesktopSession, createDesktopSession, type DesktopAgent } from '../store'
 import { ensureDesktopSetupSchema } from './schema'
+import { DesktopSetupPendingError } from './errors'
 
 const engineSetupSchema = z.object({ required: z.boolean().nullable(), prompt: z.string(), completedAt: z.string().nullable(), sessionId: z.string().nullable(), pending: z.boolean(), revision: z.string() })
 type EngineSetup = z.infer<typeof engineSetupSchema>
@@ -195,5 +196,5 @@ export async function assertDesktopSetupChatAllowed(runtime: DesktopRuntime, age
     const setup = await engineSetup(runtime, agent.engineAgentId)
     if (!setup.pending || await skippedOf(db, agentId)) return
     const session = sessionId ? await findDesktopSession(db, sessionId) : null
-    if (!session || session.agentId !== agentId || session.engineSessionId !== setup.sessionId) throw new DesktopHttpError(409, 'Start or continue this coworker’s setup before opening another conversation.')
+    if (!session || session.agentId !== agentId || session.engineSessionId !== setup.sessionId) throw new DesktopSetupPendingError(setup.sessionId !== null)
 }

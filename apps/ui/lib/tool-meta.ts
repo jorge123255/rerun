@@ -108,6 +108,7 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
 
     delegate_tasks: UsersIcon,
     call_agent: UsersIcon,
+    check_agent_call: UsersIcon,
 
     schedule_list: CalendarIcon,
     schedule_create: CalendarIcon,

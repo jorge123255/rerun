@@ -48,6 +48,7 @@ const TOOL_LABELS: Record<string, string> = {
 
     delegate_tasks: 'Delegate Tasks',
     call_agent: 'Call Coworker',
+    check_agent_call: 'Check Coworker Call',
     ai_status: 'Check AI Providers',
 
     schedule_list: 'List Schedules',
@@ -208,6 +209,7 @@ const TOOL_ACTIVITIES: Record<string, string> = {
 
     delegate_tasks: 'Delegating tasks',
     call_agent: 'Calling a coworker',
+    check_agent_call: 'Checking a coworker call',
 
     skill_read: 'Reading a skill',
     skill_read_file: 'Reading a skill',

@@ -11,6 +11,8 @@ import {
     type DesktopCoworkerCallProgress,
     type DesktopCoworkerCallSnapshot,
     type DesktopCoworkerCallStatus,
+    type DesktopCoworkerCallCallerView,
+    type DesktopCoworkerCallWaitingOn,
 } from '@rerun/contracts'
 import { followSubRun, renderSubRunOutcome, type SubRunOutcome, type SubRunProgress } from '../../tools/builtin/sub-run-watch.js'
 import {
@@ -65,6 +67,14 @@ export type DesktopCoworkerCallDeps = {
     notifyFailed: (input: { engineTargetAgentId: string; engineSessionId: string; reason: string }) => Promise<void>
     startChildRun: (input: { originAgentId?: string; engineTargetAgentId: string; engineSessionId: string; prompt: string; model: PreparedCoworkerCallTarget; assertActive: () => Promise<void>; onRunCreated: (runId: string) => Promise<void> }) => Promise<{ engineRunId: string; follow: ChildFollow }>
     cancelChildRun: (input: { engineTargetAgentId: string; engineRunId: string }) => Promise<void>
+    /** The app's read of calls this caller started (check_agent_call). Absent: the read is not offered. */
+    readCalls?: (input: CoworkerCallStatusRequest) => Promise<DesktopCoworkerCallCallerView[]>
+}
+
+export type CoworkerCallStatusRequest = {
+    caller: { engineAgentId: string; engineSessionId: string; engineRunId: string }
+    /** One call by its id, with its whole answer; absent: this conversation's latest calls. */
+    callId?: string
 }
 
 export type ExecuteCoworkerCall = {
@@ -83,6 +93,43 @@ export type ExecuteCoworkerCall = {
 
 export type DesktopCoworkerCallRuntime = {
     execute: (input: ExecuteCoworkerCall) => Promise<{ text: string; snapshot: DesktopCoworkerCallSnapshot | null }>
+    /** Where calls this caller started stand, in words for the caller. Never starts or repeats a call. */
+    status?: (input: CoworkerCallStatusRequest) => Promise<string>
+}
+
+/** The acknowledgement a dispatched call returns: accepted, with the id to follow it by. */
+export function desktopCoworkerCallDispatchedText(name: string, callId: string): string {
+    return `Message dispatched to ${name} (call id ${callId}). It is handling it in its own session. To see whether it finished and read its answer later, use check_agent_call with this call id.`
+}
+
+const WAITING_ON: Record<DesktopCoworkerCallWaitingOn, string> = {
+    question: 'the person to answer its question',
+    approval: "the person's approval",
+    takeover: 'the person to help in its browser',
+    service: 'the person to connect an app',
+    secret: 'the person to enter credentials',
+    setup: 'its setup, which the person has to finish or skip',
+    person: 'the person',
+}
+
+/** One call, as the coworker that started it reads it. */
+export function describeCoworkerCallForCaller(view: DesktopCoworkerCallCallerView): string {
+    const state = view.state === 'accepted' ? 'accepted, its chat is being opened'
+        : view.state === 'working' ? 'working on it'
+        : view.state === 'blocked' ? `blocked, waiting on ${WAITING_ON[view.waitingOn ?? 'person']}`
+        : view.state === 'completed' ? 'completed'
+        : view.state === 'not-delivered' ? 'not delivered'
+        : view.state === 'failed' ? 'failed'
+        : 'stopped'
+    const lines = [`Call ${view.callId} to ${view.coworker}: ${state}. Started ${view.startedAt}, last change ${view.updatedAt}.`]
+    if (view.detail) lines.push(view.detail)
+    if (view.result !== null) lines.push(`${view.state === 'completed' ? 'Answer' : 'Last text'}${view.resultCut ? ' (cut; read this call by its id for all of it)' : ''}:\n${view.result}`)
+    return lines.join('\n')
+}
+
+function notStartedText(ref: string, error: unknown): string {
+    const reason = error instanceof Error ? error.message : String(error)
+    return `The call to ${ref.trim().slice(0, 200) || 'the coworker'} was not started: ${reason}`
 }
 
 function snapshotOf(row: CoworkerCallRow): DesktopCoworkerCallSnapshot {
@@ -155,6 +202,11 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
         return row
     }
 
+    // A reservation of this epoch that never got past its claim. Only one executor per source identity
+    // runs in this epoch (`inflight`), and every failure after the claim settles the row, so a claimed
+    // row still in this state was claimed by an executor whose answer was lost: launching it is safe.
+    const ownedReservation = (row: CoworkerCallRow) => row.launchEpoch === deps.epoch && row.phase === 'reserved' && row.status === 'queued' && !row.stopRequestId && row.engineTargetSessionId === null
+
     const executeOnce = async (input: ExecuteCoworkerCall): Promise<{ text: string; snapshot: DesktopCoworkerCallSnapshot | null }> => {
         const sourceKey = desktopCoworkerCallSourceKey(input)
         const existing = await deps.store.getBySource(sourceKey)
@@ -170,7 +222,7 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
                 const row = settled ?? existing
                 return { text: row.resultText ?? DESKTOP_COWORKER_CALL_INTERRUPTED_REASON, snapshot: await publish(row, input.onProgress) }
             }
-            if (existing.phase !== 'reserved' || existing.launchClaimed || existing.status !== 'queued') {
+            if (!ownedReservation(existing)) {
                 return { text: existing.resultText ?? `Call to ${existing.targetName} is already running.`, snapshot: await publish(existing, input.onProgress) }
             }
         }
@@ -237,13 +289,24 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
                 if (inserted.reason === 'fanout') return { text: desktopCoworkerCallFanoutError(), snapshot: null }
                 row = inserted.row
                 if (!row) return { text: desktopCoworkerCallFanoutError(), snapshot: null }
+                if (inserted.reason === 'duplicate') {
+                    // The same request was already sent from this conversation: point at it, send nothing.
+                    return { text: `This exact message was already sent to ${row.targetName} from this conversation (call id ${row.callId}) and was not sent again. Use check_agent_call with this call id to see where it stands.`, snapshot: null }
+                }
                 if (row.requestFingerprint !== reserved.requestFingerprint) return changedRequest()
-                return { text: row.resultText ?? `Call to ${row.targetName} is already running.`, snapshot: await publish(row, input.onProgress) }
-            }
-            row = inserted.row
+                // A retried insert whose first acknowledgement was lost finds its own reservation:
+                // this executor owns that source identity, so it launches it instead of reporting it running.
+                if (!ownedReservation(row)) return { text: row.resultText ?? `Call to ${row.targetName} is already running.`, snapshot: await publish(row, input.onProgress) }
+            } else row = inserted.row
         }
         await publish(row, input.onProgress)
-        const claimed = await deps.store.claim(row.callId, deps.epoch, deps.now())
+        const reservation = row
+        const claimed = reservation.launchClaimed && ownedReservation(reservation) ? reservation : await deps.store.claim(reservation.callId, deps.epoch, deps.now()).catch(async (error: unknown) => {
+            // The claim may have been saved even though its answer was lost. Read it back once.
+            const current = await deps.store.get(reservation.callId).catch(() => null)
+            if (current && current.launchClaimed && ownedReservation(current)) return current
+            throw error
+        })
         if (!claimed) {
             const current = await deps.store.get(row.callId)
             return { text: current?.resultText ?? `Call to ${row.targetName} is already running.`, snapshot: current ? await publish(current, input.onProgress) : null }
@@ -366,8 +429,8 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
                 const done = await deps.store.patch(currentRow.callId, { statuses: ACTIVE, engineChildRunId: child.engineRunId }, {
                     status: cancelled ? 'cancelled' : outcome.stopReason !== undefined || overlong ? 'error' : pendingToolCallId ? 'waiting-human' : 'completed', phase: 'terminal',
                     progress: project(progress, cancelled ? 'cancelled' : undefined), error: outcome.stopReason ?? (overlong ? text : null),
-                    pendingToolCallId,
-                    ...(currentRow.wait || outcome.stopReason !== undefined || overlong ? { resultText: text } : {}),
+                    // A dispatched call keeps its answer too, so the caller can read it later with check_agent_call.
+                    pendingToolCallId, resultText: text,
                 }, deps.now())
                 let final = done ?? await currentOwned()
                 if (!done && ['cancelled', 'interrupted'].includes(final.status) && final.engineChildRunId === child.engineRunId && outcome.text) {
@@ -376,7 +439,7 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
                 return { text: currentRow.wait ? final.resultText ?? text : text, snapshot: await publish(final, input.onProgress) }
             }
             if (!currentRow.wait) {
-                const text = `Message dispatched to ${target.name}. It is handling it in its own session; you will not receive the answer here.`
+                const text = desktopCoworkerCallDispatchedText(target.name, currentRow.callId)
                 const noted = await deps.store.patch(currentRow.callId, { engineChildRunId: child.engineRunId, stopUnclaimed: true }, { resultText: text }, deps.now())
                 if (!noted) throw new Error('The coworker call changed before dispatch was confirmed.')
                 await publish(noted, input.onProgress)
@@ -396,9 +459,20 @@ export function createDesktopCoworkerCallRuntime(deps: DesktopCoworkerCallDeps):
             const pending = inflight.get(key)
             const fingerprint = desktopCoworkerCallFingerprint(input)
             if (pending) return pending.fingerprint === fingerprint ? pending.work : Promise.resolve(changedRequest())
-            const work = executeOnce(input).finally(() => { if (inflight.get(key)?.work === work) inflight.delete(key) })
+            // A failure before the called coworker could start (the app unreachable, or it refused)
+            // is the caller's answer, not a broken tool: nothing was launched.
+            const work = executeOnce(input).catch(error => ({ text: notStartedText(input.agentRef, error), snapshot: null }))
+                .finally(() => { if (inflight.get(key)?.work === work) inflight.delete(key) })
             inflight.set(key, { fingerprint, work })
             return work
         },
+        ...(deps.readCalls ? { status: async (request: CoworkerCallStatusRequest) => {
+            const read = deps.readCalls!
+            let calls: DesktopCoworkerCallCallerView[]
+            try { calls = await read(request) }
+            catch (error) { return `Could not read your coworker calls: ${error instanceof Error ? error.message : String(error)}` }
+            if (!calls.length) return request.callId ? 'No call with this id was started by you.' : 'You have not called a coworker from this conversation yet.'
+            return calls.map(describeCoworkerCallForCaller).join('\n\n')
+        } } : {}),
     }
 }

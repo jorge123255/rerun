@@ -7,9 +7,11 @@ import {
     desktopCoworkerCallDepthError,
     desktopCoworkerCallFanoutError,
     desktopCoworkerCallResultLimitError,
+    desktopCoworkerCallSetupRefusal,
 } from '@rerun/contracts'
+import { CoworkerCallBridgeError } from './http-store.js'
 import { desktopCoworkerCallee, desktopCoworkerCallFingerprint, desktopCoworkerCallSourceKey, resolveDesktopCoworkerCallTarget } from './prepare.js'
-import { createDesktopCoworkerCallRuntime, type DesktopCoworkerCallDeps, type ExecuteCoworkerCall } from './runtime.js'
+import { createDesktopCoworkerCallRuntime, desktopCoworkerCallDispatchedText, describeCoworkerCallForCaller, type DesktopCoworkerCallDeps, type ExecuteCoworkerCall } from './runtime.js'
 import { createMemoryCoworkerCallStore, type CoworkerCallRow } from './store.js'
 import { desktopCallAgentTools } from './tool.js'
 
@@ -198,7 +200,8 @@ describe('desktop coworker call runtime', () => {
     it('shares one public parent run id', async () => {
         const { runtime } = harness()
         const first = await runtime.execute(call({ toolCallId: 'tool-a', wait: false }))
-        const second = await runtime.execute(call({ toolCallId: 'tool-b', wait: false }))
+        // A different message: the same one again would be the first call, not a second.
+        const second = await runtime.execute(call({ toolCallId: 'tool-b', wait: false, message: 'And another thing' }))
         expect(first.snapshot?.parentRunId).toBe(second.snapshot?.parentRunId)
         expect(first.snapshot?.parentRunId).not.toBe('engine-parent-run')
     })
@@ -238,9 +241,13 @@ describe('desktop coworker call runtime', () => {
         const dispatched = harness()
         const signal = new AbortController()
         const sent = await dispatched.runtime.execute(call({ parentSignal: signal.signal, wait: false, toolCallId: 'tool-dispatch', onProgress: snapshot => { if (snapshot.status === 'dispatched') signal.abort() } }))
-        expect(sent.text).toBe('Message dispatched to Bob. It is handling it in its own session; you will not receive the answer here.')
+        const sentRow = dispatched.store.rows().find(item => item.toolCallId === 'tool-dispatch')!
+        expect(sent.text).toBe(desktopCoworkerCallDispatchedText('Bob', sentRow.callId))
+        expect(sent.text).toContain(`call id ${sentRow.callId}`)
         await new Promise(resolve => setTimeout(resolve, 20))
         expect(dispatched.store.rows().find(item => item.toolCallId === 'tool-dispatch')?.status).toBe('completed')
+        // The dispatched call keeps its answer for a later read.
+        expect(dispatched.store.rows().find(item => item.toolCallId === 'tool-dispatch')?.resultText).toBe('done')
     })
 
     it('redacts secrets, keeps the prompt to context and message, and refuses an over-long answer whole', async () => {
@@ -530,4 +537,136 @@ it.each(['error', 'cancelled'] as const)('retains bounded partial text for a dis
     expect(saved.resultText).not.toContain('supersecretvalue')
     expect((await child.runtime.execute(input)).text).toBe(saved.resultText)
     expect(child.sessions).toHaveLength(1)
+})
+
+describe('coworker messaging that says what happened', () => {
+    it('gives the caller the app\'s own refusal, marks the call not started, and creates no session', async () => {
+        const refusal = desktopCoworkerCallSetupRefusal('Bob')
+        const child = harness({ prepareTarget: async () => { throw new CoworkerCallBridgeError(refusal, 'refused', 409) } })
+        const result = await child.runtime.execute(call())
+        expect(result.text).toBe(`(error calling Bob: ${refusal})`)
+        expect(result.text).not.toContain('store is unavailable')
+        expect(result.snapshot?.status).toBe('error')
+        expect(child.sessions).toEqual([])
+        expect(child.store.rows()[0]).toMatchObject({ status: 'error', phase: 'terminal', error: refusal, engineChildRunId: null })
+    })
+
+    it('answers an unreachable app before reservation as a call that was not started, not a broken tool', async () => {
+        const child = harness({ authorize: async () => { throw new CoworkerCallBridgeError('The Rerun app could not be reached to hand this call over. Try again in a moment.', 'unreachable') } })
+        const result = await child.runtime.execute(call())
+        expect(result).toEqual({ text: 'The call to Bob was not started: The Rerun app could not be reached to hand this call over. Try again in a moment.', snapshot: null })
+        expect(child.store.rows()).toEqual([])
+    })
+
+    it('a retry after a lost insert acknowledgement launches the original reservation once', async () => {
+        const store = createMemoryCoworkerCallStore()
+        let lost = true
+        let starts = 0
+        const child = harness({
+            store: { ...store, insertReserved: async row => { const saved = await store.insertReserved(row); if (lost) { lost = false; throw new CoworkerCallBridgeError('The Rerun app did not answer in time to hand this call over. Try again in a moment.', 'unreachable') } return saved } },
+            startChildRun: async input => { starts += 1; await input.onRunCreated('engine-child-run'); return { engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run', settled: Promise.resolve(), result: { fullStream: streamOf([{ type: 'text-delta', text: 'done' }]) } } } },
+        })
+        const first = await child.runtime.execute(call())
+        expect(first.text).toContain('was not started')
+        const [reserved] = store.rows()
+        expect(reserved).toMatchObject({ phase: 'reserved', status: 'queued', launchClaimed: false })
+        const retried = await child.runtime.execute(call())
+        expect(retried.text).toBe('done')
+        expect(retried.snapshot?.callId).toBe(reserved!.callId)
+        expect(store.rows()).toHaveLength(1)
+        expect(starts).toBe(1)
+    })
+
+    it('a bridge-level retry of the insert that finds its own reservation launches it instead of reporting it running', async () => {
+        const store = createMemoryCoworkerCallStore()
+        let starts = 0
+        const child = harness({
+            // The first answer was lost and the same insert was sent again: the app says it exists.
+            store: { ...store, insertReserved: async row => { await store.insertReserved(row); return store.insertReserved(row) } },
+            startChildRun: async input => { starts += 1; await input.onRunCreated('engine-child-run'); return { engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run', settled: Promise.resolve(), result: { fullStream: streamOf([{ type: 'text-delta', text: 'done' }]) } } } },
+        })
+        const result = await child.runtime.execute(call())
+        expect(result.text).toBe('done')
+        expect(store.rows()).toHaveLength(1)
+        expect(starts).toBe(1)
+    })
+
+    it('a lost claim acknowledgement is read back, and a later retry adopts the claimed reservation exactly once', async () => {
+        const store = createMemoryCoworkerCallStore()
+        let starts = 0
+        let claimLost = true
+        let readBack = false
+        const child = harness({
+            store: {
+                ...store,
+                claim: async (...args) => { const saved = await store.claim(...args); if (claimLost) { claimLost = false; throw new CoworkerCallBridgeError('The Rerun app did not answer in time to hand this call over. Try again in a moment.', 'unreachable') } return saved },
+                get: async callId => { if (!readBack) { readBack = true; throw new CoworkerCallBridgeError('The Rerun app could not be reached to hand this call over. Try again in a moment.', 'unreachable') } return store.get(callId) },
+            },
+            startChildRun: async input => { starts += 1; await input.onRunCreated('engine-child-run'); return { engineRunId: 'engine-child-run', follow: { runId: 'engine-child-run', settled: Promise.resolve(), result: { fullStream: streamOf([{ type: 'text-delta', text: 'done' }]) } } } },
+        })
+        expect((await child.runtime.execute(call())).text).toContain('was not started')
+        expect(store.rows()[0]).toMatchObject({ phase: 'reserved', status: 'queued', launchClaimed: true })
+        expect(starts).toBe(0)
+        const retried = await child.runtime.execute(call())
+        expect(retried.text).toBe('done')
+        expect(retried.snapshot?.callId).toBe(store.rows()[0]!.callId)
+        expect(starts).toBe(1)
+        // Once launched and finished, a further retry replays the answer and starts nothing.
+        expect((await child.runtime.execute(call())).text).toBe('done')
+        expect(starts).toBe(1)
+    })
+
+    it('a retried message under a new tool call returns the original call while it is in hand, and sends again only after a failure', async () => {
+        let starts = 0
+        let fail = false
+        const child = harness({
+            startChildRun: async input => {
+                starts += 1
+                if (fail) throw new Error('provider down')
+                await input.onRunCreated(`engine-child-run-${starts}`)
+                return { engineRunId: `engine-child-run-${starts}`, follow: { runId: `engine-child-run-${starts}`, settled: Promise.resolve(), result: { fullStream: hanging() } } }
+            },
+        })
+        const first = await child.runtime.execute(call({ wait: false, toolCallId: 'tool-a' }))
+        const original = child.store.rows()[0]!
+        expect(first.text).toContain(`call id ${original.callId}`)
+        const again = await child.runtime.execute(call({ wait: false, toolCallId: 'tool-b' }))
+        expect(again.text).toContain(`already sent to Bob from this conversation (call id ${original.callId})`)
+        expect(starts).toBe(1)
+        expect(child.store.rows()).toHaveLength(1)
+        // A different message is a different call.
+        await child.runtime.execute(call({ wait: false, toolCallId: 'tool-c', message: 'Something else' }))
+        expect(starts).toBe(2)
+        // A call that failed never blocks sending the same message again.
+        fail = true
+        const failed = await child.runtime.execute(call({ wait: false, toolCallId: 'tool-d', message: 'Third' }))
+        expect(failed.snapshot?.status).toBe('error')
+        fail = false
+        await child.runtime.execute(call({ wait: false, toolCallId: 'tool-e', message: 'Third' }))
+        expect(starts).toBe(4)
+    })
+
+    it('reads calls the caller started in its own words, and offers check_agent_call only with a reader', async () => {
+        const reads: unknown[] = []
+        const views = [
+            { callId: '66666666-6666-4666-8666-666666666666', coworker: 'Bob', state: 'completed' as const, waitingOn: null, detail: null, result: 'The answer', resultCut: false, startedAt: '2026-11-05T00:00:00.000Z', updatedAt: '2026-11-05T00:01:00.000Z' },
+            { callId: '77777777-7777-4777-8777-777777777777', coworker: 'Cy', state: 'blocked' as const, waitingOn: 'setup' as const, detail: desktopCoworkerCallSetupRefusal('Cy'), result: null, resultCut: false, startedAt: '2026-11-05T00:00:00.000Z', updatedAt: '2026-11-05T00:00:00.000Z' },
+        ]
+        const child = harness({ readCalls: async input => { reads.push(input); return views } })
+        const text = await child.runtime.status!({ caller: { engineAgentId: 'engine-caller', engineSessionId: 's', engineRunId: 'r' } })
+        expect(text).toContain('Call 66666666-6666-4666-8666-666666666666 to Bob: completed.')
+        expect(text).toContain('Answer:\nThe answer')
+        expect(text).toContain('Call 77777777-7777-4777-8777-777777777777 to Cy: blocked, waiting on its setup, which the person has to finish or skip.')
+        expect(describeCoworkerCallForCaller({ ...views[0]!, state: 'blocked', waitingOn: 'question', result: null })).toContain('blocked, waiting on the person to answer its question')
+        expect(describeCoworkerCallForCaller({ ...views[0]!, state: 'not-delivered', detail: 'Bob is switched off.', result: null })).toContain('not delivered. Started 2026-11-05T00:00:00.000Z, last change 2026-11-05T00:01:00.000Z.\nBob is switched off.')
+        expect(await harness({ readCalls: async () => { throw new CoworkerCallBridgeError('No call with this id was started by you.', 'refused', 404) } }).runtime.status!({ caller: { engineAgentId: 'e', engineSessionId: 's', engineRunId: 'r' }, callId: views[0]!.callId }))
+            .toBe('Could not read your coworker calls: No call with this id was started by you.')
+
+        const ctx = { agent: { id: 'engine-caller', config: { name: 'Ann' } }, sessionId: 'engine-parent-session', runId: 'engine-parent-run', writer: { write: () => undefined } } as never
+        const tools = desktopCallAgentTools(ctx, child.runtime)
+        expect(Object.keys(tools).sort()).toEqual(['call_agent', 'check_agent_call'])
+        await (tools.check_agent_call as { execute: (input: unknown, options: unknown) => Promise<string> }).execute({ callId: views[0]!.callId }, { toolCallId: 'check-1' })
+        expect(reads.at(-1)).toEqual({ caller: { engineAgentId: 'engine-caller', engineSessionId: 'engine-parent-session', engineRunId: 'engine-parent-run' }, callId: views[0]!.callId })
+        expect(Object.keys(desktopCallAgentTools(ctx, harness().runtime))).toEqual(['call_agent'])
+    })
 })
