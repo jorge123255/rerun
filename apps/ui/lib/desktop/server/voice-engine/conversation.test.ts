@@ -49,20 +49,25 @@ describe('a spoken conversation with the Chief of Staff', () => {
             await conversation.transcript([{ role: 'user', content: 'Delayed event.' }], 2)
             expect(stops).toEqual([])
             expect(sent.map(turn => turn.text)).toEqual(['Ask Ada for the report.'])
-            expect(finals(responses).map(item => item.event_id)).toEqual([3])
+            expect(finals(responses)).toEqual([])
         } finally {
             release()
         }
-        await until(() => finals(responses).some(item => item.event_id === 1))
-        expect(said(responses, 1)).toBe('Ada finished the report. ')
+        await until(() => finals(responses).some(item => item.event_id === 3))
+        expect(said(responses, 3)).toBe('Ada finished the report. ')
     })
 
-    it('does not replay a prior request from a history ending in an agent response', async () => {
+    it('takes an initial history ending in an agent line and does not repeat a previously handled request', async () => {
         const { conversation, sent, stops, responses } = start(({ end }) => end())
-        await conversation.transcript([{ role: 'user', content: 'Ask Ada for the report.' }, { role: 'agent', content: 'Already delivered.' }], 4)
-        expect(sent).toEqual([])
+        const history = [{ role: 'user', content: 'Ask Ada for the report.' }, { role: 'agent', content: 'Let me check.' }] as const
+        await conversation.transcript(history, 4)
+        await until(() => finals(responses).length === 1)
+        await conversation.transcript(history, 5)
+        expect(sent.map(turn => turn.text)).toEqual(['Ask Ada for the report.'])
         expect(stops).toEqual([])
-        expect(finals(responses).map(item => item.event_id)).toEqual([4])
+        expect(finals(responses).map(item => item.event_id)).toEqual([4, 5])
+        await conversation.transcript([...history, ...history], 6)
+        expect(sent).toHaveLength(2)
     })
 
     it('says "One moment." when no words come within the wait, and only once', async () => {

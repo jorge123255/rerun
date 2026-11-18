@@ -65,6 +65,7 @@ export function createVoiceConversation(options: {
     const fillerMs = options.fillerMs ?? 6_000, retryMs = options.retryMs ?? 400, retries = options.retries ?? 12
     let current: Turn | null = null
     let lastEventId: number | undefined
+    let lastUser: { index: number; text: string } | undefined
     let closed = false
     // Set when this conversation stopped a run: the next message waits for that run to settle.
     let stopping = false
@@ -98,14 +99,19 @@ export function createVoiceConversation(options: {
             if (lastEventId !== undefined && eventId <= lastEventId) return
             lastEventId = eventId
         }
-        const latest = entries.at(-1)
-        const text = latest?.role === 'user' ? latest.content.trim().slice(0, SEND_TEXT_LIMIT) : ''
-        // A silence nudge can arrive while the Chief is working. Acknowledge its own event
-        // without interrupting that work or re-sending an earlier line from the history.
-        if (!/[\p{L}\p{N}]/u.test(text)) {
-            if (eventId !== undefined || !current?.live) respond({ type: 'agent_response', content: '', event_id: eventId, is_final: true })
+        // ElevenLabs sends the conversation history. A user turn can be followed by agent text.
+        let index = entries.length - 1
+        while (index >= 0 && entries[index].role !== 'user') index--
+        const text = entries[index]?.content.trim().slice(0, SEND_TEXT_LIMIT) ?? ''
+        const alreadyAnswered = index < entries.length - 1 && lastUser?.index === index && lastUser.text === text
+        if (!/[\p{L}\p{N}]/u.test(text) || alreadyAnswered) {
+            // A silent event supersedes the old response id at ElevenLabs. Keep the work alive
+            // and stream the rest of its answer using the id the phone will still accept.
+            if (current?.live) current.eventId = eventId ?? current.eventId
+            else respond({ type: 'agent_response', content: '', event_id: eventId, is_final: true })
             return
         }
+        lastUser = { index, text }
         const previous = current
         const turn: Turn = { eventId, requestId: (options.newRequestId ?? randomUUID)(), live: true, spoke: false, started: false }
         current = turn

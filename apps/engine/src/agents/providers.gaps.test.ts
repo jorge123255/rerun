@@ -1,8 +1,8 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
-process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-providers-gaps-'))
+process.env.RERUN_DATA_DIR = realpathSync(mkdtempSync(resolve(tmpdir(), 'rerun-providers-gaps-')))
 process.env.RERUN_HUB_BASE_URL = 'https://hub.example.com/'
 process.env.RERUN_API_KEY = 'hub-key'
 process.env.RERUN_CODEX_PATH = '/opt/codex/bin/codex'
@@ -25,12 +25,17 @@ vi.mock('ai-sdk-provider-codex-cli', async importOriginal => {
     }
 })
 
+const claudeServer = vi.hoisted(() => vi.fn())
 const claudeCalls = vi.hoisted(() => [] as Array<{ defaultSettings: Record<string, any> }>)
 
 vi.mock('ai-sdk-provider-claude-code', async importOriginal => {
     const original = await importOriginal<typeof import('ai-sdk-provider-claude-code')>()
     return {
         ...original,
+        createCustomMcpServer: (options: Parameters<typeof original.createCustomMcpServer>[0]) => {
+            claudeServer(options)
+            return original.createCustomMcpServer(options)
+        },
         createClaudeCode: (options: Parameters<typeof original.createClaudeCode>[0]) => {
             claudeCalls.push(options as { defaultSettings: Record<string, any> })
             return original.createClaudeCode(options)
@@ -312,6 +317,82 @@ describe('resolveModel on the claude subscription', () => {
         resolveModel(agentOn('claude', 'opus', null))
         const settings = claudeCalls[0]!.defaultSettings
         expect(settings.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('')
+    })
+})
+
+describe('claimed Mac setup turns', () => {
+    it.each(['codex', 'claude'] as const)('%s exposes the actual completion callback and its receipt survives reopen', async provider => {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const { agentDir, dataDir, installPath } = await import('../config/paths.js')
+        const { writeAgentConfig } = await import('./config-write.js')
+        const { clearAgentCache, getAgent } = await import('./registry.js')
+        const { buildTools } = await import('../tools/registry.js')
+        const { claimDesktopSetupSession, readDesktopSetup } = await import('../desktop/setup/service.js')
+        const { claimSession, registerRunAbort, releaseSession, unregisterRunAbort } = await import('../runtime/run-control.js')
+        const { startRun } = await import('../db/repos/runs.js')
+        const { closeSystemDb } = await import('../db/systemDb.js')
+        const id = 'setup-provider-' + provider
+        const runId = crypto.randomUUID()
+        await mkdir(agentDir(id), { recursive: true, mode: 0o700 })
+        const runner = resolve(dataDir(), id + '-runner')
+        await writeFile(runner, 'inert runner fixture')
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        vi.stubEnv('RERUN_DESKTOP_CODEX_RUNNER', runner)
+        vi.stubEnv('RERUN_DESKTOP_CLAUDE_RUNNER', runner)
+        vi.stubEnv('RERUN_DESKTOP_CLAUDE_SANDBOX', runner)
+        let closeTools: (() => Promise<void>) | undefined
+        let closeModel: (() => Promise<void>) | undefined
+        try {
+            await writeAgentConfig(id, agentConfigSchema.parse({ name: 'Setup', setup: { required: true } }))
+            await writeFile(installPath(id), 'Verify the agreed setup.')
+            const claim = await claimDesktopSetupSession(id)
+            if (!('session' in claim)) throw new Error('Expected a fresh setup conversation')
+            const sessionId = claim.session.id
+            claimSession(sessionId, runId)
+            const controller = registerRunAbort(runId)
+            await startRun(id, sessionId, runId)
+            const connection = agentOn(provider, 'model', provider === 'codex'
+                ? { RERUN_CHATGPT_CONNECTED: '1' } : { CLAUDE_CODE_OAUTH_TOKEN: 'fixture-only' }).resolved
+            connection.connection.id = provider === 'codex' ? 'mac-chatgpt' : 'mac-claude'
+            const agent = { ...await getAgent(id), resolved: connection }
+            const ctx = { agent, sessionId, runId, provider, model: 'model', abortSignal: controller.signal,
+                logger: { warn() {}, info() {}, debug() {} } } as import('../runtime/context.js').RunContext
+            const built = await buildTools(ctx)
+            closeTools = built.close
+            expect(built.tools.install_complete).toBeDefined()
+            const model = resolveModel(agent, undefined, built.tools)
+            closeModel = model.close
+            let complete: () => Promise<{ status: string; alreadyComplete: boolean }>
+            if (provider === 'codex') {
+                const entry = codexAppServerCalls.at(-1)!.defaultSettings.mcpServers.rerun.tools.find((t: { name: string }) => t.name === 'install_complete')
+                expect(entry).toBeDefined()
+                complete = () => entry.execute({ summary: 'Verified.' }, { toolCallId: 'fixture-tool-call' })
+            } else {
+                expect(claudeCalls.at(-1)!.defaultSettings.allowedTools).toContain('mcp__rerun__install_complete')
+                const entry = claudeServer.mock.calls.at(-1)![0].tools.install_complete
+                complete = async () => {
+                    const result = await entry.handler({ summary: 'Verified.' }, { requestId: 'fixture-tool-call' })
+                    if (result.isError) throw new Error(result.content[0].text)
+                    return JSON.parse(result.content[0].text)
+                }
+            }
+            expect(await complete()).toMatchObject({ status: 'complete', alreadyComplete: false })
+            const completed = await readDesktopSetup(id)
+            expect(completed).toMatchObject({ pending: false, completedAt: expect.any(String), sessionId })
+            expect(await complete()).toMatchObject({ status: 'complete', alreadyComplete: true })
+            controller.abort()
+            await expect(complete()).rejects.toThrow(/aborted|no longer active/i)
+            clearAgentCache()
+            closeSystemDb(id)
+            expect(await readDesktopSetup(id)).toEqual(completed)
+            expect((await getAgent(id)).config.setup.completedAt).toBe(completed.completedAt)
+        } finally {
+            if (closeModel) await closeModel()
+            if (closeTools) await closeTools()
+            unregisterRunAbort(runId)
+            releaseSession(runId)
+            vi.unstubAllEnvs()
+        }
     })
 })
 
