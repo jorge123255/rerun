@@ -100,6 +100,7 @@
         "model": "Model",
         "rerun": "Rerun tools",
         "codex": "Codex tools",
+        "claude": "Claude Code tools",
         "targets": "Allowed coworkers",
         "setup": "Setup",
         "enabled": "Switched on",

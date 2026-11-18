@@ -21,6 +21,7 @@ const edits = [
     ['PUT', 'effort', { connectionId: 'mock', model: 'local', effort: null }],
     ['PATCH', 'tools', { group: 'rerun', id: 'callAgent', enabled: true }],
     ['PATCH', 'tools', { group: 'codex', id: 'workspaceRead', enabled: false }],
+    ['PATCH', 'tools', { group: 'claude', id: 'claudeSubagents', enabled: true }],
     ['PATCH', 'call-targets', { targetAgentIds: [target], expectedTargetAgentIds: [] }],
     ['PATCH', 'settings', { soul: 'Prepare a brief.', description: 'Writer', verbosity: 'concise', repository: null }],
     ['PATCH', 'name', { name: 'Ada' }],
@@ -147,6 +148,7 @@ test('Change settings is independent, persistent, scoped and cleared on revoke; 
     }
     for (const [method, field, body] of [
         ['PATCH', 'tools', { group: 'cloud', id: 'shell', enabled: true }],
+        ['PATCH', 'tools', { group: 'claude', id: 'shell', enabled: true }],
         ['PATCH', 'model', { action: 'conversation', sessionId: 'x', model: 'x', connectionId: 'x' }],
         ['PATCH', 'settings', { workspaceReadEnabled: true }],
         ['PATCH', 'settings', { constructor: true }],

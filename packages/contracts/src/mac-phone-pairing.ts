@@ -243,7 +243,11 @@ export const macPhoneCoworkerSettingsViewSchema = z.object({
             reasoningOptions: z.array(z.string()).optional(),
         }),
     }),
-    tools: z.object({ rerun: z.array(phoneToolRow), codex: z.array(phoneToolRow) }),
+    tools: z.object({
+        rerun: z.array(phoneToolRow), codex: z.array(phoneToolRow),
+        // Older Macs have no Claude tools group. Never synthesize a permission to fill it.
+        claude: z.array(phoneToolRow.extend({ id: z.literal('claudeSubagents') })).optional(),
+    }),
     callTargets: z.object({
         targets: z.array(z.object({ agentId: savedId, name: z.string(), enabled: z.boolean(), callable: z.boolean() })),
         allowedTargetIds: z.array(savedId),
@@ -278,7 +282,10 @@ export const macPhoneCoworkerSettingsChangeSchema = z.discriminatedUnion('field'
         z.strictObject({ action: z.literal('follow-workspace') }),
     ]) }),
     z.strictObject({ field: z.literal('effort'), body: z.strictObject({ connectionId: settingId, model: settingId, effort: z.string().trim().min(1).max(32).nullable() }) }),
-    z.strictObject({ field: z.literal('tools'), body: z.strictObject({ group: z.enum(['rerun', 'codex']), id: settingId, enabled: z.boolean() }) }),
+    z.strictObject({ field: z.literal('tools'), body: z.union([
+        z.strictObject({ group: z.enum(['rerun', 'codex']), id: settingId.refine(id => id !== 'claudeSubagents'), enabled: z.boolean() }),
+        z.strictObject({ group: z.literal('claude'), id: z.literal('claudeSubagents'), enabled: z.boolean() }),
+    ]) }),
     z.strictObject({ field: z.literal('call-targets'), body: z.strictObject({ targetAgentIds: phoneTargets, expectedTargetAgentIds: phoneTargets }) }),
     z.strictObject({ field: z.literal('box'), body: z.strictObject({ spaceId: z.uuid(), requestId: z.uuid(), expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }) }),
     z.strictObject({ field: z.literal('setup'), body: z.strictObject({ action: z.enum(['start', 'skip']), requestId: z.uuid(), expectedRevision: z.string().min(1).max(256) }) }),

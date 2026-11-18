@@ -36,16 +36,20 @@ export function MacCoworkerModel({ value, disabled, save }: SettingsProps) {
     </>
 }
 
-export function MacCoworkerTools({ value, disabled, save, group }: SettingsProps & { group: 'rerun' | 'codex' }) {
+export function MacCoworkerTools({ value, disabled, save, group }: SettingsProps & { group: 'rerun' | 'codex' | 'claude' }) {
     const t = useTranslations('mobileCoworker.mac')
     const common = useTranslations('mobileCommon')
-    const rows = value.tools[group]
+    const rows = value.tools[group] ?? []
     return <Section>
         {rows.map((row, index) => {
             const locked = disabled || !row.available && !row.enabled
             const toggle = (enabled: boolean) => {
                 if (locked) return
-                const submit = () => save({ field: 'tools', body: { group, id: row.id, enabled } })
+                const submit = () => {
+                    if (group === 'claude') {
+                        if (row.id === 'claudeSubagents') save({ field: 'tools', body: { group, id: 'claudeSubagents', enabled } })
+                    } else save({ field: 'tools', body: { group, id: row.id, enabled } })
+                }
                 if (enabled && row.confirmOnEnable) {
                     Alert.alert(t('confirm', { tool: row.label }), row.description, [
                         { text: common('actions.cancel'), style: 'cancel' },

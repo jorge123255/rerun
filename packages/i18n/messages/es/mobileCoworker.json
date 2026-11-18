@@ -89,6 +89,7 @@
         "model": "Modelo",
         "rerun": "Herramientas de Rerun",
         "codex": "Herramientas de Codex",
+        "claude": "Herramientas de Claude Code",
         "targets": "Compañeros permitidos",
         "setup": "Configuración",
         "enabled": "Activado",

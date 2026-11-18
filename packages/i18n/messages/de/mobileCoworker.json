@@ -89,6 +89,7 @@
         "model": "Modell",
         "rerun": "Rerun-Werkzeuge",
         "codex": "Codex-Werkzeuge",
+        "claude": "Claude-Code-Werkzeuge",
         "targets": "Erlaubte Kollegen",
         "setup": "Einrichtung",
         "enabled": "Eingeschaltet",

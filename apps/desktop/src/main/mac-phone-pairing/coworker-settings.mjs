@@ -26,8 +26,8 @@ const mutations = [
         : body.action === 'coworker' && keys(body, ['action', 'connectionId', 'model']) && text(body.connectionId, 256) && text(body.model, 256)],
     ['PUT', 'effort', body => keys(body, ['connectionId', 'model', 'effort']) && text(body.connectionId, 256) && text(body.model, 256)
         && (body.effort === null || text(body.effort, 32))],
-    ['PATCH', 'tools', body => keys(body, ['group', 'id', 'enabled']) && ['rerun', 'codex'].includes(body.group)
-        && text(body.id, 256) && typeof body.enabled === 'boolean'],
+    ['PATCH', 'tools', body => keys(body, ['group', 'id', 'enabled']) && typeof body.enabled === 'boolean'
+        && (body.group === 'claude' ? body.id === 'claudeSubagents' : ['rerun', 'codex'].includes(body.group) && text(body.id, 256))],
     ['PATCH', 'call-targets', body => keys(body, ['targetAgentIds', 'expectedTargetAgentIds'])
         && ids(body.targetAgentIds) && ids(body.expectedTargetAgentIds)],
     ['PATCH', 'settings', body => Object.keys(body).length > 0

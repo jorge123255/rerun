@@ -5,7 +5,7 @@ import {
 } from '@rerun/contracts'
 import { z } from 'zod'
 import { desktopModelViewSchema } from '../chat-model'
-import type { CoworkerTools, DesktopToolGroup } from '../coworker-tools'
+import type { CoworkerToolRow, CoworkerTools } from '../coworker-tools'
 import type { DesktopCoworkerSettings } from '../coworker-settings'
 import { desktopBoardStateSchema } from '../spaces'
 import { DesktopHttpError, DESKTOP_SESSION_COOKIE } from './auth'
@@ -19,6 +19,10 @@ const macAccess = {
     rerun: new Set(['workspaceRead', 'workspaceSearch', 'workspaceList', 'cardFile', 'download', 'vision', 'webFetch', 'privateFileWrite', 'sharedFilesRead', 'sharedFilesWrite', 'guestShell', 'browser', 'computer', 'terminalLaunch', 'filesLaunch', 'localMcpStdio', 'toolInstall', 'nativeWriteback', 'repositoryWorkspace']),
     codex: new Set(['workspaceRead', 'workspaceWrite', 'shell', 'codeMode', 'images']),
 }
+// The Claude group is conditional on the installed Mac's actual Tools route, including
+// its decision to show a previously enabled permission solely so the owner can revoke it.
+type MacTools = Pick<CoworkerTools, 'rerun' | 'codex'> & { claude?: CoworkerToolRow[] }
+
 const headers = { 'cache-control': 'no-store' }
 const unavailable = 'Could not reach this coworker’s settings. Try again.'
 // A canonical endpoint can relay an upstream error (for example the engine's model-effort
@@ -29,6 +33,9 @@ const userMessages = new Set([
     'Choose a model offered by a connected provider.', 'Choose a reasoning effort this model offers.',
     'Choose this connection’s reasoning effort in Settings.', 'Could not save this coworker’s model. Try again.',
     'Could not save this model’s reasoning effort. Try again.', 'Could not confirm the coworker’s new name. Try again.',
+    'This permission requires a coworker using Claude Code with your Claude subscription.',
+    'This permission requires a coworker using Codex with your ChatGPT subscription.',
+    'The permission could not change. Stop any active replies for this coworker and try again.',
     'Choose a valid tool permission.', 'This tool requires the direct Mac build.', 'This tool is unavailable for this coworker.',
     'File editing is paused for this coworker.', 'Shared files access is paused for this coworker.',
     'Turn on this coworker’s memory preference first.', 'Turn on Improve itself to change this permission.',
@@ -81,18 +88,23 @@ export async function readPhoneCoworkerSettings(owner: DesktopAgent, mac: LocalR
     const [settings, model, tools, callTargets, board, setup] = await Promise.all([
         read(mac, 'agents/' + id + '/settings') as Promise<DesktopCoworkerSettings>,
         read(mac, 'agents/' + id + '/model?presets=1').then(result => desktopModelViewSchema.parse(result)),
-        read(mac, 'agents/' + id + '/tools') as Promise<CoworkerTools>,
+        read(mac, 'agents/' + id + '/tools') as Promise<MacTools>,
         read(mac, 'coworkers/' + id + '/call-targets'),
         read(mac, 'spaces').then(result => desktopBoardStateSchema.parse(result.board)),
         read(mac, 'coworkers/' + id + '/setup?observe=1').then(result => macPhoneCoworkerSettingsViewSchema.shape.setup.parse(result)),
     ])
     const repo = settings.repository && desktopGithubRepositorySchema.safeParse({ owner: settings.repository.owner, name: settings.repository.name })
-    const rows = (group: DesktopToolGroup) => tools[group].map(row => ({ ...row, confirmOnEnable: macAccess[group].has(row.id) }))
+    const rows = (group: keyof typeof macAccess) => tools[group].map(row => ({ ...row, confirmOnEnable: macAccess[group].has(row.id) }))
     const provider = model.effective.presetProvider ?? model.effective.provider
     return macPhoneCoworkerSettingsViewSchema.parse({
         agentId: owner.id, name: owner.name, description: settings.description ?? owner.description, enabled: owner.enabled,
         settings: { ...settings, repository: repo?.success ? repo.data.owner + '/' + repo.data.name : null },
-        model, tools: { rerun: rows('rerun'), codex: provider === 'codex' ? rows('codex') : [] }, callTargets,
+        model,
+        tools: {
+            rerun: rows('rerun'), codex: provider === 'codex' ? rows('codex') : [],
+            ...(tools.claude && { claude: tools.claude.filter(row => row.id === 'claudeSubagents').map(row => ({ ...row, confirmOnEnable: false })) }),
+        },
+        callTargets,
         board: { revision: board.revision, spaces: board.spaces, spaceId: board.placements.find(p => p.agentId === owner.id)?.spaceId ?? null },
         setup: { ...setup, canStart: setup.canStart && model.effective.available },
     })
@@ -117,6 +129,14 @@ export async function savePhoneCoworkerSettings(owner: DesktopAgent, change: Mac
             throw new SettingsRefused(409, 'This coworker’s model changed. Reopen settings before trying again.')
         if (change.field === 'tools' && (effective.presetProvider ?? effective.provider) !== 'codex')
             throw new SettingsRefused(409, 'Choose a ChatGPT (Codex) model for this coworker first.')
+    }
+    if (change.field === 'tools' && change.body.group === 'claude') {
+        const tools: MacTools = await read(mac, agent + '/tools')
+        const row = tools.claude?.find(row => row.id === 'claudeSubagents')
+        if (!row || (!row.available && (change.body.enabled || !row.enabled))) {
+            const reason = row?.unavailableReason
+            throw new SettingsRefused(400, reason && userMessages.has(reason) ? reason : 'This tool is unavailable for this coworker.')
+        }
     }
     if (change.field === 'call-targets') {
         const tools: CoworkerTools = await read(mac, agent + '/tools')

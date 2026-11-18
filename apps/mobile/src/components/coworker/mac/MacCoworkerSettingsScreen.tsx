@@ -17,7 +17,7 @@ import { MacCoworkerModel, MacCoworkerTools, MacCoworkerTargets } from './MacCow
 import { MacCoworkerProfile, MacCoworkerSetup } from './MacCoworkerProfile'
 
 export type SettingsProps = { value: MacPhoneCoworkerSettings; disabled: boolean; save: (change: MacPhoneCoworkerSettingsChange) => void }
-const sections = ['profile', 'model', 'rerun', 'codex', 'targets', 'setup'] as const
+const sections = ['profile', 'model', 'rerun', 'codex', 'claude', 'targets', 'setup'] as const
 type Page = (typeof sections)[number]
 type SettingsHub = Pick<MacHub, 'readCoworkerSettings' | 'changeCoworkerSettings' | 'unconfirmedSettingsChange'>
 
@@ -86,7 +86,8 @@ function MacSettingsPage({ hub, agentId, page }: { hub: SettingsHub; agentId: st
     }
     const open = (section: Page) => router.push({ pathname: '/coworker/[id]', params: { id: agentId, page: section } })
     const disabled = saving || suspended || !value?.permissions.changeSettings
-    const title = page ? t(page) : value?.name ?? t('title')
+    const activePage = page === 'claude' && value && !value.tools.claude?.length ? undefined : page
+    const title = activePage ? t(activePage) : value?.name ?? t('title')
     const settings = value && { value, disabled, save }
     return (
         <CoworkerPage title={title} onBack={() => router.back()}>
@@ -102,17 +103,18 @@ function MacSettingsPage({ hub, agentId, page }: { hub: SettingsHub; agentId: st
                 <AppText tone="muted" variant="footnote">{t('readOnly')}</AppText>
                 <Button label={t('refresh')} variant="secondary" size="sm" onPress={() => setRetry(n => n + 1)} />
             </View>}
-            {settings && value && (page === 'profile' ? <MacCoworkerProfile {...settings} />
-                : page === 'model' ? <MacCoworkerModel {...settings} />
-                : page === 'rerun' || page === 'codex' ? <MacCoworkerTools {...settings} group={page} />
-                : page === 'targets' ? <MacCoworkerTargets {...settings} />
-                : page === 'setup' ? <MacCoworkerSetup {...settings} />
+            {settings && value && (activePage === 'profile' ? <MacCoworkerProfile {...settings} />
+                : activePage === 'model' ? <MacCoworkerModel {...settings} />
+                : activePage === 'rerun' || activePage === 'codex' || activePage === 'claude' ? <MacCoworkerTools {...settings} group={activePage} />
+                : activePage === 'targets' ? <MacCoworkerTargets {...settings} />
+                : activePage === 'setup' ? <MacCoworkerSetup {...settings} />
                 : <>
                     <Section title={t('title')}>
                         <SettingsRow label={t('profile')} value={value.board.spaces.find(space => space.id === value.board.spaceId)?.name} accessory="chevron" onPress={() => open('profile')} />
                         <SettingsRow label={t('model')} value={value.model.effective.label} accessory="chevron" onPress={() => open('model')} />
                         <SettingsRow label={t('rerun')} accessory="chevron" onPress={() => open('rerun')} />
                         {value.tools.codex.length > 0 && <SettingsRow label={t('codex')} accessory="chevron" onPress={() => open('codex')} />}
+                        {Boolean(value.tools.claude?.length) && <SettingsRow label={t('claude')} accessory="chevron" onPress={() => open('claude')} />}
                         <SettingsRow label={t('targets')} accessory="chevron" onPress={() => open('targets')} />
                         <SettingsRow label={t('setup')} accessory="chevron" onPress={() => open('setup')} />
                         <SwitchRow label={t('enabled')} value={value.enabled} disabled={disabled} onValueChange={enabled => save({ field: 'enabled', body: { enabled } })} />

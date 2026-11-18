@@ -125,3 +125,45 @@ it.each(['setup', 'profile'] as const)('can retry the original %s action after t
     expect(hub.changeCoworkerSettings.mock.calls[1]).toEqual(first)
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
 })
+
+it('edits the Claude sub-agent grant through the row projected by the Mac', async () => {
+    const label = 'Use Claude Code sub-agents'
+    const description = 'Sub-agents work on parts of a reply and use your Claude subscription.'
+    const hub = fakeHub({ ...value, tools: { ...value.tools, claude: [{ ...tool, id: 'claudeSubagents', label, description, confirmOnEnable: true }] } })
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {})
+    const view = await render(<MacCoworkerSettingsScreen hub={hub} />)
+    expect(await screen.findByRole('button', { name: 'Claude Code tools' })).toBeTruthy()
+    mockParams.page = 'claude'
+    await view.rerender(<MacCoworkerSettingsScreen hub={hub} />)
+    await fireEvent(await screen.findByLabelText(label), 'valueChange', true)
+    expect(alert).toHaveBeenCalledWith(`Allow ${label}?`, description, expect.any(Array))
+    expect(hub.changeCoworkerSettings).not.toHaveBeenCalled()
+    await act(async () => { alert.mock.calls[0][2]![1].onPress?.() })
+    expect(hub.changeCoworkerSettings).toHaveBeenCalledWith('ada', { field: 'tools', body: { group: 'claude', id: 'claudeSubagents', enabled: true } }, expect.anything())
+})
+
+it.each([{ shape: 'older Mac', claude: undefined }, { shape: 'empty group', claude: [] }])('hides Claude tools for a Mac without a projected Claude row ($shape)', async ({ claude }) => {
+    mockParams.page = 'claude'
+    const hub = fakeHub({ ...value, tools: { ...value.tools, claude } })
+    await render(<MacCoworkerSettingsScreen hub={hub} />)
+    expect(await screen.findByText('Ada')).toBeTruthy()
+    expect(screen.queryByText('Claude Code tools')).toBeNull()
+    expect(screen.queryByLabelText('Use Claude Code sub-agents')).toBeNull()
+    expect(hub.changeCoworkerSettings).not.toHaveBeenCalled()
+})
+
+it('can revoke a paused Claude grant and cannot re-enable it while unavailable', async () => {
+    mockParams.page = 'claude'
+    const row = { ...tool, id: 'claudeSubagents', label: 'Use Claude Code sub-agents', enabled: true, available: false, unavailableReason: 'Choose a Claude Code model.' }
+    const hub = fakeHub()
+    hub.readCoworkerSettings.mockResolvedValueOnce({ ...value, tools: { ...value.tools, claude: [row] } })
+        .mockResolvedValue({ ...value, tools: { ...value.tools, claude: [{ ...row, enabled: false }] } })
+    const alert = jest.spyOn(Alert, 'alert')
+    await render(<MacCoworkerSettingsScreen hub={hub} />)
+    const toggle = await screen.findByLabelText(row.label)
+    expect(isSwitchDisabled(toggle)).toBe(false)
+    await fireEvent(toggle, 'valueChange', false)
+    expect(hub.changeCoworkerSettings).toHaveBeenCalledWith('ada', { field: 'tools', body: { group: 'claude', id: row.id, enabled: false } }, expect.anything())
+    expect(alert).not.toHaveBeenCalled()
+    expect(isSwitchDisabled(screen.getByLabelText(row.label))).toBe(true)
+})

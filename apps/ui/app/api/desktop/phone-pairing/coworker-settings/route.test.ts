@@ -19,6 +19,7 @@ vi.mock('@/lib/desktop/server/store', () => ({
 
 const actions: { path: string; method: string; body: unknown }[] = []
 let selectedProvider = 'codex', presetProvider: string | undefined, callsOn = true
+let claudeRows: (ReturnType<typeof row> & { unavailableReason?: string })[] | undefined
 let refusal: { status: number; error: string } | null = null
 const secret = 'PRIVATE-stored-value'
 function row(id: string, enabled = false) { return { id, label: id, description: 'Mac row description', enabled, available: true, internalDetail: secret } }
@@ -27,7 +28,7 @@ function answer(path: string) {
         memoryEnabled: false, autoMemory: false, selfImprovementEnabled: false, repository: { owner: 'example', name: 'app', url: 'https://user:' + secret + '@example.test' }, vault: secret }
     if (path.endsWith('/model?presets=1')) return { catalog: [{ provider: 'codex', name: 'Local', connectionId: 'provider-1', apiKey: secret, models: [{ id: 'current', label: 'Current' }] }],
         workspace: null, coworker: null, conversation: null, effective: { connectionId: 'provider-1', provider: selectedProvider, presetProvider, source: 'workspace', name: 'Local', model: 'current', label: 'Current', available: true } }
-    if (path.endsWith('/tools')) return { rerun: [row('callAgent', callsOn), row('localMcpStdio'), row('download')], codex: [row('codeMode'), row('images')] }
+    if (path.endsWith('/tools')) return { rerun: [row('callAgent', callsOn), row('localMcpStdio'), row('download')], codex: [row('codeMode'), row('images')], ...(claudeRows && { claude: claudeRows }) }
     if (path.endsWith('/call-targets')) return { targets: [{ agentId: fixture.peer, name: 'Peer', enabled: true, callable: true, bearer: secret }], allowedTargetIds: [fixture.peer] }
     if (path === '/spaces') return { board: { revision: 4, spaces: [{ id: fixture.box, name: 'Box A', col_start: 0, row_start: 0, col_end: 6, row_end: 6 }],
         placements: [{ agentId: fixture.id, spaceId: fixture.box, col: 1, row: 1 }] } }
@@ -35,7 +36,7 @@ function answer(path: string) {
     throw new Error('Unexpected canonical read ' + path)
 }
 beforeEach(() => {
-    actions.length = 0; selectedProvider = 'codex'; presetProvider = undefined; callsOn = true; refusal = null
+    actions.length = 0; selectedProvider = 'codex'; presetProvider = undefined; claudeRows = undefined; callsOn = true; refusal = null
     vi.stubGlobal('fetch', vi.fn(async (url: URL, init: RequestInit) => {
         expect(url.origin).toBe(fixture.origin)
         expect(init.redirect).toBe('error')
@@ -149,4 +150,38 @@ describe('the phone cannot provide a new route, a credential, or another identit
         expect((await PATCH(request('POST', 'enabled', { enabled: false }), { params: Promise.resolve({ field: 'enabled' }) })).status).toBe(404)
         expect(actions).toEqual([])
     })
+})
+
+it('shows only the supported Claude permission when the Mac exposes it; an old Mac stays read-compatible and refuses edits', async () => {
+    const read = async () => (await (await GET(request('GET'))).json()).tools
+    expect(await read()).not.toHaveProperty('claude')
+    const edit = () => mutate('tools', { group: 'claude', id: 'claudeSubagents', enabled: true })
+    expect((await edit()).status).toBe(400)
+    claudeRows = []
+    expect((await read()).claude).toEqual([])
+    expect((await edit()).status).toBe(400)
+    claudeRows = [row('claudeSubagents'), row('futurePermission')]
+    expect((await read()).claude).toEqual([expect.objectContaining({ id: 'claudeSubagents', description: 'Mac row description', confirmOnEnable: false })])
+    expect((await mutate('tools', { group: 'claude', id: 'futurePermission', enabled: true })).status).toBe(400)
+    expect((await mutate('tools', { group: 'rerun', id: 'claudeSubagents', enabled: true })).status).toBe(400)
+    expect(actions.every(action => action.method === 'GET')).toBe(true)
+    expect((await edit()).status).toBe(200)
+    expect(actions.at(-1)).toEqual({ method: 'PATCH', path: '/agents/' + fixture.id + '/tools', body: { group: 'claude', id: 'claudeSubagents', enabled: true } })
+})
+
+it.each(['This permission requires a coworker using Claude Code with your Claude subscription.', 'This tool requires the direct Mac build.'])('preserves the Mac refusal and lets the owner revoke an existing Claude grant: %s', async reason => {
+    claudeRows = [{ ...row('claudeSubagents', true), available: false, unavailableReason: reason }]
+    const edit = (enabled: boolean) => mutate('tools', { group: 'claude', id: 'claudeSubagents', enabled })
+    const view = await (await GET(request('GET'))).json()
+    expect(view.tools.claude).toEqual([expect.objectContaining({ available: false, enabled: true, unavailableReason: reason })])
+    const on = await edit(true)
+    expect(on.status).toBe(400)
+    expect(await on.json()).toEqual({ error: 'settings_refused', message: reason })
+    expect(actions.every(action => action.method === 'GET')).toBe(true)
+    expect((await edit(false)).status).toBe(200)
+    const stopped = 'The permission could not change. Stop any active replies for this coworker and try again.'
+    refusal = { status: 409, error: stopped }
+    const busy = await edit(false)
+    expect(busy.status).toBe(409)
+    expect(await busy.json()).toEqual({ error: 'settings_refused', message: stopped })
 })

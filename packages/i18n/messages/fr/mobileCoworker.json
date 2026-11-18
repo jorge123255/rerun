@@ -89,6 +89,7 @@
         "model": "Modèle",
         "rerun": "Outils Rerun",
         "codex": "Outils Codex",
+        "claude": "Outils Claude Code",
         "targets": "Collègues autorisés",
         "setup": "Configuration",
         "enabled": "Activé",
