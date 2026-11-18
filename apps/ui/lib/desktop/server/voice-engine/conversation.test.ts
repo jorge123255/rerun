@@ -25,6 +25,51 @@ describe('a spoken conversation with the Chief of Staff', () => {
         expect(responses.every(item => item.event_id === 1)).toBe(true)
     })
 
+    it('treats a transcript with no words, such as "...", as silence: nothing is sent or spoken', async () => {
+        for (const content of ['...', '…', ' . . ', '?!']) {
+            const { conversation, responses, sent } = start(({ end }) => end())
+            await conversation.transcript([{ role: 'user', content: 'Earlier question.' }, { role: 'agent', content: 'Answer.' }, { role: 'user', content }], 7)
+            await until(() => finals(responses).length === 1)
+            expect(sent).toEqual([])
+            expect(said(responses)).toBe('')
+        }
+    })
+
+    it('keeps the Chief working when a silent nudge arrives during a coworker request', async () => {
+        let release!: () => void
+        const gate = new Promise<void>(resolve => { release = resolve })
+        const { conversation, responses, sent, stops } = start(async ({ emit, end }) => {
+            await gate
+            emit({ type: 'text', partId: 'a', delta: 'Ada finished the report.' })
+            end()
+        }, { fillerMs: 5_000 })
+        await conversation.transcript([{ role: 'user', content: 'Ask Ada for the report.' }], 1)
+        try {
+            await conversation.transcript([{ role: 'user', content: '…' }], 3)
+            await conversation.transcript([{ role: 'user', content: 'Delayed event.' }], 2)
+            expect(stops).toEqual([])
+            expect(sent.map(turn => turn.text)).toEqual(['Ask Ada for the report.'])
+            expect(finals(responses)).toEqual([])
+        } finally {
+            release()
+        }
+        await until(() => finals(responses).some(item => item.event_id === 3))
+        expect(said(responses, 3)).toBe('Ada finished the report. ')
+    })
+
+    it('takes an initial history ending in an agent line and does not repeat a previously handled request', async () => {
+        const { conversation, sent, stops, responses } = start(({ end }) => end())
+        const history = [{ role: 'user', content: 'Ask Ada for the report.' }, { role: 'agent', content: 'Let me check.' }] as const
+        await conversation.transcript(history, 4)
+        await until(() => finals(responses).length === 1)
+        await conversation.transcript(history, 5)
+        expect(sent.map(turn => turn.text)).toEqual(['Ask Ada for the report.'])
+        expect(stops).toEqual([])
+        expect(finals(responses).map(item => item.event_id)).toEqual([4, 5])
+        await conversation.transcript([...history, ...history], 6)
+        expect(sent).toHaveLength(2)
+    })
+
     it('says "One moment." when no words come within the wait, and only once', async () => {
         const { conversation, responses } = start(async ({ emit, end }) => { await delay(120); emit({ type: 'text', partId: 'a', delta: 'Here it is.' }); end() })
         await conversation.transcript([{ role: 'user', content: 'Slow one.' }], 4)

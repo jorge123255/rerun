@@ -8,6 +8,8 @@ const { afterEach, describe, expect, it, vi } = await import('vitest')
 const { desktopInternalJson } = await import('../desktop/internal-client.js')
 vi.mock('../desktop/internal-client.js', () => ({ desktopInternalJson: vi.fn() }))
 const { agentConfigSchema } = await import('@rerun/contracts')
+const { desktopSetupAgentForTurn } = await import('./setup.js')
+const { desktopSetupRunAllowed } = await import('../desktop/setup/service.js')
 const { buildSystemPrompt: buildSystemPromptBlocks, systemPromptText, currentTimeNote, nowBlock, userLanguageBlock } = await import('./systemPrompt.js')
 
 // The tests read the prompt as the model does, both blocks joined.
@@ -480,6 +482,27 @@ describe('desktop data and setup guidance', () => {
             expect(prompt).not.toMatch(/paid_data|request_spend|200 credits|rerun_hub_service_|publish_file|<service_catalog>/)
             expect(prompt).not.toContain('web_search')
         }
+    })
+
+    it('keeps the install guide and completion tool in the claimed setup turn after a coworker is reopened', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        const saved = { ...agent, install: 'Introduce yourself.', config: agentConfigSchema.parse({
+            name: 'Ada', setup: { required: true, sessionId: 'setup-chat' },
+        }) }
+        const checks = [
+            { session: 'setup-chat', trigger: { source: 'chat' }, pending: true },
+            { session: 'setup-chat', trigger: { source: 'chat', desktopSetupSkipped: true }, pending: false },
+            { session: 'normal-chat', trigger: { source: 'chat' }, pending: false },
+            { session: 'call-chat', trigger: { source: 'chat', calledBy: 'Chief of Staff' }, pending: false },
+            { session: 'setup-chat', trigger: { source: 'schedule', slug: 'digest', name: 'Digest' }, pending: false },
+        ] as const
+        for (const { session, trigger, pending } of checks) {
+            const view = desktopSetupAgentForTurn(saved, session, trigger)
+            const prompt = await buildSystemPrompt(view, trigger)
+            expect(prompt.includes('<setup>')).toBe(pending)
+            expect(desktopSetupRunAllowed(view, session)).toBe(pending)
+        }
+        expect(saved.install).toBe('Introduce yourself.')
     })
 
     it('asks a Mac coworker for a checked first result and preserves required setup when an optional app is skipped', async () => {

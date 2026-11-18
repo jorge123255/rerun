@@ -60,8 +60,12 @@ export function createVoiceConversation(options: {
     newRequestId?: () => string
 }) {
     const { chat, chief, respond } = options
-    const fillerMs = options.fillerMs ?? 2_000, retryMs = options.retryMs ?? 400, retries = options.retries ?? 12
+    // Long enough that a normal answer arrives first: said too early, it only adds a sentence before
+    // every reply. ElevenLabs waits up to 15 seconds for the first words.
+    const fillerMs = options.fillerMs ?? 6_000, retryMs = options.retryMs ?? 400, retries = options.retries ?? 12
     let current: Turn | null = null
+    let lastEventId: number | undefined
+    let lastUser: { index: number; text: string } | undefined
     let closed = false
     // Set when this conversation stopped a run: the next message waits for that run to settle.
     let stopping = false
@@ -91,10 +95,23 @@ export function createVoiceConversation(options: {
 
     async function transcript(entries: readonly { role: 'user' | 'agent'; content: string }[], eventId: number | undefined) {
         if (closed) return
-        if (current && eventId !== undefined && current.eventId !== undefined) {
-            // A repeat of the utterance being answered, or one older than it, changes nothing.
-            if (eventId <= current.eventId) return
+        if (eventId !== undefined) {
+            if (lastEventId !== undefined && eventId <= lastEventId) return
+            lastEventId = eventId
         }
+        // ElevenLabs sends the conversation history. A user turn can be followed by agent text.
+        let index = entries.length - 1
+        while (index >= 0 && entries[index].role !== 'user') index--
+        const text = entries[index]?.content.trim().slice(0, SEND_TEXT_LIMIT) ?? ''
+        const alreadyAnswered = index < entries.length - 1 && lastUser?.index === index && lastUser.text === text
+        if (!/[\p{L}\p{N}]/u.test(text) || alreadyAnswered) {
+            // A silent event supersedes the old response id at ElevenLabs. Keep the work alive
+            // and stream the rest of its answer using the id the phone will still accept.
+            if (current?.live) current.eventId = eventId ?? current.eventId
+            else respond({ type: 'agent_response', content: '', event_id: eventId, is_final: true })
+            return
+        }
+        lastUser = { index, text }
         const previous = current
         const turn: Turn = { eventId, requestId: (options.newRequestId ?? randomUUID)(), live: true, spoke: false, started: false }
         current = turn
@@ -107,8 +124,6 @@ export function createVoiceConversation(options: {
             }
         }
         if (turn !== current) return
-        const text = [...entries].reverse().find(entry => entry.role === 'user')?.content.trim().slice(0, SEND_TEXT_LIMIT) ?? ''
-        if (!text) return finish(turn)
         turn.filler = setTimeout(() => { if (!turn.spoke) say(turn, VOICE_FILLER) }, fillerMs)
 
         const stream = createSpokenStream()

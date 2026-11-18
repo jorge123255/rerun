@@ -14,17 +14,27 @@ const { desktopTeamChangesInstruction } = await import('./team-changes-binding')
 
 const agent = (id: string, name: string, enabled = true) => ({ id, name, enabled, engineAgentId: `engine-${id}` })
 const config = (extra: Record<string, unknown> = {}) => ({ config: { connectionId: 'c1', model: 'gpt-6-sol', tools: { desktopWorkspaceRead: true, desktopToolGrants: { callAgent: true, webSearch: true, guestShell: true } }, ...extra } })
-const setup = (extra: Record<string, unknown> = {}) => ({ required: true, prompt: 'Install your tools.', completedAt: null, sessionId: null, skipped: false, ...extra })
+const setup = (extra: Record<string, unknown> = {}) => ({ required: true, prompt: 'Install your tools.', completedAt: null, sessionId: null, skipped: false, pending: true, ...extra })
 const connections = [{ id: 'c1', name: 'ChatGPT (Codex)' }]
 const runtime = {} as never, db = {} as never
 
 beforeEach(() => { getAgent.mockReset(); readDesktopSetupView.mockReset(); listDesktopAgents.mockReset() })
 afterEach(() => { vi.useRealTimers() })
 
+test('tells the Chief a skipped or retired setup chat no longer blocks work', async () => {
+    listDesktopAgents.mockResolvedValue([agent('skipped', 'Ada'), agent('retired', 'Ben')])
+    getAgent.mockResolvedValue(config())
+    readDesktopSetupView.mockImplementation(async (_runtime: unknown, id: string) =>
+        setup({ sessionId: 'saved-setup-chat', pending: false, skipped: id === 'skipped' }))
+    const team = await readDesktopTeamState(runtime, db, connections)
+    expect(team.map(person => person.setup)).toEqual(['skipped', 'none'])
+    expect(desktopTeamChangesInstruction([], team, 12_000)).toContain('"setup":"skipped"')
+})
+
 test('each coworker carries its model, the nameable permissions it has, and where its setup stands', async () => {
     listDesktopAgents.mockResolvedValue([agent('a', 'Ada'), agent('b', 'Ben', false), agent('c', 'Cy'), agent('d', 'Di')])
     getAgent.mockImplementation(async (_engine: unknown, id: string) => id === 'engine-b' ? config({ connectionId: null, model: null, tools: { desktopToolGrants: {} } }) : config())
-    readDesktopSetupView.mockImplementation(async (_runtime: unknown, id: string) => id === 'a' ? setup() : id === 'b' ? setup({ sessionId: 's1' }) : id === 'c' ? setup({ completedAt: '2026-11-17T00:00:00Z' }) : setup({ required: false, prompt: '' }))
+    readDesktopSetupView.mockImplementation(async (_runtime: unknown, id: string) => id === 'a' ? setup() : id === 'b' ? setup({ sessionId: 's1' }) : id === 'c' ? setup({ completedAt: '2026-11-17T00:00:00Z' }) : setup({ required: false, prompt: '', pending: false }))
 
     const state = await readDesktopTeamState(runtime, db, connections)
     expect(state).toEqual([

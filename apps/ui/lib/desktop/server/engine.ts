@@ -146,10 +146,11 @@ async function readDesktopAttachments(runtime: DesktopRuntime, agentId: string, 
 }
 
 export function startDesktopPhoneConversation(runtime: DesktopRuntime, input: { agentId: string; text: string }, start: DesktopPhoneFirstTurn) {
-    return startDesktopChat(runtime, input, undefined, start)
+    return startDesktopChat(runtime, input, undefined, { phoneStart: start })
 }
 
-export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput, internalCreationRequestId?: string, phoneStart?: DesktopPhoneFirstTurn): Promise<{ response: Response; sessionId: string }> {
+export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput, internalCreationRequestId?: string, options: { phoneStart?: DesktopPhoneFirstTurn; setupKickoff?: true } = {}): Promise<{ response: Response; sessionId: string }> {
+    const { phoneStart, setupKickoff } = options
     if ('text' in input && input.documents) {
         const questionId = questionDocumentId(input.documents.scope.tabUid)
         if (questionId && (!input.question || input.questionDocumentId !== questionId)) {
@@ -168,7 +169,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     if (!agent.enabled) throw new DesktopHttpError(403, disabledCoworkerMessage)
     let existing = input.sessionId ? await findDesktopSession(db, input.sessionId) : null
     if (input.sessionId && (!existing || existing.agentId !== agent.id)) throw new DesktopHttpError(404, 'Conversation not found')
-    await assertDesktopSetupChatAllowed(runtime, input.agentId, input.sessionId)
+    const setupAdmission = await assertDesktopSetupChatAllowed(runtime, input.agentId, input.sessionId)
     const regenerate = 'regenerateMessageId' in input
     // Reject a disabled canonical coworker before reserving an alternate or probing its history.
     if (regenerate) await assertDesktopCoworkerEnabled(engineOf(runtime), agent)
@@ -275,6 +276,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             requestId: requestId!,
         } : {
             sessionId: existing?.engineSessionId, message: input.text, ...mentionFields,
+            ...(setupAdmission === 'skipped' && !setupKickoff && { desktopSetupSkipped: true }),
             ...(start && { desktopFirstTurn: { sessionId: String(start.engine_session_id), runId: String(start.run_id) } }),
             ...(queued && { desktopQueuedTurn: queued }),
             ...attachmentBody,

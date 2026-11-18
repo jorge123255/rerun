@@ -71,6 +71,7 @@ function publicDevice(device) {
         network: device.certificateFingerprint ? 'lan' : 'loopback',
         sendMessages: device.sendMessages === true,
         approveRequests: device.approveRequests === true,
+        changeVoice: device.changeVoice === true,
         changeSettings: device.changeSettings === true,
     }
 }
@@ -93,6 +94,7 @@ function validateStore(value, installId) {
             || (device.certificateFingerprint !== undefined && !HASH.test(device.certificateFingerprint))
             || (device.sendMessages !== undefined && (typeof device.sendMessages !== 'boolean' || (device.sendMessages && !device.certificateFingerprint)))
             || (device.approveRequests !== undefined && (typeof device.approveRequests !== 'boolean' || (device.approveRequests && !device.certificateFingerprint)))
+            || (device.changeVoice !== undefined && (typeof device.changeVoice !== 'boolean' || (device.changeVoice && !device.certificateFingerprint)))
             || (device.changeSettings !== undefined && (typeof device.changeSettings !== 'boolean' || (device.changeSettings && !device.certificateFingerprint)))
             || !Object.values(DEVICE_STATUS).includes(device.status)
             || !Number.isFinite(Date.parse(device.createdAt))) {

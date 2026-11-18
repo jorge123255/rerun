@@ -15,6 +15,10 @@ export const macVoiceDeps: VoiceDeps = {
         if (!macHub) return Promise.reject(new ApiError(404, 'not_found'))
         return macHub.startVoice(chatId, signal)
     },
+    voiceChoice: {
+        read: signal => macHub ? macHub.readVoiceChoices(signal) : Promise.reject(new ApiError(404, 'not_found')),
+        save: (id, signal) => macHub ? macHub.chooseVoice(id, signal) : Promise.reject(new ApiError(404, 'not_found')),
+    },
     loadEngine: loadElevenLabsEngine,
     requestMicrophone: async () => (await requestRecordingPermissionsAsync()).granted,
     yieldAudio,

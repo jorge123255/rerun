@@ -211,6 +211,13 @@ export const macPhoneVoiceSessionSchema = z.object({
 }).strict()
 export type MacPhoneVoiceSession = z.infer<typeof macPhoneVoiceSessionSchema>
 
+const phoneVoiceId = z.string().regex(/^[A-Za-z0-9]{8,64}$/)
+export const macPhoneVoiceChoiceSchema = z.object({ voiceId: phoneVoiceId }).strict()
+export const macPhoneVoiceChoicesSchema = macPhoneVoiceChoiceSchema.extend({
+    voices: z.array(z.object({ id: phoneVoiceId, name: z.string().min(1).max(120) }).strict()).max(100),
+})
+export type MacPhoneVoiceChoices = z.infer<typeof macPhoneVoiceChoicesSchema>
+
 // Only a refusal from an approved settings operation may include a vetted Mac UI message.
 export const macPhoneErrorSchema = z.union([
     z.object({ error: z.literal('settings_refused'), message: z.string().max(500) }),

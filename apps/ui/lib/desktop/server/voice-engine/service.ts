@@ -42,6 +42,24 @@ export function createVoiceEngineService(deps: VoiceEngineDeps) {
     const sessions = new Map<string, ReturnType<typeof createUpstreamSession>>()
     let relay: RelayClient | null = null, relayIdentity: string | null = null
     let closed = false
+    let appliedAudio: string | null = null
+    let configuring = Promise.resolve()
+
+    // Existing engines predate live transcripts and originally kept the voice chosen at setup.
+    // Serialize updates across phone starts. Retry failed updates and recheck once after a restart.
+    function configureAudio(engineId: string, saved: { key: string; revision: string }, signal: AbortSignal) {
+        const run = configuring.then(async () => {
+            signal.throwIfAborted()
+            if (closed) throw unavailable()
+            const voiceId = await deps.voiceId()
+            const configuration = JSON.stringify([engineId, saved.revision, voiceId])
+            if (appliedAudio === configuration) return
+            await deps.api.updateAudio({ apiKey: saved.key, engineId, voiceId }, signal)
+            appliedAudio = configuration
+        })
+        configuring = run.catch(() => {})
+        return run
+    }
 
     async function verify(authorization: string) {
         const saved = await deps.readKey().catch(() => null)
@@ -159,7 +177,12 @@ export function createVoiceEngineService(deps: VoiceEngineDeps) {
             if (!relay?.connected) throw unavailable()
             await deps.chief.assertChat(chat)
             const saved = await deps.readKey()
-            if (!saved) throw unavailable()
+            if (!saved || saved.revision !== key.revision) throw unavailable()
+            await configureAudio(settings.engineId, saved, signal)
+            const [current, credential] = await Promise.all([deps.store.read(), deps.keyInfo()])
+            if (closed || !relay?.connected || !credential.configured || credential.revision !== saved.revision ||
+                !current.enabled || current.engineId !== settings.engineId || current.engineKeyRevision !== saved.revision ||
+                current.engineRelay !== settings.relayOrigin || current.relayOrigin !== settings.relayOrigin) throw unavailable()
             const { token, conversationId } = await deps.api.conversationToken({ apiKey: saved.key, engineId: settings.engineId }, signal)
             const expiresAt = minted.mint(conversationId, chat)
             if (!relay || !(await relay.announce(conversationId, MINTED_TTL_MS))) {

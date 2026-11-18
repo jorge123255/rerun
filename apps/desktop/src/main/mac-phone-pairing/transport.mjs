@@ -63,10 +63,12 @@ const RESOURCES = new Map([
     ['POST chief/stop', { to: 'chief/stop', needs: 'sendMessages', body: chiefStop }],
     // A voice conversation with the Chief of Staff speaks for the phone's owner: it takes the right to
     // send. Each one starts an ElevenLabs session billed to the owner, so a phone gets a few a minute.
+    ['GET voice/choice', { to: 'voice/choice', needs: 'changeVoice' }],
+    ['POST voice/choice', { to: 'voice/choice', needs: 'changeVoice', limit: 256, rate: { count: 10, perMs: 60_000 } }],
     ['POST voice/start', { to: 'voice/start', needs: 'sendMessages', limit: 1_000, rate: { count: 3, perMs: 60_000 } }],
 ])
 const RESOURCE_PATH = /^\/workspaces\/([^/]+)\/([a-z-]+(?:\/[a-z-]+)?)$/
-const REFUSALS = { sendMessages: 'send_not_allowed', approveRequests: 'approve_not_allowed', changeSettings: 'settings_not_allowed' }
+const REFUSALS = { sendMessages: 'send_not_allowed', approveRequests: 'approve_not_allowed', changeVoice: 'voice_change_not_allowed', changeSettings: 'settings_not_allowed' }
 
 function validDecisions(approval) {
     if (!approval || typeof approval !== 'object' || Array.isArray(approval) || Object.keys(approval).length !== 2) return false
@@ -553,6 +555,7 @@ export function createPairingTransport({
             device.status = DEVICE_STATUS.revoked
             // A phone that is paired again starts without the right to decide approval requests.
             device.approveRequests = false
+            device.changeVoice = false
             device.changeSettings = false
             device.revokedAt = new Date(now()).toISOString()
             claims.delete(device.deviceId)

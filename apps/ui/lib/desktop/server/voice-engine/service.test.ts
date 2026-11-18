@@ -25,6 +25,7 @@ function setup(options: { script?: Parameters<typeof fakeChief>[0] } = {}) {
     const key = { current: { revision: 'rev-1', key: API_KEY } as { revision: string; key: string } | null }
     let relaySecret = ''
     let clock = Date.now()
+    const voice = { id: 'VoiceChosen1234' }
     const elevenlabs = fakeElevenLabsApi()
     const relay = fakeRelay(() => relaySecret)
     const chief = fakeChief(options.script ?? (({ emit, end }) => {
@@ -35,7 +36,7 @@ function setup(options: { script?: Parameters<typeof fakeChief>[0] } = {}) {
         store,
         keyInfo: async () => ({ configured: !!key.current, revision: key.current?.revision ?? 'unconfigured' }),
         readKey: async () => key.current,
-        voiceId: async () => 'VoiceChosen1234',
+        voiceId: async () => voice.id,
         api: voiceEngineApi(elevenlabs.fetcher),
         chief: chief.chief,
         socket: relay.factory,
@@ -52,7 +53,7 @@ function setup(options: { script?: Parameters<typeof fakeChief>[0] } = {}) {
         return saved.deploy!
     }
     return {
-        db, store, key, relay, chief, service, elevenlabs, ready,
+        db, store, key, relay, chief, service, elevenlabs, voice, ready,
         setSecret(value: string) { relaySecret = value },
         advance(ms: number) { clock += ms },
         now: () => clock,
@@ -95,13 +96,33 @@ describe('talking to the Chief of Staff from a phone, on the Mac', () => {
             name: 'Rerun Chief of Staff',
             speech_engine: { ws_url: `wss://voice.example.com/v1/${deploy.installId}/speech-engine` },
             tts: { voice_id: 'VoiceChosen1234' },
-            conversation: { max_duration_seconds: 600 },
+            vad: { background_voice_detection: true },
+            conversation: { max_duration_seconds: 600, client_events: ['audio', 'interruption', 'user_transcript', 'tentative_user_transcript', 'agent_response', 'agent_response_correction'] },
             privacy: { record_voice: false, retention_days: 0 },
             auth: { enable_auth: true },
             cascade_timeout_seconds: 15,
         })
         expect(JSON.stringify(create.body)).not.toContain(API_KEY)
         expect(await service.status()).toMatchObject({ engineReady: true, enabled: true, relayConnected: true })
+        service.close()
+    })
+
+    it('updates a provisioned engine on first use and applies a changed workspace voice before issuing the next token', async () => {
+        const { service, elevenlabs, voice, ready } = setup()
+        await ready()
+        // Restore the provider representation of an engine originally provisioned by an older Mac.
+        elevenlabs.remoteAudio.conversation.client_events = ['audio', 'vad_score']
+        elevenlabs.remoteAudio.vad.background_voice_detection = false
+        const start = () => service.startConversation(CHAT, AbortSignal.timeout(2_000))
+        await Promise.all([start(), start()])
+        const patches = elevenlabs.requests.filter(r => r.method === 'PATCH')
+        expect(patches).toHaveLength(1)
+        expect(patches[0].body).toMatchObject({ conversation: { client_events: expect.arrayContaining(['vad_score', 'tentative_user_transcript']) }, vad: { background_voice_detection: true } })
+        voice.id = 'AnotherVoice1234'
+        await start()
+        const [update, token] = elevenlabs.requests.slice(-2)
+        expect(update).toMatchObject({ method: 'PATCH', body: { tts: { voice_id: voice.id } } })
+        expect(token.method).toBe('GET')
         service.close()
     })
 

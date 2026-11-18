@@ -19,7 +19,7 @@ export type DesktopTeamCoworkerState = {
     /** "Provider · model", or null when it follows the workspace default or could not be read. */
     model: string | null
     allowed: DesktopTeamChangePermission[] | null
-    setup: 'needed' | 'started' | 'done' | 'none' | 'unknown'
+    setup: 'needed' | 'started' | 'done' | 'skipped' | 'none' | 'unknown'
     /** The coworkers it may ask for help, by name; 'everyone' when that is all the others. Absent when not read. */
     asks?: string[] | 'everyone'
     /** Its Box on the board, by name. Absent when it sits in none or the Boxes were not read. */
@@ -59,9 +59,9 @@ async function coworkerState(runtime: DesktopRuntime, agent: { id: string; name:
         allowed: grants ? DESKTOP_TEAM_CHANGE_PERMISSIONS.filter(id => grants[id] === true) : null,
         setup: !view ? 'unknown'
             : view.completedAt ? 'done'
-            : view.sessionId ? 'started'
-            : view.required === true && view.prompt.trim().length > 0 && !view.skipped ? 'needed'
-            : 'none',
+            : view.skipped ? 'skipped'
+            : !view.pending ? 'none'
+            : view.sessionId ? 'started' : 'needed',
     }
 }
 

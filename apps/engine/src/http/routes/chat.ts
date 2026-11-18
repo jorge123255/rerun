@@ -50,6 +50,7 @@ const desktopChatRequest = chatRequestSchema.extend({
     workspaceAttachments: desktopWorkspaceAttachmentsSchema.optional(),
     desktopAttachments: desktopResolvedAttachmentsSchema.optional(),
     desktopDocuments: desktopResolvedDocumentsSchema.optional(),
+    desktopSetupSkipped: z.literal(true).optional(),
     desktopFirstTurn: desktopFirstTurn.optional(),
     desktopQueuedTurn: desktopQueuedTurn.optional(),
 }).strict().refine(body => { try { checkedDesktopCoworkerMentions(body.message, body.coworkerMentions); return true } catch { return false } }, 'Coworker mention ranges changed.').refine(body => [body.workspaceAttachment, body.workspaceAttachments, body.desktopAttachments].filter(value => value !== undefined).length <= 1, 'Use one attachment field.')
@@ -136,7 +137,7 @@ chatRoutes.post('/chat', async c => {
         throw agentDisabled()
     }
     if (desktopApp() && input && typeof input === 'object' && 'regenerateMessageId' in input) return regenerateChat(agent, regenerateRequest.parse(input))
-    const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), coworkerMentions: undefined, workspaceAttachment: undefined, workspaceAttachments: undefined, desktopAttachments: undefined, desktopDocuments: undefined, desktopFirstTurn: undefined, desktopQueuedTurn: undefined }
+    const body = desktopApp() ? desktopChatRequest.parse(input) : { ...chatRequestSchema.parse(input), coworkerMentions: undefined, workspaceAttachment: undefined, workspaceAttachments: undefined, desktopAttachments: undefined, desktopDocuments: undefined, desktopFirstTurn: undefined, desktopQueuedTurn: undefined, desktopSetupSkipped: undefined }
     const attachments = body.workspaceAttachments ?? (body.workspaceAttachment ? [body.workspaceAttachment] : [])
     const resolvedAttachments = body.desktopAttachments ?? []
     const documentImages = (body.desktopDocuments ?? []).filter(item => 'dataBase64' in item)
@@ -151,6 +152,8 @@ chatRoutes.post('/chat', async c => {
     // One attachment keeps the original trigger field, so existing runs, tests and queued
     // receipts keep their shape. Two or more travel as the ordered array.
     const attachmentTrigger = body.desktopAttachments ? { desktopAttachments: body.desktopAttachments } : attachments.length === 1 ? { workspaceAttachment: attachments[0] } : attachments.length > 1 ? { workspaceAttachments: attachments } : {}
+    // The Mac owns the durable skip. This flag can only withhold setup guidance and its completion tool.
+    const setupTrigger = body.desktopSetupSkipped ? { desktopSetupSkipped: true as const } : {}
     const documentTrigger = body.desktopDocuments ? { desktopDocuments: body.desktopDocuments } : {}
     const runAgentView = agent.config.kind === 'foreman' && body.foreman ? { ...agent, brief: body.foreman } : agent
     const source = body.source ?? 'dashboard'
@@ -172,7 +175,7 @@ chatRoutes.post('/chat', async c => {
             if (!queuedUser) { releaseSession(runId); return identified(resumeStreamResponse(runId), sessionId, runId) }
             // The normal queued-user path enriches this row with context and never appends a
             // second user message. Failed preparation/Stop therefore still leave the input saved.
-            return streamChat(currentAgent, sessionId, runId, body.message, override, { provider, model }, { source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...attachmentTrigger, ...documentTrigger, queuedUser })
+            return streamChat(currentAgent, sessionId, runId, body.message, override, { provider, model }, { source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...attachmentTrigger, ...documentTrigger, ...setupTrigger, queuedUser })
         } catch (error) { releaseSession(runId); throw error }
     })
     if (body.desktopQueuedTurn) return withAgentLock(agentId, async () => {
@@ -247,7 +250,7 @@ chatRoutes.post('/chat', async c => {
             assertDesktopRunAdmission()
             const queuedUser = await reserveDesktopQueuedTurn(agentId, turn, attachments, body.author, body.desktopAttachments, false, body.desktopDocuments, triggerAdmission)
             return streamChat(currentAgent, session.id, turn.runId, body.message, override, { provider, model }, {
-                source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...attachmentTrigger, ...documentTrigger, queuedUser,
+                source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...attachmentTrigger, ...documentTrigger, ...setupTrigger, queuedUser,
             })
         } catch (error) {
             releaseSession(turn.runId)
@@ -307,7 +310,7 @@ chatRoutes.post('/chat', async c => {
         throw err
     })
     return streamChat(runAgentView, session.id, run.id, body.message, override, meta, {
-        source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), userLanguage: claim ? body.userLanguage : undefined, ...attachmentTrigger, ...documentTrigger,
+        source: 'chat', author: body.author, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), userLanguage: claim ? body.userLanguage : undefined, ...attachmentTrigger, ...documentTrigger, ...setupTrigger,
         ...(retried ? { savedUser: retried } : {}),
     })
 })

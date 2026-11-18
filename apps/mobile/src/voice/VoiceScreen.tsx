@@ -1,4 +1,5 @@
-import { Linking, Modal, Pressable, View } from 'react-native'
+import { useRef } from 'react'
+import { Linking, Modal, Pressable, ScrollView, type ScrollViewInstance, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslations } from 'use-intl'
 
@@ -11,7 +12,9 @@ import { spacing } from '@/theme/tokens'
 
 import { canRetry } from './problems'
 import { useVoiceSession, type VoiceDeps } from './useVoiceSession'
+import type { Transcript } from './transcript'
 import { VoiceOrb } from './VoiceOrb'
+import { VoiceChoice } from './VoiceChoice'
 
 const ORB_SIZE = 168
 const CONTROL = 64
@@ -30,7 +33,7 @@ type VoiceScreenProps = {
 export function VoiceScreen({ chatId, onClose, deps }: VoiceScreenProps) {
     return (
         <Modal visible={chatId !== null} animationType="fade" presentationStyle="fullScreen" supportedOrientations={[...ORIENTATIONS]} onRequestClose={onClose}>
-            {chatId !== null && <VoiceConversation chatId={chatId} onClose={onClose} deps={deps} />}
+            {chatId !== null && <VoiceConversation key={chatId} chatId={chatId} onClose={onClose} deps={deps} />}
         </Modal>
     )
 }
@@ -55,14 +58,35 @@ function RoundControl({ symbol, label, onPress, tone, disabled = false, testID }
     )
 }
 
-function Line({ who, text }: { who: string; text: string }) {
+function TranscriptLines({ transcript }: { transcript: Transcript }) {
+    const t = useTranslations('mobileAuth.mac.chief.voice')
+    const scroll = useRef<ScrollViewInstance>(null)
+    const followLatest = useRef(true)
     return (
-        <AppText variant="footnote" tone="muted" numberOfLines={2} style={{ textAlign: 'center' }}>
-            <AppText variant="footnote" tone="muted" medium>
-                {who}
-            </AppText>
-            {`  ${text}`}
-        </AppText>
+        <ScrollView
+            testID="voice-lines"
+            ref={scroll}
+            style={{ flexGrow: 0, maxHeight: '48%', width: '100%', maxWidth: 420 }}
+            contentContainerStyle={{ gap: spacing.md, paddingVertical: spacing.sm }}
+            scrollEventThrottle={32}
+            onScroll={({ nativeEvent }) => {
+                followLatest.current = nativeEvent.contentOffset.y + nativeEvent.layoutMeasurement.height >= nativeEvent.contentSize.height - 32
+            }}
+            onContentSizeChange={() => { if (followLatest.current) scroll.current?.scrollToEnd({ animated: false }) }}
+        >
+            {transcript.lines.map(line => (
+                <View key={line.from + ':' + (line.responseId ?? line.eventId)}>
+                    <AppText variant="footnote" tone="muted" medium>{t(line.from === 'you' ? 'you' : 'chief')}</AppText>
+                    <AppText variant="callout">{line.text}</AppText>
+                </View>
+            ))}
+            {transcript.partial && (
+                <View testID="voice-live-transcript">
+                    <AppText variant="footnote" tone="muted" medium>{t('liveCaption')}</AppText>
+                    <AppText variant="callout">{transcript.partial.text}</AppText>
+                </View>
+            )}
+        </ScrollView>
     )
 }
 
@@ -71,6 +95,7 @@ function VoiceConversation({ chatId, onClose, deps }: { chatId: string; onClose:
     const insets = useSafeAreaInsets()
     const t = useTranslations('mobileAuth.mac.chief.voice')
     const voice = useVoiceSession(chatId, deps)
+    const hasTranscript = voice.transcript.lines.length > 0 || voice.transcript.partial !== null
     const live = voice.phase === 'live'
     const over = voice.phase === 'ended' || voice.phase === 'failed'
 
@@ -101,6 +126,7 @@ function VoiceConversation({ chatId, onClose, deps }: { chatId: string; onClose:
         <View testID="voice-screen" style={{ flex: 1, backgroundColor: theme.background, paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.lg, paddingHorizontal: spacing.xl }}>
             <View style={{ alignItems: 'center', gap: spacing.xs }}>
                 <AppText variant="headline">{t('chief')}</AppText>
+                {deps.voiceChoice && <VoiceChoice controls={deps.voiceChoice} />}
                 <View testID="voice-mic-on" style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: micOpen ? 1 : 0 }} accessibilityElementsHidden={!micOpen} importantForAccessibility={micOpen ? 'yes' : 'no-hide-descendants'}>
                     <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: theme.destructive }} />
                     <AppText variant="footnote" tone="muted">
@@ -110,16 +136,11 @@ function VoiceConversation({ chatId, onClose, deps }: { chatId: string; onClose:
             </View>
 
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.xl }}>
-                <VoiceOrb size={ORB_SIZE} state={voice.orb} level={voice.level} />
+                <VoiceOrb size={hasTranscript ? ORB_SIZE / 2 : ORB_SIZE} state={voice.orb} level={voice.level} />
                 <AppText testID="voice-caption" variant={over ? 'callout' : 'title'} tone={voice.phase === 'failed' ? 'destructive' : 'default'} accessibilityLiveRegion="polite" style={{ textAlign: 'center', maxWidth: 420 }}>
                     {caption}
                 </AppText>
-                {!over && (voice.heard || voice.said) ? (
-                    <View testID="voice-lines" style={{ gap: spacing.xs, maxWidth: 420 }}>
-                        {voice.heard ? <Line who={t('you')} text={voice.heard} /> : null}
-                        {voice.said ? <Line who={t('chief')} text={voice.said} /> : null}
-                    </View>
-                ) : null}
+                {hasTranscript && <TranscriptLines transcript={voice.transcript} />}
                 {over && (
                     <View style={{ flexDirection: 'row', gap: spacing.md }}>
                         {voice.problem === 'microphone' && <PillButton label={t('openSettings')} variant="secondary" onPress={() => void Linking.openSettings()} />}

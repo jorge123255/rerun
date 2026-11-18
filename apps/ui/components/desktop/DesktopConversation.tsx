@@ -1865,6 +1865,13 @@ export function DesktopConversation({ cardBeside, agent, workspaceId, sessionId,
                     onSendNow={() => void sendQueuedNow()} onDiscard={() => { if (queued && !isDesktopQuitting()) void queue.action('remove', queued.id).then(() => { setQueueNotice(undefined); setSendQueuedId(null) }).catch(() => {}) }} />
                 {setup.error && <div role="alert" className="p-2 text-sm text-destructive">{setup.error}<Button type="button" size="sm" variant="ghost" onClick={()=>void setup.refresh()}>Retry setup</Button></div>}
                 {setupBlocked && <DesktopSetupGate agentId={agent.id} agentName={agent.name} apps={[]} canStart={modelReady} onStartBlocked={onOpenModelSettings} modelSlot={modelPickerOnInstall ? modelPicker : undefined} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
+                {!setupBlocked && setup.view?.pending && setup.view.sessionId === sessionId && !pendingRequest && (
+                    <div className="flex items-center justify-between gap-2 px-2 py-1 text-xs text-muted-foreground">
+                        <span>{t('coworkerSetup.gate.inProgressTitle', { name: agent.name })}</span>
+                        <Button type="button" size="xs" variant="ghost" disabled={inactive || generating || stopping || draft.quitting || setup.mutating !== null}
+                            onClick={() => void setup.skip()}>{t('coworkerSetup.gate.skip')}</Button>
+                    </div>
+                )}
                 {setup.view?.skipped && <DesktopSetupSkippedBanner agentId={agent.id} canStart={modelReady} onStartBlocked={onOpenModelSettings} disabled={inactive || generating || stopping || draft.quitting} onOpenSetupChat={target=>onSelectSession?.(target.sessionId)} />}
                 {documentPreview && <DesktopDocumentLightbox {...documentPreview} onIndexChange={index => setDocumentPreview(value => value ? { ...value, index } : null)} onClose={() => setDocumentPreview(null)} />}
                 {active && workspacePreview?.owner === uploadOwner && <DesktopWorkspaceAttachmentLightbox {...workspacePreview}

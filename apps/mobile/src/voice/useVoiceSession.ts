@@ -1,15 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { AppState } from 'react-native'
 
 import type { OrbState } from '@/components/orb/ForemanOrb'
 
 import { voiceTurnedOff } from './availability'
-import type { VoiceEngine, VoiceEngineSession, VoiceLine, VoiceMode } from './engine'
+import type { VoiceEngine, VoiceEngineSession, VoiceMode } from './engine'
+import { emptyTranscript, transcriptReducer } from './transcript'
 import { voiceProblemOf, type VoiceProblem } from './problems'
 
 // Everything the conversation needs from outside, handed in so the tests and the lab can stand in
 // for the Mac, the voice service and the phone.
+export type VoiceChoiceControls = {
+    read: (signal: AbortSignal) => Promise<{ voiceId: string; voices: { id: string; name: string }[] }>
+    save: (id: string, signal: AbortSignal) => Promise<{ voiceId: string }>
+}
+
 export type VoiceDeps = {
+    voiceChoice?: VoiceChoiceControls
     // The Mac's `voice/start`: the token is passed straight to the voice session and kept nowhere.
     requestSession: (chatId: string, signal: AbortSignal) => Promise<{ conversationToken: string }>
     loadEngine: () => Promise<VoiceEngine>
@@ -41,10 +48,9 @@ export function useVoiceSession(chatId: string, deps: VoiceDeps) {
     const [problem, setProblem] = useState<VoiceProblem | null>(null)
     const [ending, setEnding] = useState<VoiceEnding | null>(null)
     const [mode, setMode] = useState<VoiceMode>('listening')
-    const [awaitingReply, setAwaitingReply] = useState(false)
+    const [transcript, dispatch] = useReducer(transcriptReducer, emptyTranscript)
+    const { awaitingReply } = transcript
     const [muted, setMutedState] = useState(false)
-    const [heard, setHeard] = useState<string | null>(null)
-    const [said, setSaid] = useState<string | null>(null)
 
     const depsRef = useRef(deps)
     useEffect(() => {
@@ -66,6 +72,8 @@ export function useVoiceSession(chatId: string, deps: VoiceDeps) {
         abortRef.current = null
         const session = sessionRef.current
         sessionRef.current = null
+        const hideHistory = (next.phase === 'failed' && next.problem === 'removed') || (next.phase === 'ended' && next.ending !== 'chief')
+        dispatch({ type: hideHistory ? 'reset' : 'discardPartial' })
         phaseRef.current = next.phase
         setPhase(next.phase)
         setProblem(next.phase === 'failed' ? next.problem : null)
@@ -116,17 +124,16 @@ export function useVoiceSession(chatId: string, deps: VoiceDeps) {
                     if (!current()) return
                     modeRef.current = next
                     setMode(next)
-                    if (next === 'speaking') setAwaitingReply(false)
+                    if (next === 'speaking') dispatch({ type: 'speaking' })
                 },
-                onLine: (line: VoiceLine) => {
-                    if (!current()) return
-                    if (line.from === 'you') {
-                        setHeard(line.text)
-                        setAwaitingReply(true)
-                    } else {
-                        setSaid(line.text)
-                        setAwaitingReply(false)
-                    }
+                onPartial: caption => {
+                    if (current() && !mutedRef.current) dispatch({ type: 'partial', caption })
+                },
+                onLine: line => {
+                    if (current()) dispatch({ type: 'line', line })
+                },
+                onCorrection: line => {
+                    if (current()) dispatch({ type: 'correction', line })
                 },
                 onEnd: why => {
                     if (current()) void stop(why === 'error' ? { phase: 'failed', problem: 'dropped' } : { phase: 'ended', ending: 'chief' })
@@ -151,6 +158,7 @@ export function useVoiceSession(chatId: string, deps: VoiceDeps) {
         if (!session || phaseRef.current !== 'live') return
         mutedRef.current = next
         setMutedState(next)
+        if (next) dispatch({ type: 'discardPartial' })
         session.setMuted(next)
     }, [])
 
@@ -161,9 +169,7 @@ export function useVoiceSession(chatId: string, deps: VoiceDeps) {
         setProblem(null)
         setEnding(null)
         setMode('listening')
-        setAwaitingReply(false)
-        setHeard(null)
-        setSaid(null)
+        dispatch({ type: 'reset' })
         return start()
     }, [start])
 
@@ -231,7 +237,7 @@ export function useVoiceSession(chatId: string, deps: VoiceDeps) {
         }
     }, [phase, stop])
 
-    return { phase, problem, ending, mode, awaitingReply, muted, heard, said, setMuted, close, retry, level, orb: orbStateOf({ phase, mode, awaitingReply, muted }) }
+    return { phase, problem, ending, mode, awaitingReply, muted, transcript, setMuted, close, retry, level, orb: orbStateOf({ phase, mode, awaitingReply, muted }) }
 }
 
 // The Mac's four states, from what the voice session says: speaking while the Chief of Staff's voice

@@ -144,6 +144,8 @@
         "declineFailed": "Die Kopplungsanfrage konnte nicht abgelehnt werden.",
         "revokeFailed": "Der Zugriff des iPhones konnte nicht widerrufen werden.",
         "decide": "Anfragen bestätigen",
+        "voice": "Stimme des Arbeitsbereichs ändern",
+        "voiceLabel": "{name} erlauben, die Stimme für Anrufe und das Vorlesen auszuwählen",
         "decideLabel": "{name} erlauben, Anfragen zu bestätigen",
         "decideHint": "Erlaube einem Telefon nur dann, Anfragen zu bestätigen, wenn es bestätigen oder ablehnen können soll, was ein Kollege vor dem Handeln fragt. Zurückgehaltene App-Aktionen und Anfragen nach Geheimnissen werden immer auf diesem Mac entschieden.",
         "settings": "Einstellungen ändern",

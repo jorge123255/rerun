@@ -25,6 +25,7 @@ type SeenBody = {
 type SeenRequest = { method: string; url: string; authorization: string | null; body: SeenBody | null }
 const seen: SeenRequest[] = []
 let savedConnections: ConnectionSummary[]
+let pendingSetup: boolean
 let server: Server
 let root: string
 let runtime: DesktopRuntime
@@ -45,13 +46,14 @@ beforeEach(async () => {
     seen.length = 0
     root = await mkdtemp(join(tmpdir(), 'rerun-desktop-engine-'))
     savedConnections = []
+    pendingSetup = false
     const connections = connectionFixture(savedConnections)
     server = createServer(async (req, res) => {
         const body = await bodyOf(req)
         seen.push({ method: req.method!, url: req.url!, authorization: req.headers.authorization ?? null, body })
         if (connections(req, res, body)) return
         if (req.method === 'GET' && req.url === '/agents/engine-agent-1/setup') return json(res, {
-            required: false, prompt: '', completedAt: null, sessionId: null, pending: false, revision: 'fixture-setup',
+            required: pendingSetup, prompt: pendingSetup ? 'Introduce yourself.' : '', completedAt: null, sessionId: pendingSetup ? 'engine-session-1' : null, pending: pendingSetup, revision: 'fixture-setup',
         })
         if (req.method === 'POST' && req.url === '/agents') {
             creationStarted?.()
@@ -177,6 +179,20 @@ describe('desktop engine workflows', () => {
         const chat = seen.find(request => request.url === '/agents/engine-agent-1/chat')
         expect(chat?.body).toMatchObject({ message: 'Hello', source: 'dashboard' })
         expect(chat?.body?.sessionId).toBeUndefined()
+    })
+
+    it('carries the saved skip to the engine for a new message in the old setup conversation after restart', async () => {
+        await connectDesktopOpenAI(runtime, 'fixture-model-key')
+        const db = await openDesktopDatabase(root)
+        const agent = await createDesktopAgent(db, { engineAgentId: 'engine-agent-1', name: 'Ada' })
+        const session = await createDesktopSession(db, { agentId: agent.id, engineSessionId: 'engine-session-1', title: 'Setup' })
+        pendingSetup = true
+        await db.execute({ sql: 'INSERT INTO desktop_setup_state(agent_id,skipped,updated_at) VALUES(?,1,?)', args: [agent.id, new Date().toISOString()] })
+        await closeDesktopDatabase(root)
+        const reply = await startDesktopChat({ ...runtime, launchNonce: 'second-launch' }, { agentId: agent.id, sessionId: session.id, text: 'Do the normal job.' })
+        await reply.response.text()
+        expect(seen.find(req => req.method === 'POST' && req.url.endsWith('/chat'))?.body)
+            .toMatchObject({ sessionId: 'engine-session-1', message: 'Do the normal job.', desktopSetupSkipped: true })
     })
 
     it('refuses to create a coworker without a local provider connection', async () => {

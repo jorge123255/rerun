@@ -54,7 +54,7 @@ export function DesktopSpeechSettings({ player = desktopSpeechPlayer }: { player
     return <div className="space-y-3 border-t pt-3" data-speech-settings>
         <h3 className="text-sm font-semibold">Replies read aloud</h3>
         <p className="text-sm text-muted-foreground">Each reply gets a “Read aloud” button. When you use it, the reply’s text (up to its first 4,000 characters) is sent to ElevenLabs and billed to your ElevenLabs account. Code and tables are left out.</p>
-        <label className="text-sm font-medium" htmlFor="speech-voice">Voice</label>
+        <label className="text-sm font-medium" htmlFor="speech-voice">Voice for read aloud and Chief of Staff calls</label>
         <div className="flex gap-2">
             <select id="speech-voice" className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm" disabled={busy} value={settings.voiceId}
                 onChange={event => void change({ voiceId: event.target.value })}>
@@ -64,6 +64,7 @@ export function DesktopSpeechSettings({ player = desktopSpeechPlayer }: { player
                 {previewing ? (speech.phase === 'loading' ? 'Preparing…' : 'Stop') : 'Preview'}
             </Button>
         </div>
+        <p className="text-xs text-muted-foreground">A voice change takes effect on the next call.</p>
         {!voices && !voicesError && <p role="status" className="text-xs text-muted-foreground">Loading your ElevenLabs voices…</p>}
         {voicesError && <p role="alert" className="text-xs text-destructive">{voicesError}</p>}
         {previewError && <p role="alert" className="text-xs text-destructive">{previewError}</p>}

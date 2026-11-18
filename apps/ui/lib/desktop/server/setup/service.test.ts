@@ -137,7 +137,17 @@ test('chat admission accepts the exact setup session, and skip allows normal cha
     await expect(assertDesktopSetupChatAllowed(runtime, owner, own.id)).resolves.toBeUndefined()
     const view = await readDesktopSetupView(runtime, owner)
     await mutateDesktopSetup(runtime, owner, { action: 'skip', requestId: crypto.randomUUID(), expectedRevision: view.revision })
-    await expect(assertDesktopSetupChatAllowed(runtime, owner)).resolves.toBeUndefined()
+    await expect(assertDesktopSetupChatAllowed(runtime, owner)).resolves.toBe('skipped')
+    await closeDesktopDatabase(root)
+    const restarted = { ...runtime, launchNonce: 'second' }
+    await expect(assertDesktopSetupChatAllowed(restarted, owner, own.id)).resolves.toBe('skipped')
+    await expect(assertDesktopSetupChatAllowed(restarted, owner)).resolves.toBe('skipped')
+    await expect(assertDesktopSetupChatAllowed(restarted, other)).rejects.toMatchObject({ status: 409 })
+    const resumed = await readDesktopSetupView(restarted, owner)
+    await mutateDesktopSetup(restarted, owner, { action: 'continue', requestId: crypto.randomUUID(), expectedRevision: resumed.revision })
+    expect(mocks.chat.mock.calls.at(-1)?.[3]).toEqual({ setupKickoff: true })
+    await expect(assertDesktopSetupChatAllowed(restarted, owner)).rejects.toMatchObject({ status: 409 })
+    await expect(assertDesktopSetupChatAllowed(restarted, owner, own.id)).resolves.toBeUndefined()
 })
 
 test('later panel reads do not rerun schema DDL on the shared connection', async () => {
