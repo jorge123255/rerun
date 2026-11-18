@@ -1,4 +1,5 @@
 import { hitlKindOf, isSubRunLive, pairSubRuns, parseHitlReply, parseInstallMessage, parseScheduledRun, parseTriggerPayload, QUICK_REPLIES_TOOL, isToolPart, messageText, skillProposalIdOf, SUB_RUN_TOOL_NAMES, toolActivityOf, toolLabelOf, toolNameOf, type ConversationMessageMetadata, type MessageFeedbackRating, type PaidTurnSources, type TriggerPayload } from '@rerun/contracts'
+import { macPhoneChiefSetupTargetSchema } from '@rerun/mac-contracts/mac-phone-pairing'
 import type { UIMessage } from 'ai'
 import { View } from 'react-native'
 import { useTranslations } from 'use-intl'
@@ -7,12 +8,14 @@ import { ownedFileUrl, type FileOwner } from '@/api/files'
 import type { MessageFeedback } from '@/chat/useMessageFeedback'
 import type { SkillProposals } from '@/chat/useSkillProposals'
 import type { ViewerItem } from '@/components/viewer/viewer-store'
+import { onMac } from '@/config/environment'
 import { spacing } from '@/theme/tokens'
 
 import { AgentPickerCard, readAgentPicks } from './cards/AgentPickerCard'
 import { cardOf, connectCardOf, eventCardOf } from './cards/cards'
 import { ConnectCardView } from './cards/ConnectCards'
 import { EventCardView } from './cards/EventCardView'
+import { MacChiefSetupCard } from './cards/MacChiefSetupCard'
 import { SkillProposalRow } from './cards/SkillProposalRow'
 import { Sources, type Source } from './cards/Sources'
 import { FileCardView } from './cards/FileCardView'
@@ -153,6 +156,11 @@ export function MessageView({ message, isLastAssistant, running, installStatus, 
         if (part.type === 'text') {
             flushSteps()
             buffer += (part as { text: string }).text
+            return
+        }
+        if (onMac && !agentId && part.type === 'data-mac-chief-setup') {
+            const target = macPhoneChiefSetupTargetSchema.safeParse(part.data)
+            if (target.success) addBlock({ key: `setup${index}`, node: <MacChiefSetupCard target={target.data} /> }, index)
             return
         }
         if (part.type === 'reasoning') {

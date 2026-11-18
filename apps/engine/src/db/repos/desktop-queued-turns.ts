@@ -9,12 +9,13 @@ import { HttpError } from '../../lib/errors.js'
 import { newId, nowIso } from '../../lib/ids.js'
 import { desktopApp } from '../../desktop/policy.js'
 
-export type QueuedTurn = { runId: string; sessionId: string; message: string; documents?: DesktopDocumentSendSelection; mcpSignIn?: DesktopMcpSignInGuard; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard; service?: DesktopServiceRequestGuard; secret?: DesktopSecretRequestGuard; foreman?: { binding: DesktopForemanBinding; brief: ForemanBrief; question?: DesktopForemanQuestionGuard; approval?: DesktopForemanQuestionGuard } }
+export type QueuedTurn = { runId: string; sessionId: string; message: string; setupReplyStepId?: string; documents?: DesktopDocumentSendSelection; mcpSignIn?: DesktopMcpSignInGuard; coworkerMentions?: DesktopCoworkerMention[]; attachmentPath?: string; attachmentPaths?: string[]; attachmentItems?: DesktopAttachmentItem[]; question?: DesktopQuestionGuard; approval?: DesktopApprovalGuard; takeover?: DesktopTakeoverGuard; service?: DesktopServiceRequestGuard; secret?: DesktopSecretRequestGuard; foreman?: { binding: DesktopForemanBinding; brief: ForemanBrief; question?: DesktopForemanQuestionGuard; approval?: DesktopForemanQuestionGuard } }
 
 function fingerprint(turn: QueuedTurn) {
     const parts: unknown[] = [turn.sessionId, turn.message, desktopAttachmentFingerprintOf(desktopAttachmentSelectionsOf(turn))]
     // Old queue receipts keep their original fingerprint. A question answer also binds the
     // immutable source call, so its run ID cannot be replayed for a different question.
+    if (turn.setupReplyStepId) parts.push(['setupReplyStepId', turn.setupReplyStepId])
     if (turn.question) parts.push([turn.question.sourceMessageId, turn.question.toolCallId, turn.question.fingerprint])
     if (turn.takeover) parts.push(['takeover', turn.takeover.sourceMessageId, turn.takeover.toolCallId, turn.takeover.fingerprint])
     if (turn.approval) parts.push(['approval', turn.approval.sourceMessageId, turn.approval.toolCallId, turn.approval.fingerprint])

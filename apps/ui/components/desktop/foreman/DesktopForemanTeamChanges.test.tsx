@@ -71,3 +71,17 @@ it('dismisses a card without changing anything', async () => {
     expect(state.calls).toEqual(['settle dismissed '])
     expect(document.querySelector('[data-foreman-team-changes]')).toBeNull()
 })
+
+it('shows the exact setup question and complete proposed reply as plain text before applying anything', async () => {
+    const question = 'Which project and which branch?'
+    const text = '<b>OpenFlix</b>\n' + 'use the iOS workspace '.repeat(42) + 'on the development branch.'
+    const changes = [change('change-0', 'Reply to QA tester’s guided setup', {
+        action: 'reply_setup', setupReply: { question, text, sessionId: 'session-qa', revision: 'r1', stepId: 'step1' },
+    })]
+    const { ports, state } = fake({ ...card(), changes })
+    await render(ports)
+    const row = document.querySelector('[data-team-change="change-0"]')!
+    expect([...row.querySelectorAll('[dir=auto]')].map(element => element.textContent)).toEqual([question, text])
+    expect(row.querySelector('b')).toBeNull()
+    expect(state.calls).toEqual([])
+})

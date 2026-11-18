@@ -1,9 +1,9 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { vi } from 'vitest'
 
-process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-chat-'))
+process.env.RERUN_DATA_DIR = realpathSync(mkdtempSync(resolve(tmpdir(), 'rerun-chat-')))
 process.env.RERUN_API_KEY = ''
 
 const state = vi.hoisted(() => ({
@@ -110,6 +110,56 @@ describe('POST /agents/:id/chat', () => {
         const { sourceMessageId, toolCallId, fingerprint } = findDesktopServiceRequest([request, delivered])!
         return { sourceMessageId, toolCallId, fingerprint }
     }
+
+    it('sends an approved setup reply only to the exact waiting step, even when two cards race', async () => {
+        vi.stubEnv('RERUN_DESKTOP_APP', '1')
+        try {
+            const { createHash } = await import('node:crypto')
+            const { appendMessage, listMessages } = await import('../../db/repos/messages.js')
+            const owner = 'setup-reply'
+            await seed(owner, { name: 'QA tester', setup: { required: true } })
+            await writeFile(installPath(owner), 'Learn the team’s test target.')
+            const { claimDesktopSetupSession } = await import('../../desktop/setup/service.js')
+            const claim = await claimDesktopSetupSession(owner)
+            if (!('session' in claim)) throw new Error('Expected a new setup session')
+            const sessionId = claim.session.id
+            const stepId = (row: {id: string; contentJson: string}) => createHash('sha256').update(JSON.stringify([row.id, row.contentJson])).digest('hex')
+            const input = (step: string) => ({ sessionId, message: 'Use the iOS app.', author: { id: 'foreman', name: 'Chief of Staff' }, desktopQueuedTurn: { runId: crypto.randomUUID(), setupReplyStepId: step } })
+            const before = await appendMessage(owner, sessionId, { role: 'assistant', content: 'Which platform?' })
+            const approved = input(stepId(before))
+            const current = await appendMessage(owner, sessionId, { role: 'assistant', content: [{ type: 'text', text: 'Which build should I test?' }] })
+            expect((await chat(owner, approved)).status).toBe(409)
+            expect(await getRun(owner, approved.desktopQueuedTurn.runId)).toBeUndefined()
+            const foreign = await createSession(owner)
+            const unrelated = await appendMessage(owner, foreign.id, { role: 'assistant', content: 'Which build should I test?' })
+            expect((await chat(owner, { ...input(stepId(unrelated)), sessionId: foreign.id })).status).toBe(409)
+
+            const first = input(stepId(current)), second = input(stepId(current))
+            expect((await chat(owner, { ...first, author: { id: 'owner', name: 'Owner' } })).status).toBe(400)
+            const responses = await Promise.all([chat(owner, first), chat(owner, second)])
+            expect(responses.map(res => res.status).sort()).toEqual([200, 409])
+            for (const res of responses) await res.text()
+            const accepted = responses[0]!.status === 200 ? first : second
+            const stale = responses[0]!.status === 409 ? first : second
+            expect(await getRun(owner, stale.desktopQueuedTurn.runId)).toBeUndefined()
+            const sent = (await listMessages(owner, sessionId)).filter(row => row.role === 'user')
+            expect(sent).toHaveLength(1)
+            expect(sent[0]).toMatchObject({ authorId: 'foreman', authorName: 'Chief of Staff' })
+            const replay = await chat(owner, { ...accepted, desktopQueuedTurn: { ...accepted.desktopQueuedTurn, replayOnly: true } })
+            expect([200, 204]).toContain(replay.status)
+            await replay.text()
+            expect((await chat(owner, { ...accepted, desktopQueuedTurn: { ...accepted.desktopQueuedTurn, setupReplyStepId: stepId(before), replayOnly: true } })).status).toBe(409)
+            expect((await chat(owner, { ...accepted, desktopQueuedTurn: { runId: accepted.desktopQueuedTurn.runId, replayOnly: true } })).status).toBe(409)
+            expect(state.calls).toHaveLength(1)
+
+            const card = await appendMessage(owner, sessionId, { role: 'assistant', content: [
+                { type: 'text', text: 'Which account?' },
+                { type: 'tool-call', toolCallId: 'credential', toolName: 'request_secret', input: {} },
+            ] })
+            expect((await chat(owner, input(stepId(card)))).status).toBe(409)
+            expect(state.calls).toHaveLength(1)
+        } finally { vi.unstubAllEnvs() }
+    })
 
     it('admits the exact app result once, resumes after its source is settled, and binds replay to its guard kind', async () => {
         vi.stubEnv('RERUN_DESKTOP_APP', '1')

@@ -18,7 +18,7 @@ test('trusted server binding exposes only reviewed tools and ignores renderer-st
     connect(network)
     const ctx = { ...context(), binding: { ...binding, chatId: 'forged-chat' } }
     const tools = await desktopForemanTools(ctx)
-    expect(Object.keys(tools.tools)).toEqual(['show_plan', 'open_panel', 'propose_team_changes', 'search_docs', 'ask_user'])
+    expect(Object.keys(tools.tools)).toEqual(['show_plan', 'open_panel', 'propose_team_changes', 'inspect_coworker_setup', 'search_docs', 'ask_user'])
     await tools.tools.show_plan!.execute!({ title: 'A team', boxes: [], items: [] } as never, { toolCallId: 'call-exact', messages: [] })
     expect(actions[1]).toMatchObject({ action: 'show_plan', binding, toolCallId: 'call-exact', launchNonce: runtime.launchNonce })
 })
@@ -47,4 +47,21 @@ test('an old tool closure cannot cross a desktop binding replacement', async () 
     connect(network)
     await expect(tools.open_panel!.execute!({} as never, { toolCallId: 'exact', messages: [] })).rejects.toThrow('launch')
     expect(network).toHaveBeenCalledTimes(1)
+})
+
+test('setup inspection uses the true run binding, ignores supplied identity and drops a result after Stop', async () => {
+    const calls: unknown[] = []
+    connect(vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body))
+        if (body.action === 'binding') return Response.json({ binding, discovery: false })
+        calls.push(body)
+        state.running = false
+        return Response.json({ state: 'awaiting_reply', stepId: 'step-1' })
+    }) as typeof fetch)
+    const { tools } = await desktopForemanTools(context())
+    await expect(tools.inspect_coworker_setup!.execute!(
+        { coworker: 'QA tester', binding: { ...binding, chatId: 'foreign' } } as never,
+        { toolCallId: 'inspect', messages: [] },
+    )).rejects.toThrow('active')
+    expect(calls).toEqual([{ action: 'inspect_setup', coworker: 'QA tester', binding, launchNonce: runtime.launchNonce }])
 })

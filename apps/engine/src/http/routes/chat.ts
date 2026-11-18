@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { DESKTOP_TEAM_CHANGE_CHIEF, DESKTOP_TEAM_CHANGE_LIMITS, FOREMAN_AGENT_ID, desktopSetupReplyQuestion } from '@rerun/contracts'
+import { readDesktopSetup } from '../../desktop/setup/service.js'
 import { assertDesktopRunAdmission } from '../../desktop/workspace-admission.js'
 import { prepareTriggerHumanAdmission, withoutStoppedTriggerRequests } from '../../desktop/triggers/human.js'
 import { isContextPart, desktopDocumentSendSelectionSchema, desktopResolvedDocumentsSchema, desktopMcpSignInGuardSchema } from '@rerun/contracts'
@@ -40,9 +43,9 @@ const takeoverPendingMessage = 'Open and finish or skip the coworker’s browser
 const questionPendingMessage = 'Answer or dismiss the coworker’s questions before sending another message.'
 const approvalPendingMessage = 'Approve or decline the coworker’s proposed actions before sending another message.'
 const desktopFirstTurn = z.object({ sessionId: z.uuid(), runId: z.uuid() }).strict()
-const desktopQueuedTurn = z.object({ runId: z.uuid(), documents: desktopDocumentSendSelectionSchema.optional(), mcpSignIn: desktopMcpSignInGuardSchema.optional(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), attachmentItems: desktopAttachmentItemsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional(), takeover: desktopTakeoverGuardSchema.optional(), service: desktopServiceRequestGuardSchema.optional(), secret: desktopSecretRequestGuardSchema.optional() }).strict()
+const desktopQueuedTurn = z.object({ runId: z.uuid(), setupReplyStepId: z.string().regex(/^[a-f0-9]{64}$/).optional(), documents: desktopDocumentSendSelectionSchema.optional(), mcpSignIn: desktopMcpSignInGuardSchema.optional(), attachmentPath: z.string().min(1).max(4096).optional(), attachmentPaths: desktopAttachmentPathsSchema.optional(), attachmentItems: desktopAttachmentItemsSchema.optional(), replayOnly: z.boolean().optional(), question: desktopQuestionGuardSchema.optional(), approval: desktopApprovalGuardSchema.optional(), takeover: desktopTakeoverGuardSchema.optional(), service: desktopServiceRequestGuardSchema.optional(), secret: desktopSecretRequestGuardSchema.optional() }).strict()
     .refine(hasOneDesktopAttachmentField, 'Use one attachment field.')
-    .refine(turn => [turn.question, turn.approval, turn.takeover, turn.service, turn.secret, turn.mcpSignIn].filter(Boolean).length <= 1, 'An answer can target only one pending request.')
+    .refine(turn => [turn.question, turn.approval, turn.takeover, turn.service, turn.secret, turn.mcpSignIn, turn.setupReplyStepId].filter(Boolean).length <= 1, 'An answer can target only one pending request.')
 const desktopChatRequest = chatRequestSchema.extend({
     message: z.string().max(20_000),
     coworkerMentions: desktopCoworkerMentionsSchema.optional(),
@@ -59,6 +62,13 @@ const desktopChatRequest = chatRequestSchema.extend({
     || !!(body.desktopQueuedTurn?.replayOnly && (desktopAttachmentSelectionsOf(body.desktopQueuedTurn).length || body.desktopQueuedTurn.documents)), 'Write a message or attach a file.')
 .refine(body => (!body.desktopFirstTurn || (!body.sessionId && !body.install && !body.foreman && !body.desktopQueuedTurn && (!body.source || body.source === 'dashboard')))
     && (!body.desktopQueuedTurn || (!!body.sessionId && !body.install && !body.foreman && (!body.source || body.source === 'dashboard'))))
+.refine(body => !body.desktopQueuedTurn?.setupReplyStepId || (
+    body.author?.id === FOREMAN_AGENT_ID && body.author.name === DESKTOP_TEAM_CHANGE_CHIEF
+    && !body.desktopSetupSkipped && !body.coworkerMentions?.length && !body.workspaceAttachment && !body.workspaceAttachments?.length
+    && !body.desktopAttachments?.length && !body.desktopDocuments?.length && !body.desktopQueuedTurn.documents
+    && !desktopAttachmentSelectionsOf(body.desktopQueuedTurn).length && body.message.trim().length > 0
+    && body.message.length <= DESKTOP_TEAM_CHANGE_LIMITS.maxSetupReply
+), 'A reviewed setup reply must contain only the Chief of Staff’s plain answer.')
 
 const regenerateRequest = chatRequestSchema.pick({ provider: true, model: true, connectionId: true, author: true }).extend({
     sessionId: z.string().min(1),
@@ -131,7 +141,7 @@ chatRoutes.post('/chat', async c => {
             const session = await getSession(agentId, body.sessionId)
             if (session?.agentId === agentId && await getDesktopQueuedTurn(agentId, {
                 runId: queued.runId, sessionId: session.id, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions),
-                ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service, secret: queued.secret, mcpSignIn: queued.mcpSignIn, documents: queued.documents,
+                ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service, secret: queued.secret, mcpSignIn: queued.mcpSignIn, documents: queued.documents, setupReplyStepId: queued.setupReplyStepId,
             })) return identified(resumeStreamResponse(queued.runId), session.id, queued.runId)
         }
         throw agentDisabled()
@@ -182,7 +192,7 @@ chatRoutes.post('/chat', async c => {
         const queued = body.desktopQueuedTurn!
         const session = await getSession(agentId, body.sessionId!)
         if (!session || session.agentId !== agentId) throw new HttpError(404, 'Session not found for this agent')
-        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service, secret: queued.secret, mcpSignIn: queued.mcpSignIn, documents: queued.documents }
+        const turn = { runId: queued.runId, sessionId: session.id, message: body.message, ...desktopCoworkerMentionFieldsOf(body.coworkerMentions), ...desktopAttachmentFieldsOf(desktopAttachmentSelectionsOf(queued)), question: queued.question, approval: queued.approval, takeover: queued.takeover, service: queued.service, secret: queued.secret, mcpSignIn: queued.mcpSignIn, documents: queued.documents, setupReplyStepId: queued.setupReplyStepId }
         if (await getDesktopQueuedTurn(agentId, turn)) return identified(resumeStreamResponse(turn.runId), session.id, turn.runId)
         if (await getRun(agentId, turn.runId)) throw new HttpError(409, 'This queued message ID is already in use.')
         // The bridge can reconcile a lost acknowledgement before re-reading a moved file or
@@ -202,7 +212,17 @@ chatRoutes.post('/chat', async c => {
             await assertImageModel(provider, agentId, images.length > 0, session.id)
             // Hold the session claim while checking the durable transcript: an ordinary chat
             // cannot append a new turn between this check and the atomic answer reservation.
-            const messages = await withoutStoppedTriggerRequests(agentId, session.id, await listMessages(agentId, session.id))
+            const transcript = await listMessages(agentId, session.id)
+            if (queued.setupReplyStepId) {
+                const setup = await readDesktopSetup(agentId)
+                const last = transcript.at(-1)
+                if (!setup.pending || setup.sessionId !== session.id || session.status !== 'open' || session.source !== 'dashboard'
+                    || session.originAgentId || session.originSessionId || !last || !desktopSetupReplyQuestion(last)
+                    || createHash('sha256').update(JSON.stringify([last.id, last.contentJson])).digest('hex') !== queued.setupReplyStepId) {
+                    throw new HttpError(409, 'This setup step changed. Check the coworker’s setup again.')
+                }
+            }
+            const messages = await withoutStoppedTriggerRequests(agentId, session.id, transcript)
             const pending = findDesktopQuestion(messages)
             const approval = findDesktopApproval(messages)
             const takeover = findDesktopTakeover(messages)

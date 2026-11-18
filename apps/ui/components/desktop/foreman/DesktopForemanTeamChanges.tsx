@@ -58,6 +58,14 @@ export function DesktopForemanTeamChanges({ chat, refreshKey, ports: given }: {
                             : <span aria-hidden className={`mt-0.5 w-3 shrink-0 text-center ${change.result ? change.result.ok ? 'text-emerald-500' : 'text-destructive' : 'text-muted-foreground'}`}>{change.result ? change.result.ok ? '✓' : '×' : '–'}</span>}
                         <span className="min-w-0 flex-1">
                             {change.label}
+                            {change.action === 'reply_setup' && change.setupReply && <span className="mt-1 block border-l-2 pl-2">
+                                {change.setupReply.question && <>
+                                    <span className="block font-medium">Setup question</span>
+                                    <span dir="auto" className="block whitespace-pre-wrap break-words">{change.setupReply.question}</span>
+                                </>}
+                                <span className="block font-medium">Proposed reply</span>
+                                <span dir="auto" className="block whitespace-pre-wrap break-words">{change.setupReply.text}</span>
+                            </span>}
                             {change.caution && card.state === 'shown' && <span className="block text-[11px] text-muted-foreground">{change.caution}</span>}
                             {change.result && !change.result.ok && <span role="alert" className="block text-[11px] text-destructive">{change.result.message ?? 'This change was refused.'}</span>}
                             {card.state !== 'shown' && !change.result && <span className="block text-[11px] text-muted-foreground">Left out.</span>}

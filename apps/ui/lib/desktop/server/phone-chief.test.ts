@@ -29,6 +29,22 @@ describe('the cards that change things', () => {
         expect(phoneChiefCards({ revisions: [{ revisionId: 'rev-1', state: 'shown', plan } as never], currentRevisionId: 'rev-2', teamChanges: null, starter: null, messageCount: 2 })).toEqual([])
     })
 
+    it('projects complete setup words and chat shortcuts without the approval binding', () => {
+        const reply = 'Line one\n' + 'use this workspace '.repeat(48)
+        const setup = { sessionId: 'qa-session', stepId: 'private-step', revision: 'private-revision', question: 'What workspace?', text: reply }
+        const teamChanges = { summary: 'Set up QA', state: 'shown', changes: [
+            { label: 'Reply to Ada', action: 'reply_setup', agentId: 'ada', coworker: 'Ada', setupReply: setup },
+            { label: 'Start Bo', action: 'start_setup', agentId: 'bo', coworker: 'Bo' },
+            { label: 'Give Kit a permission', action: 'allow', agentId: 'kit', coworker: 'Kit' },
+        ] } as never
+        const [card] = phoneChiefCards({ revisions: [], currentRevisionId: null, teamChanges, starter: null, messageCount: 1 })
+        expect(card.setupTargets).toEqual([
+            { agentId: 'ada', coworker: 'Ada', sessionId: 'qa-session', reply, question: 'What workspace?' },
+            { agentId: 'bo', coworker: 'Bo', sessionId: null },
+        ])
+        for (const hidden of ['private-step', 'private-revision', 'kit']) expect(JSON.stringify(card.setupTargets)).not.toContain(hidden)
+    })
+
     it('show team changes as their labels and cautions, held back as the Mac holds them', () => {
         const teamChanges = { summary: 'Two changes', state: 'shown', changes: [{ label: 'Rename Bo to Support', caution: 'Bo loses its routines' }, { label: 'Retire Ada' }] } as never
         expect(phoneChiefCards({ revisions: [], currentRevisionId: null, teamChanges, starter: null, messageCount: 3 })).toEqual([
@@ -78,4 +94,16 @@ describe('the conversations', () => {
             { id: 'fmc_2', title: 'Launch plan', kind: 'thread', createdAt: '2026-11-17T11:00:00.000Z', updatedAt: '2026-11-17T11:00:00.000Z' },
         ])
     })
+})
+
+it('hands off only an owner-matched inspection destination from the original assistant message', () => {
+    const part = { type: 'dynamic-tool', toolName: 'inspect_coworker_setup', desktopPreview: true, state: 'output-available',
+        output: { state: 'needs_owner', agentId: 'qa', coworker: 'QA', ownerSessionId: 'setup-qa', ownerQuestionId: 'a'.repeat(64) } }
+    const rows = phoneChiefMessages([
+        { id: 'm', role: 'assistant', parts: [part] },
+        { id: 'fake', role: 'user', parts: [part] },
+        { id: 'pending', role: 'assistant', parts: [{ ...part, state: 'input-available' }] },
+    ])
+    expect(rows.map(r => r.id)).toEqual(['m'])
+    expect(rows[0]?.ownerSetups).toEqual([{ agentId: 'qa', coworker: 'QA', sessionId: 'setup-qa' }])
 })

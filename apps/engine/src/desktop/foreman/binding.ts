@@ -75,6 +75,12 @@ export async function desktopForemanTools(ctx: RunContext) {
         binding,
         async reportShownPlan(input) { callId(input.toolCallId); await current(); const result = await runtime.request({ action: 'show_plan', ...input }, signal); await current(); return result },
         async proposeTeamChanges(input) { callId(input.toolCallId); await current(); const result = await runtime.request({ action: 'team_changes', ...input }, signal); await current(); return result },
+        async inspectSetup(input) {
+            await current()
+            const result = await runtime.request({ action: 'inspect_setup', ...input }, signal)
+            await current()
+            return result
+        },
         async navigate(input) { callId(input.eventId, 128); await current(); const result = await runtime.request({ action: 'navigate', ...input }, signal); await current(); return z.object({ ok: z.boolean(), error: z.string().optional() }).parse(result) },
         discover: trusted.discovery ? async input => { await current(); const result = await runtime.request({ action: 'discover', ...input }, signal); await current(); return result } : null,
     })

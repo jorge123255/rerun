@@ -217,6 +217,27 @@ describe('the hub paths a paired Mac answers', () => {
 })
 
 describe('messagesOf', () => {
+    it('shows addressed setup as a read-only shortcut and preserves the full proposed words', async () => {
+        const target = { agentId: 'ada', coworker: 'Ada', sessionId: 'qa-session', reply: 'OpenFlix\n' + 'preserve  spacing '.repeat(45), question: 'Which workspace?' }
+        const card = { kind: 'team-changes', title: 'Set up Ada', lines: ['Reply to Ada'], setupTargets: [target] }
+        const { hub } = setup({ openChiefChat: jest.fn(async () => ({ ...CHIEF_CHAT, cards: [card] })) } as never)
+        const { messages } = foremanEngineMessagesSchema.parse(await hub.api(`/api/chat/foreman/engine?sessionId=${GENERAL}`))
+        expect(messages.at(-1)?.parts).toEqual([
+            { type: 'text', text: expect.stringContaining('Open on your Mac to approve') },
+            { type: 'data-mac-chief-setup', data: target },
+        ])
+        expect(findPendingHitl(messages)).toBeNull()
+    })
+
+    it('opens a protected setup request through its original coworker instead of offering a Chief approval', async () => {
+        const owner = { agentId: 'ada', coworker: 'Ada', sessionId: 'setup-ada' }
+        const message = { id: 'inspection', role: 'assistant', content: { type: 'text', text: '' }, ownerSetups: [owner] }
+        const { hub } = setup({ openChiefChat: jest.fn(async () => ({ ...CHIEF_CHAT, messages: [message], cards: [] })) } as never)
+        const { messages } = foremanEngineMessagesSchema.parse(await hub.api(`/api/chat/foreman/engine?sessionId=${GENERAL}`))
+        expect(messages[0]?.parts).toContainEqual({ type: 'data-mac-chief-setup', data: owner })
+        expect(findPendingHitl(messages)).toBeNull()
+    })
+
     it('puts a waiting question where the chat looks for it', () => {
         const pending = { question: { toolCallId: 'call-1', questions: [{ question: 'Which color?', options: ['Red', 'Blue'], multiple: false }] }, approval: null }
         const found = findPendingHitl(messagesOf({ ...READ, pending }))

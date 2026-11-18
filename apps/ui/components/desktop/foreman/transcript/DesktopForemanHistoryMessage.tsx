@@ -5,6 +5,7 @@ import { defaultRemarkPlugins, type Components, type PluginConfig } from 'stream
 import { MessageResponse } from '@/components/ai-elements/message'
 import { Source, Sources, SourcesContent, SourcesTrigger } from '@/components/ai-elements/sources'
 import { COMPOSER_LINK_TAG, remarkShortLinks } from '@/lib/chat/composer-links'
+import { DesktopChiefSetupHandoff, type OpenOwnerSetup } from './DesktopChiefSetupHandoff'
 import { safeForemanHistoryLink } from './parts'
 import { DesktopChatLinkLabel, safeDesktopChatLink } from '../../DesktopChatLinkLabel'
 import { DesktopHistoricalCardView } from '../../tool-presentations/DesktopHistoricalCardView'
@@ -66,8 +67,9 @@ function SavedSource({ url, title }: { url: string; title: string }) {
 }
 
 /** Saved parts and user-initiated copy. Tool cards stay read-only. */
-export function DesktopForemanHistoryMessage({ history, userLinks, draftActions }: {
+export function DesktopForemanHistoryMessage({ history, userLinks, draftActions, onOpenSetup }: {
     history: readonly ForemanHistoryPart[]
+    onOpenSetup?: OpenOwnerSetup
     userLinks?: boolean
     draftActions?: boolean
 }) {
@@ -83,6 +85,7 @@ export function DesktopForemanHistoryMessage({ history, userLinks, draftActions 
         {blocks.map(part => {
             switch (part.kind) {
                 case 'text': return <div key={part.key} data-chat-find-message className="contents"><DesktopForemanMarkdown text={part.text} userLinks={userLinks} draftActions={draftActions} /></div>
+                case 'owner-setup': return onOpenSetup && <DesktopChiefSetupHandoff key={JSON.stringify([part.key, part.agentId, part.sessionId, part.questionId])} target={part} open={onOpenSetup} />
                 case 'reasoning': return <details key={part.key} className="text-xs text-muted-foreground"><summary>Thinking</summary><DesktopForemanMarkdown text={part.text} /></details>
                 case 'link': return <SavedSource key={part.key} url={part.url} title={part.title} />
                 case 'docs': return <Sources key={part.key} defaultOpen className="min-w-0 max-w-full">

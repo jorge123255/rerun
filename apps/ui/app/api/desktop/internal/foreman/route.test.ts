@@ -7,15 +7,17 @@ type DiscoveryBridge = { request(input: { action: 'discover'; binding: DesktopFo
 type BridgeModule = { createDesktopForemanBridge(runtime: typeof appRuntime, network: typeof fetch): DiscoveryBridge }
 const bridgePath = new URL('../../../../../../engine/src/desktop/foreman/bridge.ts', import.meta.url).href
 
-const mounted = vi.hoisted(() => ({ core: null as ForemanRuntime | null, live: true, snapshot: vi.fn() }))
+const mounted = vi.hoisted(() => ({ core: null as ForemanRuntime | null, live: true, snapshot: vi.fn(), setup: vi.fn() }))
 const appRuntime = vi.hoisted(() => ({ workspaceId: 1, launchNonce: '00000000-0000-4000-8000-000000000001', app: { origin: 'http://127.0.0.1:44000' }, engine: { apiKey: 'a'.repeat(64) } }))
 vi.mock('@/lib/desktop/server/auth', async original => ({ ...await original<typeof import('@/lib/desktop/server/auth')>(), authenticateDesktopEngineRequest: async () => appRuntime }))
 vi.mock('@/lib/desktop/server/foreman/binding', () => ({ desktopForeman: async () => ({ core: mounted.core, isLive: async () => mounted.live }) }))
 vi.mock('@/lib/desktop/server/foreman-voice/binding', () => ({ desktopForemanVoice: () => { throw new Error('Discovery must not create a voice runtime.') } }))
 vi.mock('@/lib/desktop/server/foreman-workspace-reads', () => ({ readGrantedForemanWorkspaceSnapshot: mounted.snapshot }))
+vi.mock('@/lib/desktop/server/foreman/setup-coordination', () => ({ inspectChiefSetup: mounted.setup }))
+import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { POST } from './route'
 
-afterEach(() => { mounted.core = null; mounted.live = true; mounted.snapshot.mockReset() })
+afterEach(() => { mounted.core = null; mounted.live = true; mounted.snapshot.mockReset(); mounted.setup.mockReset() })
 
 test('the workspace snapshot callback refuses stale launches and checks the run again after the read', async () => {
     const binding: DesktopForemanBinding = { workspaceId: '1', chatId: 'fmc_callback0001', runId: '00000000-0000-4000-8000-000000000002', model: { connectionId: 'local', model: 'model' } }
@@ -55,4 +57,27 @@ test('the production discovery callback returns its completed saved result throu
         expect(result).toMatchObject({ chat: { workspaceId: binding.workspaceId, chatId: binding.chatId }, runId: binding.runId, status: 'done', findings: [{ kind: 'identity', name: 'Acme' }] })
         expect((await mounted.core.readView({ workspaceId: binding.workspaceId, chatId: binding.chatId })).discovery).toEqual(result)
     } finally { bridge.close() }
+})
+
+
+test('inspection returns a safe contact hint, withholds the question after Stop and refuses stale launches', async () => {
+    const binding: DesktopForemanBinding = { workspaceId: '1', chatId: 'fmc_callback0001', runId: '00000000-0000-4000-8000-000000000002', model: { connectionId: 'local', model: 'model' } }
+    const read = (launchNonce = appRuntime.launchNonce) => POST(new Request(appRuntime.app.origin + '/api/desktop/internal/foreman', {
+        method: 'POST', body: JSON.stringify({ action: 'inspect_setup', coworker: 'QA tester', binding, launchNonce }),
+    }))
+    expect((await read('old')).status).toBe(409)
+    expect(mounted.setup).not.toHaveBeenCalled()
+    mounted.setup.mockRejectedValueOnce(new DesktopHttpError(403, 'fixture-private-detail'))
+    const denied = await read()
+    expect(await denied.json()).toEqual({ state: 'contact_unavailable', reason: expect.stringContaining('Call coworkers') })
+    mounted.setup.mockImplementationOnce(async () => { mounted.live = false; return { lastMessage: 'Private to this run' } })
+    const stopped = await read()
+    expect(stopped.status).toBe(409)
+    expect(await stopped.json()).not.toHaveProperty('lastMessage')
+    mounted.live = true
+    mounted.setup.mockResolvedValueOnce({ state: 'awaiting_reply', lastMessage: 'What platform?' })
+    const permitted = await read()
+    expect(permitted.status).toBe(200)
+    expect(permitted.headers.get('cache-control')).toBe('no-store')
+    expect(await permitted.json()).toMatchObject({ state: 'awaiting_reply', lastMessage: 'What platform?' })
 })

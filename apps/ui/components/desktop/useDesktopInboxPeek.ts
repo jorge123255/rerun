@@ -82,7 +82,7 @@ export function useDesktopInboxPeek(sessionId: string, enabled = true, revision?
         }
         const fresh = await reread()
         if (fresh.state === 'unreadable') return 'failed'
-        if (pendingIdOf(fresh) !== id) return 'stale'
+        if (!mounted.current || isDesktopQuitting() || pendingIdOf(fresh) !== id) return 'stale'
         let response: Response
         try {
             response = await fetch(sessionUrl(sessionId, input.kind === 'question' ? 'questions' : 'approvals'), {

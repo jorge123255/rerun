@@ -1,4 +1,10 @@
 {
+    "macSetup": {
+        "open": "Open setup for {name}",
+        "question": "Setup question",
+        "reply": "Proposed reply",
+        "changed": "This setup has changed. Open the coworker from the board to see its current step."
+    },
     "agentPicker": {
         "open": "{tab, select, chat {Open Chat for {name}} actions {Open To handle for {name}} services {Open Apps for {name}} mcp {Open MCP for {name}} skills {Open Skills for {name}} data {Open Database for {name}} memories {Open Knowledge for {name}} files {Open Files for {name}} scheduled {Open Routines for {name}} triggers {Open Triggers for {name}} other {{name}}}"
     },

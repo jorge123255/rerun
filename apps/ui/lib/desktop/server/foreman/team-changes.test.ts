@@ -40,8 +40,7 @@ test('each line is resolved to a real coworker, permission and model, in the app
     expect(sealed.changes[2]!.caution).toContain('no app from the Vault is given')
     expect(sealed.changes[5]!.caution).toContain('wherever this model runs')
     expect(sealed.changes[6]!.caution).toContain('still asks you first')
-    // Starting a setup says, in plain words, that the coworker is out of reach until it is finished or skipped.
-    expect(sealed.changes[3]!.caution).toBe('Runs one conversation turn on its model, then waits for your reply in its setup chat. Until you finish or skip its setup, other coworkers and the Chief of Staff cannot reach it.')
+    expect(sealed.changes[3]!.caution).toContain('The Chief can check its next step')
     expect(sealed.changes[4]).toMatchObject({ connectionId: 'mac-chatgpt', model: 'gpt-6-luna' })
 })
 
@@ -147,4 +146,49 @@ test('a card kept before the new line existed is still read', async () => {
     const old = { id: 'ftc_12345678', summary: 's', state: 'shown', createdAt: 'now', changes: [{ key: 'change-0', action: 'switch_on', agentId: 'a1', coworker: 'Dev', permission: null, connectionId: null, model: null, effort: null, label: 'Switch on Dev', caution: null, result: null }] }
     const parsed = desktopTeamChangesSchema.parse(old)
     expect(parsed.changes[0]).toMatchObject({ targetAgentIds: null, chief: false })
+})
+
+test('each reviewed reply binds to the inspected coworker, question and setup chat', () => {
+    const setupStep = { sessionId: 'session-a', stepId: 'a'.repeat(64), revision: 'revision-a', question: 'Which platform should I test?' }
+    const team = { ...workspace, coworkers: [{ id: 'qa', name: 'QA', setupStep }, { id: 'dev', name: 'Dev' }] }
+    const propose = (coworker: string, reply: string, stepId = setupStep.stepId) => ({ action: 'reply_setup', coworker, reply, stepId })
+    const sealed = sealTeamChanges({ summary: 'Answer setup', changes: [
+        propose('QA', 'Use iOS'), propose('QA', 'Use iOS'), propose('QA', 'Use Android'),
+        propose('Dev', 'Use iOS'), propose('QA', 'Old answer', 'old-step'), propose('QA', 'password=synthetic-example'),
+    ] }, team)
+    expect(sealed).toMatchObject({ ok: true, changes: [{ action: 'reply_setup', agentId: 'qa', setupReply: { ...setupStep, text: 'Use iOS' } }] })
+    if (sealed.ok) { expect(sealed.refused).toHaveLength(4); expect(JSON.stringify(sealed)).not.toContain('synthetic-example') }
+})
+
+test('skip and resume are separately reviewed only where the current setup supports each operation', () => {
+    const team = { ...workspace, coworkers: [{ id: 'qa', name: 'QA', setupActions: { revision: 'r1', canSkip: true } },
+        { id: 'dev', name: 'Dev', setupActions: { revision: 'r2', canSkip: false, resume: 'continue' as const } }] }
+    const sealed = sealTeamChanges({ summary: 'Skip QA setup and resume Dev', changes: [
+        line('skip_setup', { coworker: 'QA' }), line('continue_setup', { coworker: 'Dev' }),
+        line('skip_setup', { coworker: 'Missing' }), line('continue_setup', { coworker: 'Missing' }),
+    ] }, team)
+    expect(sealed).toMatchObject({ ok: true, changes: [{ action: 'skip_setup', setupRevision: 'r1' }, { action: 'continue_setup', setupRevision: 'r2', setupResumeAction: 'continue' }] })
+    if (sealed.ok) expect(sealed.refused).toHaveLength(2)
+})
+
+test('concurrent settlement from two windows preserves one outcome on reopen', async () => {
+    await recordDesktopTeamChanges(db, binding, 'race', { summary: 'Review QA', changes: [line('start_setup', { coworker: 'Tuner Developer' })] }, workspace)
+    const { id } = (await readDesktopTeamChanges(db, chat))!
+    const [first, second] = await Promise.all([
+        settleDesktopTeamChanges(db, chat, { id, state: 'dismissed', results: [] }),
+        settleDesktopTeamChanges(db, chat, { id, state: 'applied', results: [{ key: 'change-0', ok: false, message: 'Already started' }] }),
+    ])
+    expect(first).toEqual(second)
+    db.close(); db = createClient({ url: `file:${join(dir, 'app.db')}` })
+    expect(await readDesktopTeamChanges(db, chat)).toEqual(first)
+})
+
+test('a card cannot both reply to and skip the same coworker’s setup', () => {
+    const stepId = 'a'.repeat(64)
+    const team = { ...workspace, coworkers: [{ id: 'qa', name: 'QA', setupActions: { revision: 'r', canSkip: true }, setupStep: { sessionId: 's', revision: 'r', stepId } }] }
+    const sealed = sealTeamChanges({ summary: 'Conflicting choices', changes: [
+        line('reply_setup', { coworker: 'QA', reply: 'Use iOS', stepId }), line('skip_setup', { coworker: 'qa' }),
+    ] }, team)
+    expect(sealed).toMatchObject({ ok: true, changes: [] })
+    if (sealed.ok) expect(sealed.refused).toHaveLength(2)
 })

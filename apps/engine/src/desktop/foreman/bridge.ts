@@ -6,6 +6,7 @@ export type ForemanTurn = DesktopCoworkerMentionFields & { binding: DesktopForem
 export type ForemanBridgeBody =
     | { action: 'brief_model'; chat: DesktopForemanChatRef; model: CompanyBriefModelRef }
     | { action: 'binding'; identity: ForemanIdentity }
+    | { action: 'inspect_setup'; binding: DesktopForemanBinding; coworker: string }
     | { action: 'workspace_snapshot'; binding: DesktopForemanBinding }
     | { action: 'admit' | 'documents'; turn: ForemanTurn }
     | { action: 'alternate'; operation: 'prepare' | 'lookup' | 'start' | 'stop'; target: ForemanAlternateRequest }

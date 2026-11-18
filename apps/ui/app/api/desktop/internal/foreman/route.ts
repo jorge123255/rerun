@@ -10,6 +10,7 @@ import { readGrantedForemanWorkspaceSnapshot } from '@/lib/desktop/server/forema
 import { authorizeForemanAlternate } from '@/lib/desktop/server/foreman-alternates/binding'
 import { materializeDesktopChatDocuments } from '@/lib/desktop/server/document-attachments/chat'
 import { recordDesktopTeamChanges } from '@/lib/desktop/server/foreman/team-changes'
+import { inspectChiefSetup } from '@/lib/desktop/server/foreman/setup-coordination'
 import { desktopTeamWorkspace } from '@/lib/desktop/server/foreman/team-changes-binding'
 export const runtime = 'nodejs'
 const base = z.object({ launchNonce: z.string(), binding: foremanBindingSchema })
@@ -25,6 +26,7 @@ const schema = z.discriminatedUnion('action', [
     base.extend({ action: z.literal('navigate'), eventId: z.string().min(1).max(128), intent: foremanNavigationIntentSchema }).strict(),
     base.extend({ action: z.literal('discover'), url: z.url().max(2048) }).strict(),
     base.extend({ action: z.literal('workspace_snapshot') }).strict(),
+    base.extend({ action: z.literal('inspect_setup'), coworker: z.string().trim().min(1).max(120) }).strict(),
 ])
 export async function POST(request: Request) {
     try {
@@ -61,8 +63,23 @@ export async function POST(request: Request) {
             if (!await app.isLive(input.binding)) throw new DesktopHttpError(409, 'This Foreman run is no longer current.')
             return Response.json(snapshot, { headers: { 'cache-control': 'no-store' } })
         }
+        if (input.action === 'inspect_setup') {
+            const view = await inspectChiefSetup(runtime, app.db, input.binding, input.coworker, request.signal).catch(error => {
+                if (error instanceof DesktopHttpError && error.status === 403) {
+                    return { state: 'contact_unavailable', reason: 'Check the Chief of Staff’s Call coworkers permission and allowed coworkers.' }
+                }
+                throw error
+            })
+            if (!await app.isLive(input.binding)) throw new DesktopHttpError(409, 'This Chief of Staff run is no longer current.')
+            return Response.json(view, { headers: { 'cache-control': 'no-store' } })
+        }
         // A proposal of team changes: checked against the real workspace and kept for the card. Nothing is applied here.
-        if (input.action === 'team_changes') return Response.json(await recordDesktopTeamChanges(app.db, input.binding, input.toolCallId, input.input, await desktopTeamWorkspace(runtime, app.db)), { headers: { 'cache-control': 'no-store' } })
+        if (input.action === 'team_changes') {
+            const workspace = await desktopTeamWorkspace(runtime, app.db, input.binding, input.input, request.signal)
+            request.signal.throwIfAborted()
+            if (!await app.isLive(input.binding)) throw new DesktopHttpError(409, 'This Chief of Staff run is no longer current.')
+            return Response.json(await recordDesktopTeamChanges(app.db, input.binding, input.toolCallId, input.input, workspace), { headers: { 'cache-control': 'no-store' } })
+        }
         if (input.action === 'show_plan') return Response.json(await app.core.recordShownPlan(input.binding, input.toolCallId, input.input))
         if (input.action === 'navigate') return Response.json(await app.core.emitNavigation(input.binding, input.intent, input.eventId))
         const discovery = await app.core.startDiscovery(input.binding, input.url)

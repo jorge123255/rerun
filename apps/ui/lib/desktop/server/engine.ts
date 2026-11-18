@@ -149,8 +149,9 @@ export function startDesktopPhoneConversation(runtime: DesktopRuntime, input: { 
     return startDesktopChat(runtime, input, undefined, { phoneStart: start })
 }
 
-export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput, internalCreationRequestId?: string, options: { phoneStart?: DesktopPhoneFirstTurn; setupKickoff?: true } = {}): Promise<{ response: Response; sessionId: string }> {
-    const { phoneStart, setupKickoff } = options
+export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopChatInput, internalCreationRequestId?: string, options: { phoneStart?: DesktopPhoneFirstTurn; setupKickoff?: true; chiefSetupReply?: { stepId: string; assertCurrent: () => Promise<void> } } = {}): Promise<{ response: Response; sessionId: string }> {
+    const { phoneStart, setupKickoff, chiefSetupReply } = options
+    const author = chiefSetupReply ? { id: 'foreman', name: 'Chief of Staff' } : { id: 'local-profile-1', name: 'Local User' }
     if ('text' in input && input.documents) {
         const questionId = questionDocumentId(input.documents.scope.tabUid)
         if (questionId && (!input.question || input.questionDocumentId !== questionId)) {
@@ -214,7 +215,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
             }
         }
     }
-    const queued = !regenerate && input.requestId ? { runId: input.requestId, ...attachmentFields, ...(input.documents && { documents: input.documents }), ...(input.question && { question: input.question }), ...(input.approval && { approval: input.approval }), ...(input.takeover && { takeover: input.takeover }) } : undefined
+    const queued = !regenerate && input.requestId ? { runId: input.requestId, ...(chiefSetupReply && { setupReplyStepId: chiefSetupReply.stepId }), ...attachmentFields, ...(input.documents && { documents: input.documents }), ...(input.question && { question: input.question }), ...(input.approval && { approval: input.approval }), ...(input.takeover && { takeover: input.takeover }) } : undefined
     const requestId = regenerate ? await regenerationRequestId(db, input.sessionId, input.regenerateMessageId, input.requestId) : undefined
     let replay: Response | undefined
     if (regenerate) {
@@ -227,7 +228,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
     if (queued && existing && !regenerate) {
         const probe = await chat(engineOf(runtime), agent.engineAgentId, {
             sessionId: existing.engineSessionId, message: input.text, ...mentionFields,
-            desktopQueuedTurn: { ...queued, replayOnly: true }, source: 'dashboard',
+            desktopQueuedTurn: { ...queued, replayOnly: true }, source: 'dashboard', ...(chiefSetupReply && { author }),
         })
         if (probe.status === 404 && (await probe.clone().json().catch(() => ({}))).code === 'queued_turn_not_found') {
             if (input.reconcileOnly) throw new DesktopHttpError(404, 'This queued message has not been sent. Review it before sending.')
@@ -269,7 +270,10 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         if (!result.ok) throw new DesktopHttpError(409, result.error)
     }
     const start = !regenerate && uid ? previousStart ?? await reserveTabStart(db, agent, uid, input, runtime.launchNonce, phoneStart) : null
-    const engineResponse = replay ?? await (queued ? startQueuedChat : chat)(engineOf(runtime), agent.engineAgentId, {
+    // A reviewed Chief reply has a specific owner, contact grant and setup step. Check
+    // after model selection, then send once. A busy chat needs a fresh check on retry.
+    if (!replay && chiefSetupReply) await chiefSetupReply.assertCurrent()
+    const engineResponse = replay ?? await (queued && !chiefSetupReply ? startQueuedChat : chat)(engineOf(runtime), agent.engineAgentId, {
         ...(regenerate ? {
             sessionId: existing!.engineSessionId,
             regenerateMessageId: input.regenerateMessageId.slice('engine-'.length),
@@ -285,7 +289,7 @@ export async function startDesktopChat(runtime: DesktopRuntime, input: DesktopCh
         connectionId,
         model,
         source: 'dashboard',
-        author: { id: 'local-profile-1', name: 'Local User' },
+        author,
     })
     if (regenerate && !engineResponse.ok) {
         if (engineResponse.status === 404) throw new DesktopHttpError(404, 'This reply is no longer in the selected conversation.')

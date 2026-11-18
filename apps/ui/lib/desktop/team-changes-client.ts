@@ -1,4 +1,4 @@
-import { desktopSetupViewSchema, desktopTeamChangesSchema, type DesktopForemanChatRef, type DesktopTeamChange, type DesktopTeamChanges } from '@rerun/contracts'
+import { desktopTeamChangesSchema, type DesktopForemanChatRef, type DesktopTeamChange, type DesktopTeamChanges } from '@rerun/contracts'
 import { z } from 'zod'
 
 /**
@@ -7,6 +7,7 @@ import { z } from 'zod'
  * each keeps its own checks. One line failing does not stop the others; each reports its outcome.
  */
 
+const setupObservation = z.object({ canStart: z.boolean(), pending: z.boolean(), skipped: z.boolean(), completedAt: z.string().nullable(), sessionId: z.string().nullable(), revision: z.string() })
 const answer = z.strictObject({ changes: desktopTeamChangesSchema.nullable() })
 export type TeamChangesAnswer = z.infer<typeof answer>
 
@@ -17,6 +18,8 @@ export type TeamChangesPorts = {
     setEnabled(agentId: string, enabled: boolean): Promise<void>
     setPermission(agentId: string, permission: string, enabled: boolean): Promise<void>
     startSetup(agentId: string): Promise<void>
+    changeSetup(agentId: string, action: 'skip' | 'continue' | 'start', revision: string): Promise<void>
+    replySetup(cardId: string, lineKey: string): Promise<void>
     setModel(agentId: string, connectionId: string, model: string): Promise<void>
     setEffort(connectionId: string, model: string, effort: string): Promise<void>
     /** Adds to who a coworker, or with `null` the Chief of Staff, may ask for help. */
@@ -45,6 +48,12 @@ export async function applyTeamChanges(ports: TeamChangesPorts, card: DesktopTea
             // The working copy of its own repository: one permission, nothing from the Vault.
             else if (change.action === 'give_github') await ports.setPermission(id, 'repositoryWorkspace', true)
             else if (change.action === 'start_setup') await ports.startSetup(id)
+            else if (change.action === 'skip_setup' || change.action === 'continue_setup') {
+                const action = change.action === 'skip_setup' ? 'skip' : change.setupResumeAction
+                if (!change.setupRevision || !action) throw new Error('Review the current setup before continuing.')
+                await ports.changeSetup(id, action, change.setupRevision)
+            }
+            else if (change.action === 'reply_setup') await ports.replySetup(card.id, change.key)
             else await ports.setModel(id, change.connectionId!, change.model!)
             done(change)
         } catch (error) { done(change, error) }
@@ -69,9 +78,17 @@ export function teamChangesClient(chat: DesktopForemanChatRef): TeamChangesPorts
         setPermission: async (id, permission, enabled) => { await send(`${agent(id)}/tools`, { group: 'rerun', id: permission, enabled }, 'PATCH') },
         startSetup: async id => {
             const url = `/api/desktop/coworkers/${encodeURIComponent(id)}/setup`
-            const view = desktopSetupViewSchema.parse(await fetch(url, { cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30_000) }).then(json))
+            const view = setupObservation.parse(await fetch(`${url}?observe=1`, { cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30_000) }).then(json))
+            if (view.skipped) throw new Error('This coworker’s setup was skipped. Review its current setup first.')
             if (view.sessionId || view.completedAt) return
+            if (!view.pending || !view.canStart) throw new Error('This coworker has no setup waiting to start.')
             await send(url, { action: 'start', requestId: crypto.randomUUID(), expectedRevision: view.revision })
+        },
+        changeSetup: async (id, action, expectedRevision) => {
+            await send(`/api/desktop/coworkers/${encodeURIComponent(id)}/setup`, { action, requestId: crypto.randomUUID(), expectedRevision })
+        },
+        replySetup: async (cardId, lineKey) => {
+            await send('/api/desktop/foreman/team-changes/reply', { chat: { workspaceId: chat.workspaceId, chatId: chat.chatId }, cardId, lineKey })
         },
         setModel: async (id, connectionId, model) => { await send(`${agent(id)}/model`, { action: 'coworker', connectionId, model }, 'PATCH') },
         setEffort: async (connectionId, model, effort) => { await send('/api/desktop/model-effort', { connectionId, model, effort }, 'PUT') },
