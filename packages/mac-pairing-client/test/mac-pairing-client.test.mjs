@@ -110,3 +110,26 @@ test('the Chief of Staff is asked for by the phone\'s workspace, and a receipt f
     await assert.rejects(client.answerChief(general, { requestId, toolCallId: 'call-1', answers: [['Sales']] }), /invalid_send_receipt/)
     await assert.rejects(client.stopChiefTurn(general, requestId), /invalid_stop_receipt/)
 })
+
+test('a voice conversation is asked for on the phone\'s workspace, and a refusal keeps the Mac\'s code', async () => {
+    const storage = createMemoryStorage()
+    await createMacSessionStore(storage).write({ kind: 'rerun-mac-phone-pairing', status: 'approved', credential: 'c'.repeat(43), origin: 'http://127.0.0.1:9', workspaceId: 3, deviceId: 'device' })
+    const chatId = 'fmc_11111111-1111-4111-8111-111111111111'
+    const calls = []
+    let reply = Response.json({ conversationToken: 'voice-token', conversationId: 'conv_1', expiresAt: '2026-11-17T12:00:00Z', extra: 'dropped' })
+    const client = createMacPairingClient({
+        storage,
+        fetch: async (url, init) => {
+            calls.push({ url: url.slice('http://127.0.0.1:9/api/mac-pairing/v1'.length), method: init.method, body: JSON.parse(init.body) })
+            return reply
+        },
+    })
+    assert.deepEqual(await client.startVoice(chatId), { conversationToken: 'voice-token', conversationId: 'conv_1', expiresAt: '2026-11-17T12:00:00Z' })
+    assert.deepEqual(calls, [{ url: '/workspaces/3/voice/start', method: 'POST', body: { chatId } }])
+    for (const [status, code] of [[404, 'not_found'], [503, 'unavailable'], [403, 'send_not_allowed'], [429, 'rate_limited']]) {
+        reply = Response.json({ error: code }, { status })
+        await assert.rejects(client.startVoice(chatId), error => error.message === code && error.status === status)
+    }
+    reply = Response.json({ conversationId: 'conv_1' })
+    await assert.rejects(client.startVoice(chatId), /invalid_voice_session/)
+})

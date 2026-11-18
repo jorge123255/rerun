@@ -287,4 +287,19 @@ describe('the Chief of Staff of a paired Mac', () => {
         await expect(hub.api('/api/chat/foreman/state')).rejects.toMatchObject({ status: 401 })
         expect(onRevoked).toHaveBeenCalledTimes(1)
     })
+
+    it('asks the Mac for a voice conversation, and sends a removed phone back to sign in', async () => {
+        const chatId = 'fmc_11111111-1111-4111-8111-111111111111'
+        const startVoice = jest.fn(async () => ({ conversationToken: 'voice-token', conversationId: 'conv_1', expiresAt: '2026-11-17T12:00:00Z' }))
+        const { hub, onRevoked } = setup({ startVoice } as never)
+        await expect(hub.startVoice(chatId)).resolves.toEqual({ conversationToken: 'voice-token', conversationId: 'conv_1', expiresAt: '2026-11-17T12:00:00Z' })
+        expect(startVoice).toHaveBeenCalledWith(chatId, undefined)
+
+        startVoice.mockRejectedValueOnce(new Refusal(404, 'not_found'))
+        await expect(hub.startVoice(chatId)).rejects.toMatchObject({ status: 404, message: 'not_found' })
+        expect(onRevoked).not.toHaveBeenCalled()
+        startVoice.mockRejectedValueOnce(new Refusal(401, 'revoked'))
+        await expect(hub.startVoice(chatId)).rejects.toMatchObject({ status: 401 })
+        expect(onRevoked).toHaveBeenCalledTimes(1)
+    })
 })
