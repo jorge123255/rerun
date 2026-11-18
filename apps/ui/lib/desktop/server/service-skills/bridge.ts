@@ -1,5 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
+import { FOREMAN_AGENT_ID } from '@rerun/contracts'
+import { assertManagedSkillChief } from '../foreman/skill-authority'
 import { authenticateDesktopEngineRequest, DesktopHttpError } from '../auth'
 import { boundedText } from '../mcp/remote'
 import { readDesktopServiceSkillOwners, syncDesktopVaultSkills } from './authority'
@@ -11,6 +13,13 @@ export async function handleDesktopServiceSkillOwners(request: Request): Promise
         const signal = AbortSignal.any([request.signal, AbortSignal.timeout(10_000)])
         const { engineAgentId, syncVault } = z.object({ engineAgentId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), syncVault: z.literal(true).optional() }).strict()
             .parse(JSON.parse(await boundedText(new Response(request.body), signal, 2048)))
+        if (engineAgentId === FOREMAN_AGENT_ID) {
+            await assertManagedSkillChief(runtime, signal)
+            // Chief has no coworker installation owner and receives no copied connector skills.
+            // The engine independently protects every reserved svc- slug on disk.
+            return Response.json(syncVault ? { engineAgentId, hidden: [] } : { engineAgentId, owners: [] },
+                { headers: { 'Cache-Control': 'no-store' } })
+        }
         if (syncVault) {
             const hidden = await syncDesktopVaultSkills(runtime, engineAgentId, signal)
             return Response.json({ engineAgentId, hidden: [...hidden] }, { headers: { 'Cache-Control': 'no-store' } })

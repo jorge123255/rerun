@@ -3,7 +3,7 @@
 import { WELCOME_ORB_SIZE, type OrbActivity } from '@rerun/ui/foreman'
 import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
-import { BlocksIcon, XIcon } from '@/lib/icons'
+import { BlocksIcon, LayersIcon, XIcon } from '@/lib/icons'
 import { useDesktopLocale } from '../DesktopLocale'
 import { DesktopForemanOrb } from '../panel-motion/DesktopForemanOrb'
 import { DesktopWorkRegister } from './work/DesktopWorkRegister'
@@ -12,11 +12,12 @@ import { DesktopWorkRegister } from './work/DesktopWorkRegister'
  * The Chief of Staff's column beside its chat in the Simple view, the place a coworker's card has
  * (upstream #317): who it is, the team's work register, then every routine of the workspace.
  */
-export function DesktopForemanDetails({ orbState, shown, onClose, onOpenApps, routines }: {
+export function DesktopForemanDetails({ orbState, shown, onClose, onOpenApps, onOpenSkills, routines }: {
     orbState: OrbActivity
     // False while the column is mounted out of sight: nothing in it moves.
     shown: boolean
     onOpenApps?: () => void
+    onOpenSkills?: () => void
     onClose: () => void
     // The workspace's routines, the list the Routines tab shows on the board.
     routines: ReactNode
@@ -31,8 +32,9 @@ export function DesktopForemanDetails({ orbState, shown, onClose, onOpenApps, ro
             <span className="mt-2 max-w-full truncate text-base leading-tight font-semibold">{t('workspaceView.foreman.name')}</span>
             <span className="text-xs text-muted-foreground">{t('workspaceView.foreman.line')}</span>
         </div>
-        {onOpenApps && <div className="shrink-0 px-3 pb-3">
-            <Button variant="secondary" className="w-full justify-start" onClick={onOpenApps}><BlocksIcon />{t('coworker.destinations.services')}</Button>
+        {(onOpenApps || onOpenSkills) && <div className="grid shrink-0 grid-cols-2 gap-1.5 px-3 pb-3">
+            {onOpenApps && <Button variant="secondary" className="w-full justify-start" onClick={onOpenApps}><BlocksIcon />{t('coworker.destinations.services')}</Button>}
+            {onOpenSkills && <Button variant="secondary" className="w-full justify-start" onClick={onOpenSkills}><LayersIcon />{t('coworker.destinations.skills')}</Button>}
         </div>}
         {/* The team's shared work register and its "Coordinate the team" routine. */}
         <div className="max-h-[50%] shrink-0 overflow-y-auto border-b border-border"><DesktopWorkRegister active={shown} /></div>

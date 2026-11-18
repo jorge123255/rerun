@@ -7,6 +7,7 @@ import { getRun } from '../../db/repos/runs.js'
 import { getSession } from '../../db/repos/sessions.js'
 import { desktopApp } from '../policy.js'
 import { desktopForemanSharedApps } from '../service-tools.js'
+import { desktopSkillTools } from '../skill-tools.js'
 import { desktopApprovalTools } from '../approval-tool.js'
 import { askUserTool } from '../../tools/builtin/hitl.js'
 import { foremanTools } from './tools.js'
@@ -88,6 +89,7 @@ export async function desktopForemanTools(ctx: RunContext) {
     const docs = installedDocs
     Object.assign(tools, desktopForemanDocsTools({ binding, corpus: RERUN_PUBLIC_DOCS_CORPUS, assertCurrent: current, search: docs ? (input, requestSignal) => docs.search(input, requestSignal ?? signal) : null }))
     Object.assign(tools, askUserTool(ctx), desktopApprovalTools(ctx, DESKTOP_FOREMAN_TURN_TEXT_LIMIT), foremanAgentFileTools(ctx))
+    Object.assign(tools, desktopSkillTools(ctx, current))
     const workspaceReads = readForemanWorkspaceReads()
     let workspaceGranted = false
     try {

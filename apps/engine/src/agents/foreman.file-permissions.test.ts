@@ -65,3 +65,17 @@ test('the Chief of Staff keeps the work register on by default, and an explicit 
     await ensureForeman()
     expect((await read()).tools.desktopToolGrants.workRegister).toBe(false)
 })
+
+test('Mac boot enables personal skill proposals without granting a coworker file, changing its soul or installing tools', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    try {
+        await ensureForeman()
+        const chief = await read()
+        expect(chief.tools).toMatchObject({ skills: true, desktopToolGrants: { skills: true, foremanAgentFilesWrite: false } })
+        expect(chief.selfImprovement).toMatchObject({enabled: true, allowToolInstall: false, allowSoulEdit: false, autoMemory: false})
+        chief.tools.desktopToolGrants.skills = false
+        await writeFile(join(location.root, 'config.json'), JSON.stringify(chief))
+        await ensureForeman()
+        expect((await read()).tools.desktopToolGrants.skills).toBe(false)
+    } finally { vi.unstubAllEnvs() }
+})

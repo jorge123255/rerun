@@ -26,6 +26,8 @@ import type { DesktopCompanyProfileController } from '@/lib/desktop/company-prof
 import { DesktopForemanColumn } from './DesktopForemanColumn'
 import { useDesktopForemanIntake } from '@/lib/desktop/foreman-intake'
 import { createDesktopForemanIntakeClient } from '@/lib/desktop/foreman-intake/client'
+import { DesktopForemanSkills } from './DesktopForemanSkills'
+import { useDesktopForemanSkills } from './useDesktopForemanSkills'
 import { DesktopForemanApps } from './DesktopForemanApps'
 import { DesktopForemanFilePermissions } from './DesktopForemanFilePermissions'
 import { buildDesktopModelView } from '@/lib/desktop/chat-model'
@@ -37,7 +39,7 @@ import { createDesktopForemanDraftTask, takeDesktopForemanFirstSend, type Deskto
 import { DesktopForemanDraftTask } from './DesktopForemanDraftTask'
 import type { DesktopForemanColumnProps } from './DesktopForemanColumn'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { BlocksIcon, EllipsisIcon, ShieldCheckIcon } from '@/lib/icons'
+import { LayersIcon, BlocksIcon, EllipsisIcon, ShieldCheckIcon } from '@/lib/icons'
 
 export type DesktopForemanCommand = { id: string; chat: DesktopForemanChatRef; text: string; requestId?: string; signal: AbortSignal; settle: (error?: Error) => void }
 export type DesktopForemanPanelProps = {
@@ -233,6 +235,11 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
         })()
     }, [client, initial])
     const [appsOpen, setAppsOpen] = useState(false)
+    // undefined closes the shelf, null opens its list, a slug opens the saved skill.
+    const [skillPage, setSkillPage] = useState<string | null>()
+    const skillsVisible = !props.hidden && props.controlledOpen !== false && !intakeOpen && !!state.sessionId
+    const skills = useDesktopForemanSkills(state.chat, state.sessionId, skillsVisible,
+        JSON.stringify([state.messages.at(-1)?.id, state.view.live?.runId, skillPage !== undefined]))
     const [permissionsOpen, setPermissionsOpen] = useState(false)
     const conversations = useDesktopForemanConversations({
         chat: initial.chat, thread: !!props.target, onSelect: props.onSelectConversation, onNewTask,
@@ -314,7 +321,8 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
         accepted={() => { void client.refresh() }} onSlot={setVoice} onSettings={props.onOpenTranscriptionSettings} />}
     {!intakeOpen && <DesktopCompanyResearch chat={state.chat} active={!!props.controlledOpen && !props.hidden} refreshKey={JSON.stringify(state.view)} />}
     {appsOpen && !props.hidden && props.controlledOpen !== false && <DesktopForemanApps chat={state.chat} onClose={() => setAppsOpen(false)} />}
-    <DesktopForemanColumn fill={props.fill} onOpenApps={() => setAppsOpen(true)}
+    {skillsVisible && skillPage !== undefined && <DesktopForemanSkills chat={state.chat} model={skills} slug={skillPage} open={setSkillPage} close={() => setSkillPage(undefined)} />}
+    <DesktopForemanColumn skills={skillsVisible ? skills : undefined} onOpenSkill={skillsVisible ? setSkillPage : undefined} fill={props.fill} onOpenApps={() => setAppsOpen(true)}
         mentionTargets={props.mentionTargets} team={props.team} firstName={props.firstName} nextRoutine={props.nextRoutine} routineNow={props.routineNow}
         onOpenCalledChat={props.onOpenCalledChat}
         callSources={state.callSources}
@@ -360,6 +368,7 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-auto">
                         <DropdownMenuItem data-foreman-apps onSelect={() => setAppsOpen(true)}><BlocksIcon />{t('coworker.destinations.services')}</DropdownMenuItem>
+                        {skillsVisible && <DropdownMenuItem data-foreman-skills onSelect={() => setSkillPage(null)}><LayersIcon />{t('coworker.destinations.skills')}</DropdownMenuItem>}
                         <DropdownMenuItem data-foreman-permissions onSelect={() => setPermissionsOpen(true)}><ShieldCheckIcon />{t('foreman.permissions')}</DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
@@ -378,6 +387,7 @@ function ConnectedForeman({ initial, onNewTask, ...props }: DesktopForemanPanelP
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-auto" onPointerDown={event => event.stopPropagation()}>
                     <DropdownMenuItem data-foreman-apps onSelect={() => setAppsOpen(true)}><BlocksIcon />{t('coworker.destinations.services')}</DropdownMenuItem>
+                    {skillsVisible && <DropdownMenuItem data-foreman-skills onSelect={() => setSkillPage(null)}><LayersIcon />{t('coworker.destinations.skills')}</DropdownMenuItem>}
                     <DropdownMenuItem data-foreman-permissions onSelect={() => setPermissionsOpen(true)}><ShieldCheckIcon />{t('foreman.permissions')}</DropdownMenuItem>
                 </DropdownMenuContent>
             </DropdownMenu>

@@ -67,6 +67,7 @@ it('carries New task, the clock and an overflow menu in the header, with Permiss
     more.focus()
     await act(async () => { more.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })) })
     await settle()
+    expect(document.querySelector<HTMLElement>('[role="menuitem"][data-foreman-skills]')?.textContent).toBe('Skills')
     const item = document.querySelector<HTMLElement>('[role="menuitem"][data-foreman-permissions]')!
     expect(item.textContent).toBe('Permissions')
     await act(async () => { item.click() })

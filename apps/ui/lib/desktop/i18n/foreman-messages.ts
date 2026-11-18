@@ -30,6 +30,10 @@ const en = {
     sharedApps: 'Apps shared with everyone',
     appsUnavailable: 'Could not load shared apps.',
     appsEmpty: 'No apps are shared with everyone.',
+    skillsUnavailable: 'Could not load skills.',
+    skillDecisionUnclear: 'Could not confirm the skill decision. Review its status before trying again.',
+    skillProposals: 'Proposals in this chat',
+    noSkills: 'No skills yet.',
 }
 
 const mac = {
@@ -60,6 +64,10 @@ const mac = {
         sharedApps: 'Applications partagées avec tout le monde',
         appsUnavailable: 'Impossible de charger les applications partagées.',
         appsEmpty: 'Aucune application n’est partagée avec tout le monde.',
+        skillsUnavailable: 'Impossible de charger les compétences.',
+        skillDecisionUnclear: 'La décision n’a pas pu être confirmée. Vérifiez son état avant de réessayer.',
+        skillProposals: 'Propositions dans cette discussion',
+        noSkills: 'Aucune compétence pour le moment.',
     },
     es: {
         conversation: 'Conversación con el Chief of Staff',
@@ -87,6 +95,10 @@ const mac = {
         sharedApps: 'Aplicaciones compartidas con todos',
         appsUnavailable: 'No se pudieron cargar las aplicaciones compartidas.',
         appsEmpty: 'No hay aplicaciones compartidas con todos.',
+        skillsUnavailable: 'No se pudieron cargar las habilidades.',
+        skillDecisionUnclear: 'No se pudo confirmar la decisión. Consulta su estado antes de volver a intentarlo.',
+        skillProposals: 'Propuestas en este chat',
+        noSkills: 'Aún no hay habilidades.',
     },
     pt: {
         conversation: 'Conversa com o Chief of Staff',
@@ -114,6 +126,10 @@ const mac = {
         sharedApps: 'Aplicativos compartilhados com todos',
         appsUnavailable: 'Não foi possível carregar os aplicativos compartilhados.',
         appsEmpty: 'Nenhum aplicativo é compartilhado com todos.',
+        skillsUnavailable: 'Não foi possível carregar as habilidades.',
+        skillDecisionUnclear: 'Não foi possível confirmar a decisão. Confira o estado antes de tentar novamente.',
+        skillProposals: 'Propostas nesta conversa',
+        noSkills: 'Ainda não há habilidades.',
     },
     de: {
         conversation: 'Unterhaltung mit dem Chief of Staff',
@@ -141,6 +157,10 @@ const mac = {
         sharedApps: 'Für alle freigegebene Apps',
         appsUnavailable: 'Die freigegebenen Apps konnten nicht geladen werden.',
         appsEmpty: 'Keine Apps sind für alle freigegeben.',
+        skillsUnavailable: 'Fähigkeiten konnten nicht geladen werden.',
+        skillDecisionUnclear: 'Die Entscheidung konnte nicht bestätigt werden. Prüfe den Status vor einem neuen Versuch.',
+        skillProposals: 'Vorschläge in diesem Chat',
+        noSkills: 'Noch keine Fähigkeiten.',
     },
 } satisfies Record<Locale, typeof en>
 

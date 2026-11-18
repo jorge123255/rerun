@@ -1,4 +1,5 @@
 import { FOREMAN_AGENT_ID } from '@rerun/contracts'
+import { desktopApp, desktopForemanSkillsRouteAllowed } from '../desktop/policy.js'
 import type { MiddlewareHandler } from 'hono'
 
 // The foreman is rewritten from code at every boot, so nothing about it is editable over HTTP but
@@ -36,6 +37,7 @@ export const foremanGuard: MiddlewareHandler = async (c, next) => {
     if (c.req.param('id') !== FOREMAN_AGENT_ID) return next()
     const path = c.req.path.replace(/\/$/, '')
     if (FOREMAN_OPEN_ROUTES.some(route => route.method === c.req.method && route.path.test(path))) return next()
+    if (desktopApp() && desktopForemanSkillsRouteAllowed(c.req.method, path)) return next()
     if (c.req.method === 'PATCH' && path === `/agents/${FOREMAN_AGENT_ID}` && (await patchesOnlyTheModel(c))) return next()
     return c.json({ error: 'The foreman is managed by the engine and cannot be changed' }, 403)
 }

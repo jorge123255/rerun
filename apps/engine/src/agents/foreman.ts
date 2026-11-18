@@ -3,6 +3,7 @@ import { FOREMAN_AGENT_ID, FOREMAN_DISPLAY_NAME, TOOL_KEYS, type AgentConfig, ty
 import { configPath, soulPath, workspaceDir } from '../config/paths.js'
 import { writeAgentConfig } from './config-write.js'
 import { agentConfigSchema } from './types.js'
+import { desktopApp } from '../desktop/policy.js'
 import { unloadAgent } from './registry.js'
 
 // Only what the hub does not send: the brief of each chat request replaces it. A run that reaches
@@ -15,25 +16,26 @@ You are the ${FOREMAN_DISPLAY_NAME} of this Rerun workspace: the assistant that 
 // The orchestrator works on the box like any agent (files, shell, web, sub-agents, the company
 // brain, which it keeps rather than proposes to) and on the account through the tools the hub hands
 // it. What stays off is everything of its own it would keep between conversations (memory, skills,
-// schedules, triggers, connectors). Of the cards it keeps only the file tiles: the user cannot reach
+// schedules, triggers, connectors) on the hosted path. The Mac adds personal skills through human review. Of the cards it keeps only the file tiles: the user cannot reach
 // the server, so a file it made is seen there or not at all.
 const FOREMAN_TOOL_KEYS = new Set<ToolKey>(['filesystem', 'shared', 'shell', 'web', 'sharedDb', 'brain', 'delegate', 'callAgent', 'browser', 'vision', 'askUser', 'requestApproval', 'cards'])
 
 function foremanConfig(choice: ForemanChoice): AgentConfig {
     const tools = Object.fromEntries(TOOL_KEYS.map(key => [key, FOREMAN_TOOL_KEYS.has(key)]))
+    const desktop = desktopApp()
     return agentConfigSchema.parse({
         ...choice.model,
         name: FOREMAN_AGENT_ID,
         kind: 'foreman',
         displayName: FOREMAN_DISPLAY_NAME,
-        tools: { ...tools, desktopToolGrants: choice.grants },
-        selfImprovement: { enabled: false, allowToolInstall: false, allowSoulEdit: false, autoMemory: false },
+        tools: { ...tools, skills: desktop, desktopToolGrants: choice.grants },
+        selfImprovement: { enabled: desktop, allowToolInstall: false, allowSoulEdit: false, autoMemory: false },
         setup: { required: false },
     })
 }
 
 type ModelPin = Pick<AgentConfig, 'connectionId' | 'provider' | 'model'>
-type ForemanChoice = { model: ModelPin; grants: { foremanAgentFilesRead: boolean; foremanAgentFilesWrite: boolean; delegate?: boolean; callAgent?: boolean; requestApproval?: boolean; foremanWorkspaceRead?: boolean; workRegister: boolean } }
+type ForemanChoice = { model: ModelPin; grants: { foremanAgentFilesRead: boolean; foremanAgentFilesWrite: boolean; delegate?: boolean; callAgent?: boolean; requestApproval?: boolean; foremanWorkspaceRead?: boolean; workRegister: boolean; skills?: boolean } }
 
 // Preserve only the user's model and explicit desktop permissions; program-owned
 // identity, instructions and every other capability are still rebuilt from code.
@@ -49,9 +51,10 @@ async function currentChoice(): Promise<ForemanChoice> {
             ...(tools.desktopToolGrants?.foremanWorkspaceRead === true && { foremanWorkspaceRead: true }),
             // On unless the person switched it off: the register is how the Chief of Staff keeps track of the team's work.
             workRegister: tools.desktopToolGrants?.workRegister !== false,
+            ...(desktopApp() && { skills: tools.desktopToolGrants?.skills !== false }),
         } }
     } catch {
-        return { model: { connectionId: null, provider: null, model: null }, grants: { foremanAgentFilesRead: false, foremanAgentFilesWrite: false, workRegister: true } }
+        return { model: { connectionId: null, provider: null, model: null }, grants: { foremanAgentFilesRead: false, foremanAgentFilesWrite: false, workRegister: true, ...(desktopApp() && {skills: true}) } }
     }
 }
 

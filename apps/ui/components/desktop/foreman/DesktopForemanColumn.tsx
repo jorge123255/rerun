@@ -22,6 +22,9 @@ import { DesktopForemanHeader } from './DesktopForemanHeader'
 import { DesktopForemanMove, desktopForemanAnchorOf } from './DesktopForemanMove'
 import { DesktopForemanRoutines } from './DesktopForemanRoutines'
 import { DesktopForemanNameMark, DesktopForemanTopBar, type DesktopForemanFramedBar } from './DesktopForemanTopBar'
+import { DesktopSkillProposalDock } from '../skills/DesktopSkillProposalDock'
+import { DesktopSkillProposalBlock } from '../skills/DesktopSkillProposalBlock'
+import type { ChiefSkills } from './useDesktopForemanSkills'
 import { DesktopForemanDetails } from './DesktopForemanDetails'
 import { DESKTOP_DETAILS_ROOM, DesktopDetailsColumn } from '../simple/DesktopDetailsColumn'
 import { FloatingPill } from '@/components/agent/sheet/floating'
@@ -93,6 +96,8 @@ export type DesktopForemanColumnProps = {
     agentNameOf: (agentId: string) => string
     orbState?: OrbActivity
     onOpenApps?: () => void
+    skills?: ChiefSkills
+    onOpenSkill?: (slug: string | null) => void
     headerActions?: ReactNode
     /** The thread on screen, on its own row under the tabs. */
     headerCrumb?: ReactNode
@@ -157,7 +162,7 @@ export function DesktopForemanColumn({
     approval, onDecideApproval, question, onAnswerQuestion,
     agentNameOf,
     orbState = 'idle',
-    onOpenApps, headerActions,
+    onOpenApps, skills, onOpenSkill, headerActions,
     headerCrumb, framedBar, threads, onOpenThread,
     runNotice,
     renderBoardOverlay,
@@ -406,6 +411,11 @@ export function DesktopForemanColumn({
                         <div className="shrink-0 px-3 pb-3"><DesktopForemanIntakeCard intake={intake} github={github} autoFocus={ui.open && !hidden} /></div>
                     </> : <>
                     <DesktopForemanChatLayer
+                        skillCard={id => {
+                            const row = skills?.snapshot?.proposals.find(p => p.id === id)
+                            if (!row || skills?.pinnedIds.has(id)) return null
+                            return <DesktopSkillProposalBlock proposal={row} pinned={false} onOpenSkill={row.appliedSlug && onOpenSkill ? () => onOpenSkill(row.appliedSlug) : undefined} />
+                        }}
                         messages={messages}
                         active={ui.open && !hidden && !onRoutines && !alternates.open}
                         findScope={findEnabled && ui.open && foreman.restored && !onRoutines && !alternates.open
@@ -507,6 +517,11 @@ export function DesktopForemanColumn({
                     {!intake && !pendingStarter && draftRepositories > 0 && <p data-foreman-github-hint role="status" className="mx-3 mt-2 text-[11px] text-muted-foreground">
                         {draftRepositories === 1 ? '1 GitHub repository' : `${draftRepositories} GitHub repositories`} will be read when you send. Nothing is cloned or run.
                     </p>}
+                    {skills && onOpenSkill && !intake && !pendingStarter && ui.open && foreman.restored && <div data-foreman-skill-dock className="shrink-0 px-3">
+                        <DesktopSkillProposalDock proposals={skills.snapshot?.proposals.filter(row => skills.pinnedIds.has(row.id)) ?? []}
+                            pendingId={skills.pendingId} onDecide={skills.decide} onOpenSkill={onOpenSkill} />
+                        {skills.decisionFailed && <p role="alert" className="text-xs text-destructive">{t('foreman.skillDecisionUnclear')}</p>}
+                    </div>}
                     {/* In a coworker's frame the composer sits under its line, in the conversation's column. */}
                     <div className={framed ? 'shrink-0 border-t border-border' : 'contents'}>
                     <DesktopForemanComposer
@@ -544,7 +559,7 @@ export function DesktopForemanColumn({
                     the workspace (upstream #317). Over the chat on a narrower window, behind the same backdrop. */}
                 {framed && detailsOpen && !wide && <button type="button" aria-label="Back to the chat" className="absolute inset-0 z-30 bg-foreground/5 backdrop-blur-[2px]" onClick={() => setDesktopDetailsWanted(false)} />}
                 {framed && <DesktopDetailsColumn label={t('workspaceView.foreman.card')} open={detailsOpen} beside={wide}>
-                    {detailsMounted && <DesktopForemanDetails onOpenApps={onOpenApps} orbState={orbState} shown={detailsOpen} onClose={() => setDesktopDetailsWanted(false)} routines={
+                    {detailsMounted && <DesktopForemanDetails onOpenApps={onOpenApps} onOpenSkills={onOpenSkill && (() => onOpenSkill(null))} orbState={orbState} shown={detailsOpen} onClose={() => setDesktopDetailsWanted(false)} routines={
                         <DesktopWorkspaceRoutines
                             key={`details:${chat.workspaceId}`}
                             client={routinesClient}
