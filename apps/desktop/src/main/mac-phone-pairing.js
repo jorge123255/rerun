@@ -162,7 +162,7 @@ async function refresh() {
                     showError('')
                 } catch {
                     toggle.checked = granted
-                    showError('sendFailed')
+                    showError('grantFailed')
                 } finally { toggle.disabled = false }
                 await refresh().catch(() => showError('unavailable'))
             })
@@ -171,6 +171,7 @@ async function refresh() {
         }
         grant(device.sendMessages, 'sendLabel', copy.send, window.desktopApp.phonePairing.setSendMessages)
         grant(device.approveRequests, 'decideLabel', copy.decide, window.desktopApp.phonePairing.setApproveRequests)
+        grant(device.changeSettings, 'settingsLabel', copy.settings, window.desktopApp.phonePairing.setChangeSettings)
         return item
     }))
 }

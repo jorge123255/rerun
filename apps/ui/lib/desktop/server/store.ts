@@ -125,6 +125,17 @@ export async function findDesktopAgent(db: Client, id: string): Promise<DesktopA
     return result.rows[0] ? agentOf(result.rows[0]) : null
 }
 
+// As with a rename, an interrupted engine write can be acknowledged on the next roster read.
+export async function confirmDesktopDescription(db: Client, agent: DesktopAgent, description: string) {
+    await db.batch([
+        { sql: `UPDATE desktop_agents SET description = ?, updated_at = ?
+                WHERE id = ? AND workspace_id = 1 AND engine_agent_id = ? AND description != ?
+                AND EXISTS (SELECT 1 FROM desktop_description_checks WHERE agent_id = desktop_agents.id AND description = ?)`,
+          args: [description, new Date().toISOString(), agent.id, agent.engineAgentId, description, description] },
+        { sql: 'DELETE FROM desktop_description_checks WHERE agent_id = ? AND description = ?', args: [agent.id, description] },
+    ], 'write')
+}
+
 type CreateDesktopAgentInput = { engineAgentId: string; name: string; description?: string; spaceId?: string }
 
 export function createDesktopAgent(db: Client, input: CreateDesktopAgentInput): Promise<DesktopAgent> {

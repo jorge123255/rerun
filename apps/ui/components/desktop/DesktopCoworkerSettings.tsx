@@ -142,6 +142,7 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
         return () => controller.abort()
     }, [url, attempt, t])
 
+    const descriptionChanged = !!settings && !!draft && (draft.description ?? agent.description).trim() !== (settings.description ?? agent.description).trim()
     const instructionsChanged = settings?.soulEditable && draft?.soul.trim() !== settings.soul.trim()
     const lengthChanged = draft?.verbosity !== settings?.verbosity
     const suggestionsChanged = draft?.suggestedReplies !== settings?.suggestedReplies
@@ -150,7 +151,7 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
     const repositoryText = (value: Settings['repository'] | undefined) => value ? `${value.owner}/${value.name}` : ''
     const repositoryChanged = repositoryDraft !== null && repositoryDraft.trim() !== repositoryText(settings?.repository)
     const repositoryValid = !repositoryChanged || !repositoryDraft!.trim() || !!readDesktopGithubRepository(repositoryDraft!)
-    const dirty = !!draft && (lengthChanged || instructionsChanged || memoryChanged || learningChanged || suggestionsChanged || repositoryChanged)
+    const dirty = !!draft && (descriptionChanged || lengthChanged || instructionsChanged || memoryChanged || learningChanged || suggestionsChanged || repositoryChanged)
     const canSave = !disabled && dirty && (!instructionsChanged || !!draft.soul.trim()) && repositoryValid
     useFileUnloadGuard(dirty, desktopFileDraftHost())
     const guardClose = useCallback((close: () => void) => {
@@ -177,6 +178,7 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
                 method: 'PATCH', signal: AbortSignal.timeout(20_000),
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({
+                    ...(descriptionChanged && { description: draft.description }),
                     ...(instructionsChanged && { soul: draft.soul }),
                     ...(lengthChanged && { verbosity: draft.verbosity }),
                     ...(memoryChanged && { memoryEnabled: draft.memoryEnabled }),
@@ -203,6 +205,10 @@ export function DesktopCoworkerSettingsBody({ agent, authority, disabled, regist
         <CoworkerManagement key={agent.id} agent={agent} authority={authority} disabled={disabled || saving}>
             <form className="space-y-4" onSubmit={save}>
                 {settings && draft ? <fieldset disabled={saving || disabled} className="min-w-0 space-y-4">
+                    <Field label={t('coworker.description')} htmlFor={fieldId + '-description'}>
+                        <Input id={fieldId + '-description'} maxLength={2000} value={draft.description ?? agent.description}
+                            onChange={event => setDraft({ ...draft, description: event.target.value })} />
+                    </Field>
                     {settings.soulEditable ? <MarkdownTextarea label={t('coworker.instructions')} dialogTitle={t('coworker.instructionsEditor')} hideRequired
                         className="min-h-36 font-mono text-xs" disabled={saving || disabled} value={draft.soul} onChange={soul => setDraft({ ...draft, soul })} required />
                         : <p className="text-sm text-muted-foreground">{t('coworker.instructionsLocked')}</p>}

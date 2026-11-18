@@ -4,6 +4,8 @@ import { useCallback, useState } from 'react'
 import { Alert } from 'react-native'
 import { useTranslations } from 'use-intl'
 
+import { macHub } from '@/api/client'
+import { MacCoworkerSettingsScreen } from '@/components/coworker/mac/MacCoworkerSettingsScreen'
 import { fetchBoxes } from '@/api/board'
 import { fetchAgentView } from '@/api/chat'
 import { deleteCoworker, fetchCoworkerFiles, fetchInstalledServices, fetchRoutines, renameCoworker } from '@/api/coworker'
@@ -21,6 +23,10 @@ type Unavailable = Partial<Record<'files' | 'apps' | 'routines', boolean>>
 // The coworker's details, opened from its conversation. Every value is read again when the page comes
 // back on screen, so a routine switched off or an app connected one level down shows at once.
 export default function CoworkerDetailsScreen() {
+    return macHub ? <MacCoworkerSettingsScreen hub={macHub} /> : <HubCoworkerDetailsScreen />
+}
+
+function HubCoworkerDetailsScreen() {
     const { id: agentId, name: nameParam } = useLocalSearchParams<{ id: string; name?: string }>()
     const { session, me } = useAuth()
     const t = useTranslations('mobileCoworker.details')

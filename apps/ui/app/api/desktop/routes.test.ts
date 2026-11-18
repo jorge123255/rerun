@@ -452,7 +452,7 @@ describe('desktop API routes', () => {
         const patch = (body: unknown) => editCoworkerSettings(request(url(first.id), { method: 'PATCH', body }), ctx(first.id))
         const get = (id: string) => readCoworkerSettings(request(url(id)), ctx(id))
 
-        const defaults = { soul: 'Original instructions', verbosity: 'normal', soulEditable: true, suggestedReplies: true, workspaceReadEnabled: false, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true, repository: null }
+        const defaults = { description: '', soul: 'Original instructions', verbosity: 'normal', soulEditable: true, suggestedReplies: true, workspaceReadEnabled: false, memoryEnabled: true, autoMemory: true, selfImprovementEnabled: true, repository: null }
         expect(await (await get(first.id)).json()).toEqual(defaults)
         expect((await patch({ workspaceReadEnabled: true })).status).toBe(200)
         expect(await (await get(first.id)).json()).toEqual({ ...defaults, workspaceReadEnabled: true })

@@ -1,5 +1,11 @@
+import { macPhoneCoworkerSettingsSchema, macPhoneCoworkerSettingsChangeSchema } from '@rerun/mac-contracts/mac-phone-pairing'
 import { API_PREFIX, SERVICE_NAME } from './protocol.mjs'
 import { createMacSessionStore } from './session-store.mjs'
+
+const settingsMethods = Object.freeze({
+    model: 'PATCH', effort: 'PUT', tools: 'PATCH', 'call-targets': 'PATCH',
+    settings: 'PATCH', name: 'PATCH', enabled: 'PATCH', box: 'POST', setup: 'POST',
+})
 
 function pairingOrigin(origin, certificateFingerprint) {
     if (typeof origin !== 'string') throw new Error('invalid_origin')
@@ -102,6 +108,12 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
         return request(session, chatPath(session, agentId, chatId) + suffix, { ...options, credential: session.credential, fetchImpl, pinnedFetch })
     }
 
+    async function coworkerSettingsRequest(agentId, suffix, options) {
+        const session = await sessionOrThrow()
+        const path = `/workspaces/${encodeURIComponent(session.workspaceId)}/coworker-settings${suffix}?agentId=${encodeURIComponent(agentId)}`
+        return request(session, path, { ...options, credential: session.credential, fetchImpl, pinnedFetch })
+    }
+
     async function chiefRequest(suffix, options) {
         const session = await sessionOrThrow()
         return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/chief` + suffix, { ...options, credential: session.credential, fetchImpl, pinnedFetch })
@@ -172,6 +184,18 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
         async listCoworkers(signal) {
             const session = await sessionOrThrow()
             return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/coworkers`, { credential: session.credential, fetchImpl, pinnedFetch, signal })
+        },
+        async readCoworkerSettings(agentId, signal) {
+            const result = await coworkerSettingsRequest(agentId, '', { signal })
+            const parsed = macPhoneCoworkerSettingsSchema.safeParse(result)
+            if (!parsed.success || parsed.data.agentId !== agentId) throw new Error('invalid_settings_response')
+            return parsed.data
+        },
+        async changeCoworkerSettings(agentId, change, signal) {
+            const { field, body } = macPhoneCoworkerSettingsChangeSchema.parse(change)
+            const result = await coworkerSettingsRequest(agentId, '/' + field, { method: settingsMethods[field], body, signal })
+            if (result?.ok !== true) throw new Error('invalid_settings_receipt')
+            return { ok: true }
         },
         async listSavedChats(agentId, signal) {
             const session = await sessionOrThrow()
