@@ -33,6 +33,9 @@ import { moodOf } from '@/components/ui/CoworkerAvatar'
 import { PillButton } from '@/components/ui/PillButton'
 import { useTheme } from '@/theme/theme'
 import { spacing } from '@/theme/tokens'
+import { talkableChat, useVoiceOffered } from '@/voice/availability'
+import { macVoiceDeps } from '@/voice/mac-voice'
+import { VoiceScreen } from '@/voice/VoiceScreen'
 
 import { uploadAttachments, type ComposerAttachment } from './attachments'
 import { PinnedSkillProposal } from './cards/SkillProposalRow'
@@ -100,6 +103,9 @@ type ConversationPaneProps = {
     threads?: ThreadItem[]
     onOpenThread?: (sessionId: string) => void
 }
+
+// After a voice conversation, when the conversation is read again for the answer the Mac was still writing.
+const VOICE_FOLLOW_UPS_MS = [3000, 8000]
 
 // One conversation on screen: the transcript, what waits on an answer, and the composer.
 export function ConversationPane({ coworker, makeEndpoints, initialSessionId, onSessionCreated, models, status, onStatusChange, webUrl, onScreen = true, startedBy = null, initialMessage, canAttach = true, threads, onOpenThread }: ConversationPaneProps) {
@@ -319,6 +325,36 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
     // A throw keeps the recording for a retry.
     // A paired Mac takes the Chief of Staff's messages and answers as text: no recording is offered there.
     const chiefOnMac = onMac && coworker.kind === 'foreman'
+
+    // It talks instead: a spoken conversation on this conversation, through the Mac, offered until the
+    // Mac says voice is not set up there. What was said lands here as text once the screen closes.
+    const tVoice = useTranslations('mobileAuth.mac.chief.voice')
+    const voiceOffered = useVoiceOffered()
+    const [talkingIn, setTalkingIn] = useState<string | null>(null)
+    const talkable = talkableChat({ chiefOnMac, offered: voiceOffered, busy: chat.busy, sessionId: chat.sessionId })
+    const talk = talkable
+        ? {
+              label: tVoice('talk'),
+              onPress: () => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                  setTalkingIn(talkable)
+              },
+          }
+        : undefined
+    // The Mac may still be writing the last answer as the screen closes: the conversation is read now
+    // and a little later.
+    const followUps = useRef<ReturnType<typeof setTimeout>[]>([])
+    useEffect(() => () => followUps.current.forEach(clearTimeout), [])
+    const afterTalking = () => {
+        setTalkingIn(null)
+        const reload = () => {
+            chat.reload()
+            onStatusChange()
+        }
+        reload()
+        followUps.current.forEach(clearTimeout)
+        followUps.current = VOICE_FOLLOW_UPS_MS.map(delay => setTimeout(reload, delay))
+    }
     const voice: VoiceSender | undefined = caller && !chiefOnMac
         ? {
               upload: uri => uploadVoiceRecording(caller, endpoints.fileOwner(chat.sessionId), uri),
@@ -515,12 +551,13 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
                     <LayoutAnimationConfig skipEntering>
                         {!replacesComposer && (
                             <Animated.View entering={SlideInDown.duration(280)} exiting={SlideOutDown.duration(280)} style={{ paddingHorizontal: spacing.md }}>
-                                <Composer ref={composer} value={draft} onChangeText={setDraft} attachments={attachments} onAttachmentsChange={setAttachments} skills={skills} mentionAgents={mentionAgents} onSend={() => submit(draft)} onStop={chat.stop} running={chat.busy || uploading} placeholder={placeholder} model={model} onOpenModel={openModel} canAttach={canAttach && !pending} voice={voice} autoFocus={!initialSessionId && onScreen} />
+                                <Composer ref={composer} value={draft} onChangeText={setDraft} attachments={attachments} onAttachmentsChange={setAttachments} skills={skills} mentionAgents={mentionAgents} onSend={() => submit(draft)} onStop={chat.stop} running={chat.busy || uploading} placeholder={placeholder} model={model} onOpenModel={openModel} canAttach={canAttach && !pending} voice={voice} talk={talk} autoFocus={!initialSessionId && onScreen} />
                             </Animated.View>
                         )}
                     </LayoutAnimationConfig>
                 </View>
             </View>
+            {chiefOnMac && <VoiceScreen chatId={talkingIn} onClose={afterTalking} deps={macVoiceDeps} />}
         </Animated.View>
     )
 }

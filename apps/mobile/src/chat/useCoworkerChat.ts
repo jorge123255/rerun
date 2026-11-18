@@ -281,5 +281,5 @@ export function useCoworkerChat({ endpoints, initialSessionId, onSessionCreated,
     // The run holding the conversation, as last named by the hub: what a queued message waits behind.
     const activeRunId = useCallback(() => runRef.current, [])
 
-    return { messages: chat.messages, status, runStartedAt, activeRunId, regenerate, error: error && !error.message.includes('run_in_flight') ? error : undefined, busy, sessionId, history, fresh, send, stop, retry: () => refresh({ resume: true }).catch(() => setHistory('error')) }
+    return { messages: chat.messages, status, runStartedAt, activeRunId, regenerate, error: error && !error.message.includes('run_in_flight') ? error : undefined, busy, sessionId, history, fresh, send, stop, retry: () => refresh({ resume: true }).catch(() => setHistory('error')), reload: () => refresh({ resume: true }).catch(() => {}) }
 }

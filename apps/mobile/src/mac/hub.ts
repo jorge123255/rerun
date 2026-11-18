@@ -1,5 +1,5 @@
 import { FOREMAN_AGENT_ID, type AgentConversationsOverview, type AgentModels, type AgentView, type BoardAgent, type Box, type Conversation, type ConversationMessage, type ForemanStateResponse, type Inbox, type InboxItem, type Me, type SessionStatus } from '@rerun/contracts'
-import { macPhoneChatReadSchema, macPhoneChatsSchema, macPhoneChiefChatSchema, macPhoneChiefSchema, macPhoneCoworkersSchema, macPhoneInboxSchema, type MacPhoneChat, type MacPhoneChiefCard, type MacPhoneChiefChat, type MacPhoneInboxItem, type MacPhoneChatRead, type MacPhoneCoworker } from '@rerun/mac-contracts/mac-phone-pairing'
+import { macPhoneChatReadSchema, macPhoneChatsSchema, macPhoneChiefChatSchema, macPhoneChiefSchema, macPhoneCoworkersSchema, macPhoneInboxSchema, macPhoneVoiceSessionSchema, type MacPhoneChat, type MacPhoneChiefCard, type MacPhoneChiefChat, type MacPhoneInboxItem, type MacPhoneChatRead, type MacPhoneCoworker, type MacPhoneVoiceSession } from '@rerun/mac-contracts/mac-phone-pairing'
 
 import type { MacClient } from './client'
 import type { MacLink } from './session'
@@ -28,6 +28,9 @@ export type MacHub = {
     waitingQuestion: (chatId: string) => NonNullable<NonNullable<MacPhoneChatRead['pending']>['question']> | null
     // The approval a chat waits on, when this phone may decide it.
     waitingApproval: (chatId: string) => NonNullable<NonNullable<MacPhoneChatRead['pending']>['approval']> | null
+    // A voice conversation with the Chief of Staff on one of its conversations: the token for the
+    // phone's own session with the voice service. It is handed straight to that session, never kept.
+    startVoice: (chatId: string, signal?: AbortSignal) => Promise<MacPhoneVoiceSession>
 }
 
 // The one Box a Mac's coworkers sit in on the Home.
@@ -406,5 +409,6 @@ export function createMacHub({ client, link, fail, onRevoked, words }: { client:
         lastTurn: chatId => turns.get(chatId) ?? null,
         waitingQuestion: chatId => questions.get(chatId) ?? null,
         waitingApproval: chatId => approvals.get(chatId) ?? null,
+        startVoice: async (chatId, signal) => macPhoneVoiceSessionSchema.parse(await ask(() => client.startVoice(chatId, signal))),
     }
 }

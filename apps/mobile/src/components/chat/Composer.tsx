@@ -39,6 +39,8 @@ type ComposerProps = {
     onOpenModel?: () => void
     canAttach?: boolean
     voice?: VoiceSender
+    // A spoken conversation in place of a voice message: the Chief of Staff on a paired Mac.
+    talk?: { label: string; onPress: () => void }
     target?: { coworker: Coworker; choices: Coworker[]; onPick: (id: string) => void }
     // What `/` and `@` offer, as on the web: none of either leaves its menu shut.
     skills?: SkillSummary[]
@@ -48,7 +50,7 @@ type ComposerProps = {
 }
 
 // A pill at rest, a card once in use (focused, holding text or attachments, or listening).
-export function Composer({ value, onChangeText, attachments = [], onAttachmentsChange = () => {}, onSend, onStop, running, placeholder, model, onOpenModel, canAttach = true, voice, target, skills = [], mentionAgents = [], autoFocus, ref }: ComposerProps) {
+export function Composer({ value, onChangeText, attachments = [], onAttachmentsChange = () => {}, onSend, onStop, running, placeholder, model, onOpenModel, canAttach = true, voice, talk, target, skills = [], mentionAgents = [], autoFocus, ref }: ComposerProps) {
     const theme = useTheme()
     const glass = useGlassStyle()
     const [focused, setFocused] = useState(Boolean(autoFocus))
@@ -109,6 +111,9 @@ export function Composer({ value, onChangeText, attachments = [], onAttachmentsC
         onStop()
     }
 
+    // Talking sits where the mic would, and steps out once there is text to send.
+    const talkButton = talk && !hasText ? <RoundButton symbol="mic" label={talk.label} onPress={talk.onPress} /> : null
+
     // As on the web: with nothing to send the mic is the main action, or stop while a turn runs; once
     // there is something to send, send takes over and the mic steps back (or out, for text).
     const actions = running ? (
@@ -158,6 +163,7 @@ export function Composer({ value, onChangeText, attachments = [], onAttachmentsC
                     ) : (
                         <VoiceRecorderBar status={recorder.status} error={recorder.error} getLiveState={recorder.getLiveState} />
                     )}
+                    {!expanded && talkButton}
                     {!expanded && actions}
                 </View>
                 {expanded && (
@@ -173,6 +179,7 @@ export function Composer({ value, onChangeText, attachments = [], onAttachmentsC
                                 {canAttach && <AttachMenu onPhotos={pickPhotos} onCamera={takePhoto} onFiles={pickFiles} skills={skills} onSkill={pickSkill} />}
                                 <View style={{ flex: 1 }} />
                                 {model && onOpenModel && <ModelChip model={model} onPress={onOpenModel} />}
+                                {talkButton}
                                 {actions}
                             </>
                         )}

@@ -150,6 +150,7 @@ function App() {
                                         <Stack.Screen name="lab-steps" />
                                         <Stack.Screen name="lab-skill" />
                                         <Stack.Screen name="lab-composer" />
+                                        <Stack.Screen name="lab-voice" />
                                         <Stack.Screen name="lab-foreman" />
                                         <Stack.Screen name="lab-home" />
                                         <Stack.Screen name="lab-markdown" />
