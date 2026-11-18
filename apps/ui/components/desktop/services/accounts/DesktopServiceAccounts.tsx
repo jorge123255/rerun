@@ -14,6 +14,8 @@ import { PanelList, PanelScroller, PanelSection } from '@/components/ui/panel-li
 import { PanelRow } from '@/components/ui/panel-row'
 import { PanelDeleteButton, PanelEditorBody, PanelEditorHeader, PanelEditorShell } from '@/components/ui/panel-editor'
 import { SkeletonPanelRows } from '@/components/ui/skeleton'
+import { desktopCoworkerConnectorsSchema, type DesktopAssignedManagedAccount } from '@/lib/desktop/connector-apps-schema'
+import { DESKTOP_CONNECTOR_APPS_CHANGED } from '@/lib/desktop/use-connector-apps'
 import { UnplugIcon } from '@/lib/icons'
 import { serviceIconProps } from '@/lib/services/icons'
 import type { ServiceSearchResult } from '@/lib/services/types'
@@ -48,10 +50,36 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
     const [client, setClient] = useState<DesktopServiceAccountsClient | null>(null)
     const [accounts, setAccounts] = useState<DesktopServiceAccountView[]>([])
     const [catalog, setCatalog] = useState<ServiceAccountLibraryRow[]>([])
-    const [vaultApp, setVaultApp] = useState<string | null>(null)
+    const [vaultApp, setVaultApp] = useState<{ coworkerApp: string } | { managedApp: string } | null>(null)
     const [vaultRefresh, setVaultRefresh] = useState(0)
     const [detail, setDetail] = useState<ServiceAccountDetail | null>(null)
     const [selected, setSelected] = useState<string | null>(null)
+    const [managedAccounts, setManagedAccounts] = useState<DesktopAssignedManagedAccount[] | null>(null)
+    const [managedError, setManagedError] = useState(false)
+    useEffect(() => {
+        let pending: AbortController | undefined
+        const read = async () => {
+            pending?.abort()
+            const controller = new AbortController()
+            pending = controller
+            try {
+                const response = await fetch(`/api/desktop/coworkers/${encodeURIComponent(agentId)}/connectors`, { cache: 'no-store', signal: controller.signal })
+                if (!response.ok) throw Error()
+                const result = desktopCoworkerConnectorsSchema.parse(await response.json())
+                if (result.agentId !== agentId) throw Error()
+                if (!controller.signal.aborted) { setManagedAccounts(result.managedAccounts ?? []); setManagedError(false) }
+            } catch {
+                if (!controller.signal.aborted) { setManagedAccounts(null); setManagedError(true) }
+            }
+        }
+        const changed = (event: Event) => {
+            const owner = (event as CustomEvent<unknown>).detail
+            if (owner == null || owner === agentId) void read()
+        }
+        void read()
+        window.addEventListener(DESKTOP_CONNECTOR_APPS_CHANGED, changed)
+        return () => { pending?.abort(); window.removeEventListener(DESKTOP_CONNECTOR_APPS_CHANGED, changed) }
+    }, [agentId, vaultRefresh])
     const [query, setQuery] = useState('')
     const [category, setCategory] = useState('')
     const [total, setTotal] = useState(0)
@@ -116,7 +144,13 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
             const next = await client.detail(slug)
             if (source.current !== client || current !== epoch.current) return
             if (!accountKey && next.vaultManaged && !next.accounts.length) {
-                setVaultApp(slug)
+                setVaultApp({ coworkerApp: slug })
+                setError('')
+                return
+            }
+            if (!accountKey && !next.accounts.length && next.authMethods.some(method => method.kind === 'composio')
+                && !next.authMethods.some(method => method.availability.supported)) {
+                setVaultApp({ managedApp: next.name })
                 setError('')
                 return
             }
@@ -180,10 +214,20 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
         }
     }
     if (!client) return <SkeletonPanelRows rows={6} />
+    const activeManagedSlugs = new Set(managedAccounts?.filter(account => account.status === 'active').map(account => account.slug))
+    const library = catalog.map(row => {
+        const service = libraryService(row)
+        if (!service.installed && activeManagedSlugs.has(row.slug) && row.authMethods.some(method => method.kind === 'composio')) {
+            return { ...service, installed: true, installStatus: 'active' as const, multiInstance: false }
+        }
+        return service
+    })
+    const managedMatches = managedAccounts?.filter(account =>
+        `${account.name} ${account.label ?? ''} ${account.slug}`.toLowerCase().includes(query.trim().toLowerCase())) ?? []
     const editor = detail && selected
     return (
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col" data-state={loading ? 'loading' : error ? 'unavailable' : accounts.length || catalog.length ? 'ready' : 'empty'}>
-            {vaultApp && <DesktopVaultDialog coworkerApp={vaultApp} onClose={() => {
+            {vaultApp && <DesktopVaultDialog {...vaultApp} onClose={() => {
                 setVaultApp(null)
                 setVaultRefresh(value => value + 1)
                 void load()
@@ -255,18 +299,28 @@ function Accounts({ agentId, focusSlug, focusRequestKey }: { agentId: string; fo
                         )}
                         {opening && <p role="status" className="text-xs text-muted-foreground">Loading app details…</p>}
                         <PanelSection label="Installed">
-                            {loading && !accounts.length ? <SkeletonPanelRows rows={3} leading /> : accounts.length ? (
+                            {loading && !accounts.length && !managedMatches.length ? <SkeletonPanelRows rows={3} leading /> : accounts.length || managedMatches.length ? (
                                 <PanelList>
                                     {accounts.map(account => (
                                         <PanelRow key={account.installationId} title={account.label || account.name} leading={<Icon {...serviceIconProps(account.icon, account.category)} size="sm" />} description={healthText(account)} onClick={() => void openSlug(account.slug, account.key)} actions={<Button size="sm" variant="outline" onClick={() => void openSlug(account.slug, account.key)}>Configure</Button>} />
                                     ))}
+                                    {managedMatches.map(account => (
+                                        <PanelRow key={account.id} title={account.label ? `${account.name} · ${account.label}` : account.name}
+                                            description={account.status === 'active' ? 'Signed in at Composio' : account.status === 'expired' ? 'Sign-in expired' : 'Sign-in pending'}
+                                            footer={account.source === 'connect' ? 'Assigned via Composio · requires Custom MCP servers permission' : 'Assigned in Vault · requires Apps permission'}
+                                            actions={<Button size="sm" variant="outline" onClick={() => setVaultApp({ managedApp: account.name })}>Manage in Vault</Button>} />
+                                    ))}
                                 </PanelList>
-                            ) : !error && <EmptyState icon={UnplugIcon} title="No apps installed" description="Add an app from the Library to extend this coworker’s tools." />}
+                            ) : !error && managedAccounts?.length === 0 && <EmptyState icon={UnplugIcon} title="No apps installed" description="Add an app from the Library to extend this coworker’s tools." />}
+                            {managedError && <div className="space-y-2">
+                                <p role="alert" className="text-xs text-destructive">Could not load assigned Composio apps.</p>
+                                <Button size="sm" variant="outline" onClick={() => setVaultRefresh(value => value + 1)}>Retry assigned apps</Button>
+                            </div>}
                         </PanelSection>
                         <DesktopCoworkerVault key={vaultRefresh} agentId={agentId} query={query} />
                         <PanelSection label="Library">
                             {loading && !catalog.length ? <SkeletonPanelRows rows={6} leading /> : catalog.length ? (
-                                <ServiceList services={catalog.map(libraryService)} onInstall={slug => void openSlug(slug)} onAddAccount={slug => { const row = catalog.find(item => item.slug === slug); if (row?.addAccount) void openSlug(slug, `additional:${slug}`) }} />
+                                <ServiceList services={library} onInstall={slug => void openSlug(slug)} onAddAccount={slug => { const row = catalog.find(item => item.slug === slug); if (row?.addAccount) void openSlug(slug, `additional:${slug}`) }} />
                             ) : !error && <EmptyState className="py-8" icon={UnplugIcon} title="No apps found" description="We could not find an app matching your search." />}
                             {offset.current < total && <Button size="sm" variant="outline" disabled={loading} onClick={() => void load(true)}>{loading ? 'Loading…' : 'Load more apps'}</Button>}
                         </PanelSection>

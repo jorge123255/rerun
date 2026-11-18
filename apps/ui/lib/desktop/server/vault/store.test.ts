@@ -17,6 +17,10 @@ import { initializeDesktopRound52 } from '../round52-schema'
 import { initializeDesktopRound55 } from '../round55-schema'
 import { initializeDesktopRound56 } from '../round56-schema'
 import { initializeDesktopRound57 } from '../round57-schema'
+import { initializeDesktopRound62 } from '../round62-schema'
+import { initializeDesktopRound66 } from '../round66-schema'
+import { assignedManagedAccounts } from '../managed-apps/assigned'
+import { COMPOSIO_CONNECT, COMPOSIO_CONNECT_HEADER } from '../managed-apps/client'
 import { initializeDesktopRound58 } from '../round58-schema'
 import { initializeDesktopRound54 } from '../round54-schema'
 import { initializeDesktopRound53 } from '../round53-schema'
@@ -914,4 +918,66 @@ test('a browser sign-in entry reports signed out until it holds a usable saved s
         expect(await read()).toHaveProperty('signedOut', true)
         expect((await f.vault.forCoworker(firstAgent)).available.find(item => item.id === linear.id)).toHaveProperty('signedOut', true)
     } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('a restarted coworker discovers only its assigned Composio apps; key rotation and revocation retire the old discovery', async () => {
+    const f = await fixture()
+    const signal = new AbortController().signal, shutdown = new AbortController()
+    const project = randomUUID(), consumer = randomUUID()
+    let reopened: ReturnType<typeof f.open> | undefined
+    try {
+        await initializeDesktopRound62(f.db)
+        await initializeDesktopRound66(f.db)
+        const [gateway] = (await f.vault.mutate({ operation: 'create-server', name: 'composio', url: COMPOSIO_CONNECT, bearer: '', header: { name: COMPOSIO_CONNECT_HEADER, value: 'synthetic-first' } }, allow)).entries
+        await f.db.execute("INSERT INTO desktop_managed_app_key VALUES(1,'sealed-fixture','project-generation','now')")
+        const seedConnect = () => f.db.execute({ sql: "INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,user_id,connected_account_id,status,created_at) VALUES(?, 'gmail','gmail','Gmail','','','active','now')", args: [consumer] })
+        await seedConnect()
+        await f.db.execute({ sql: "INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,user_id,connected_account_id,status,created_at) VALUES(?,'slack','slack','Slack',?,'ca_slack','expired','now')", args: [project, 'rerun_mac_w7_' + project]})
+        await f.db.execute({ sql: 'INSERT INTO desktop_managed_app_attachments VALUES(?,?)', args: [project, secondAgent]})
+        const [shared] = (await f.vault.mutate({ operation: 'share', id: gateway.id, revision: gateway.revision, sharedWithAll: false, agentIds: [firstAgent] }, allow)).entries
+        reopened = f.open()
+        expect(await assignedManagedAccounts(reopened, 7, firstAgent)).toEqual([{ id: consumer, slug: 'gmail', name: 'Gmail', status: 'active', source: 'connect'}])
+        expect(await assignedManagedAccounts(reopened, 7, secondAgent)).toEqual([{ id: project, slug: 'slack', name: 'Slack', status: 'expired', source: 'assignment'}])
+        expect(await assignedManagedAccounts(reopened, 8, secondAgent)).toEqual([])
+        expect(await assignedManagedAccounts(reopened, 7, foreignAgent)).toEqual([])
+
+        const network: McpNetwork = async (_url, init, guard) => {
+            await guard()
+            const body = JSON.parse(init.body!)
+            const result = body.method === 'initialize' ? { protocolVersion: '2025-03-26' }
+                : body.method === 'tools/list' ? { tools: [{ name: 'COMPOSIO_SEARCH_TOOLS', description: 'Find tools.', inputSchema: { type: 'object' } }] }
+                : { content: [{ type: 'text', text: 'fixture'}] }
+            return body.id === undefined ? new Response(null, { status: 202}) : Response.json({ jsonrpc: '2.0', id: body.id, result})
+       }
+        const runtime = desktopVaultMcpRuntime(reopened, crypto, 7, async () => ({ enabled: true, granted: true}), shutdown.signal, network)
+        const [search] = await runtime.tools(firstAgent, signal)
+        expect(search.description).toContain('Signed-in toolkits assigned to this coworker: gmail.')
+        expect(search.description).not.toMatch(/slack|synthetic-first/i)
+        expect(await runtime.tools(secondAgent, signal)).toEqual([])
+        const [everyone] = (await f.vault.mutate({ operation: 'share', id: gateway.id, revision: shared.revision, sharedWithAll: true, agentIds: [] }, allow)).entries
+        expect((await assignedManagedAccounts(reopened, 7, secondAgent)).map(app=>app.slug)).toEqual(['gmail', 'slack'])
+        const [off] = (await f.vault.mutate({ operation: 'share', id: gateway.id, revision: everyone.revision, sharedWithAll: false, agentIds: [] }, allow)).entries
+        expect(await runtime.tools(firstAgent, signal)).toEqual([])
+        await expect(search.execute({ }, signal)).rejects.toThrow()
+        expect(await assignedManagedAccounts(reopened, 7, firstAgent)).toEqual([])
+
+        const [rotated] = (await f.vault.mutate({ operation: 'replace-server-header', id: gateway.id, revision: off.revision, header: { name: COMPOSIO_CONNECT_HEADER, value: 'synthetic-second'} }, allow)).entries
+        expect((await f.db.execute('SELECT id FROM desktop_managed_app_accounts')).rows.map(row=>row.id)).toEqual([project])
+        await seedConnect()
+        await f.vault.mutate({ operation: 'delete', id: gateway.id, revision: rotated.revision }, allow)
+        expect((await f.db.execute('SELECT id FROM desktop_managed_app_accounts')).rows.map(row=>row.id)).toEqual([project])
+
+        // An unrelated server borrowing the name can neither disclose nor erase cached Connect accounts.
+        const [impostor] = (await f.vault.mutate({ operation: 'create-server', name: 'composio', url: 'https://other.example.test/mcp', bearer: '', header: { name: COMPOSIO_CONNECT_HEADER, value: 'synthetic-other' } }, allow)).entries
+        await seedConnect()
+        const [borrowed] = (await f.vault.mutate({ operation: 'share', id: impostor.id, revision: impostor.revision, sharedWithAll: true, agentIds: [] }, allow)).entries
+        expect(await assignedManagedAccounts(reopened, 7, firstAgent)).toEqual([])
+        await f.vault.mutate({ operation: 'delete', id: borrowed.id, revision: borrowed.revision }, allow)
+        expect((await f.db.execute({ sql: 'SELECT 1 FROM desktop_managed_app_accounts WHERE id=?', args: [consumer] })).rows).toHaveLength(1)
+    } finally {
+        shutdown.abort()
+        reopened?.close()
+        f.db.close()
+        await rm(f.root, { recursive: true, force: true })
+    }
 })

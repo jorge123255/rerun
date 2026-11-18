@@ -1,3 +1,5 @@
+import { seedConnectCredential } from './connect-owner-fixture'
+import { connectToolList } from './connect-test-fixture'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +10,7 @@ vi.mock('server-only', () => ({}))
 const { createDesktopSecretCrypto } = await import('../secret-requests/crypto')
 const { initializeDesktopRound62 } = await import('../round62-schema')
 const { initializeDesktopRound66 } = await import('../round66-schema')
+const { initializeDesktopRound73 } = await import('../round73-schema')
 const { desktopManagedApps, managedAppUserId } = await import('./service')
 const { managedAppsConnectClient } = await import('./client')
 
@@ -25,7 +28,7 @@ afterEach(async () => { db.close(); await rm(dir, { recursive: true, force: true
 // A pretend Composio project that holds any number of connected accounts.
 function composio() {
     const accounts = new Map<string, { user: string; toolkit: string; status: string }>()
-    const state = { accounts, removed: [] as string[], executed: [] as { tool: string; user: string }[], down: false, refuses: false, links: 0 }
+    const state = { accounts, removed: [] as string[], executed: [] as { tool: string; user: string; account: string }[], down: false, refuses: false, links: 0 }
     const network = (async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input)), path = url.pathname.replace('/api/v3.1', ''), method = init?.method ?? 'GET'
         const body = init?.body ? JSON.parse(String(init.body)) : undefined
@@ -47,7 +50,7 @@ function composio() {
         }
         if (path === '/tools') return Response.json({ items: [{ slug: 'GMAIL_FETCH_EMAILS', description: 'Read mail', input_parameters: { type: 'object', properties: {} } }], next_cursor: null })
         if (path === '/tools/execute/GMAIL_FETCH_EMAILS') {
-            state.executed.push({ tool: 'GMAIL_FETCH_EMAILS', user: body.user_id })
+            state.executed.push({ tool: 'GMAIL_FETCH_EMAILS', user: body.user_id, account: body.connected_account_id })
             return Response.json(state.refuses ? { successful: false, error: 'invalid_grant' } : { successful: true, data: { mail: 1 } })
         }
         return Response.json({}, { status: 500 })
@@ -102,6 +105,13 @@ test('a second account of one app is told apart by a label, lives under its own 
     await (await apps.tools('coworker-1', signal()))[0]!.execute({}, signal(), 'c1')
     await (await apps.tools('coworker-2', signal()))[0]!.execute({}, signal(), 'c2')
     expect(fake.state.executed.map(call => call.user)).toEqual([managedAppUserId(1, second.id), managedAppUserId(1, first.id)])
+
+    expect(fake.state.executed.map(call => call.account)).toEqual(['ca_2', 'ca_1'])
+    const [oldTool] = await apps.tools('coworker-1', signal())
+    await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET connected_account_id='ca_replaced' WHERE id=?", args: [second.id] })
+    await expect(oldTool.execute({}, signal(), 'stale')).rejects.toThrow('no longer attached')
+    expect(fake.state.executed).toHaveLength(2)
+    await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET connected_account_id='ca_2' WHERE id=?", args: [second.id] })
 
     // Removing one revokes that one at Composio and leaves the other.
     await apps.act({ action: 'remove', id: second.id })
@@ -290,7 +300,8 @@ function connectServer() {
     const state = { signedIn: true }
     const network = (async (_input: RequestInfo | URL, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body))
-        if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: 1, result: {} }, { headers: { 'mcp-session-id': 's1' } })
+        if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-03-26' } }, { headers: { 'mcp-session-id': 's1' } })
+        if (body.method === 'tools/list') return connectToolList(body.id)
         if (body.method !== 'tools/call') return new Response(null, { status: 202 })
         const { name, action } = body.params.arguments.toolkits[0]
         const row = action === 'add' && !state.signedIn ? { toolkit: name, status: 'initiated', redirect_url: 'https://connect.composio.dev/link/lk_again' }
@@ -303,7 +314,8 @@ function connectServer() {
 test('with a Connect key an app that is no longer signed in shows as expired, one account per app, and leaves with the Vault entry', async () => {
     await initializeDesktopRound66(db)
     const server = connectServer()
-    const apps = desktopManagedApps(db, crypto, 1, { returnUrl: RETURN, coworkerExists: async () => true, connect: async () => managedAppsConnectClient('ck_fixture_consumer', server.network) })
+    const identity = await seedConnectCredential(db)
+    const apps = desktopManagedApps(db, crypto, 1, { returnUrl: RETURN, coworkerExists: async () => true, connect: async () => ({ ...managedAppsConnectClient('ck_fixture_consumer', server.network), identity }) })
     const account = (await apps.act({ action: 'connect', slug: 'gmail' })).view.accounts[0]!
     expect(account.status).toBe('active')
     await expect(apps.act({ action: 'connect', slug: 'gmail', label: 'Work' })).rejects.toThrow('already has an account')
@@ -318,6 +330,243 @@ test('with a Connect key an app that is no longer signed in shows as expired, on
 
     // The Vault entry that held the Connect key is removed: the apps listed through it leave the list.
     await db.execute("INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,label,user_id,connected_account_id,status,created_at) VALUES('p1','slack','slack','Slack','','rerun_mac_w1_p1','ca_p','active','x')")
-    await apps.forgetConnect()
+    const tx = await db.transaction('write')
+    try {
+        const { clearConnectAccounts } = await import('./assigned')
+        await clearConnectAccounts(tx)
+        await tx.commit()
+    } finally { tx.close() }
     expect((await db.execute('SELECT id FROM desktop_managed_app_accounts')).rows.map(row => row.id)).toEqual(['p1'])
+})
+
+test.each(['missing-id', 'wrong-id', 'missing-user', 'missing-toolkit', 'wrong-toolkit', 'disabled'])(
+    'a previously active project account loses its tools when Composio reports %s',
+    async (problem) => {
+        const fake = composio()
+        let changed = false
+        const apps = await service(async (input, init) => {
+            const answer = await fake.network(input, init)
+            if (!changed || init?.method === 'DELETE' || !String(input).endsWith('/connected_accounts/ca_1')) return answer
+            const record = await answer.json()
+            if (problem === 'missing-id') delete record.id
+            if (problem === 'wrong-id') record.id = 'ca_other'
+            if (problem === 'missing-user') delete record.user_id
+            if (problem === 'missing-toolkit') delete record.toolkit
+            if (problem === 'wrong-toolkit') record.toolkit = { slug: 'calendar' }
+            if (problem === 'disabled') record.is_disabled = true
+            return Response.json(record)
+        })
+        const account = (await apps.act({ action: 'connect', slug: 'gmail' })).view.accounts[0]!
+        fake.state.accounts.get('ca_1')!.status = 'ACTIVE'
+        await apps.act({ action: 'refresh', id: account.id })
+        await apps.act({ action: 'attach', id: account.id, agentId: 'ada', attached: true })
+        const [held] = await apps.tools('ada', signal())
+        expect(held.name).toBe('GMAIL_FETCH_EMAILS')
+
+        changed = true
+        const checked = await apps.act({ action: 'refresh', id: account.id, retry: problem !== 'disabled' })
+        expect(checked.signIn).toBeUndefined()
+        expect(checked.view.accounts[0]?.status).toBe('expired')
+        expect(await apps.tools('ada', signal())).toEqual([])
+        await expect(held.execute({}, signal(), 'refused')).rejects.toThrow('no longer attached')
+        if (problem !== 'disabled') {
+            if (problem.startsWith('missing-')) {
+                await expect(apps.act({ action: 'remove', id: account.id })).rejects.toMatchObject({ status: 502 })
+                expect((await apps.view()).accounts[0]?.id).toBe(account.id)
+            } else {
+                await apps.act({ action: 'remove', id: account.id })
+            }
+            expect(fake.state.removed).toEqual([])
+            expect(fake.state.links).toBe(1)
+        }
+    },
+)
+
+test.each(['account', 'attachment', 'key'])('a delayed tool reply is withheld after its %s changes', async (change) => {
+    let release!: () => void, started!: () => void
+    const received = new Promise<void>(resolve => { started = resolve })
+    const resume = new Promise<void>(resolve => { release = resolve })
+    const fake = composio()
+    const apps = await service(async (input, init) => {
+        const answer = await fake.network(input, init)
+        if (String(input).endsWith('/tools/execute/GMAIL_FETCH_EMAILS')) {
+            started()
+            await resume
+        }
+        return answer
+    })
+    const row = (await apps.act({ action: 'connect', slug: 'gmail' })).view.accounts[0]!
+    fake.state.accounts.get('ca_1')!.status = 'ACTIVE'
+    await apps.act({ action: 'refresh', id: row.id })
+    await apps.act({ action: 'attach', id: row.id, agentId: 'ada', attached: true })
+    const [tool] = await apps.tools('ada', signal())
+    const pending = tool.execute({}, signal(), 'reading')
+    await received
+    try {
+        if (change === 'account') {
+            await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET connected_account_id='ca_replacement' WHERE id=?", args: [row.id] })
+        } else if (change === 'attachment') {
+            await apps.act({ action: 'attach', id: row.id, agentId: 'ada', attached: false })
+        } else {
+            await apps.act({ action: 'set-key', key: KEY })
+        }
+    } finally { release() }
+    await expect(pending).rejects.toThrow('no longer attached')
+    expect(fake.state.executed.map(call => call.account)).toEqual(['ca_1'])
+})
+
+test('a different project key cannot inherit existing project account grants', async () => {
+    const fake = composio(), other = 'fixture-composio-key-0002'
+    const apps = await service(async (input, init) => {
+        const headers = new Headers(init?.headers)
+        if (headers.get('x-api-key') === other) headers.set('x-api-key', KEY)
+        return fake.network(input, { ...init, headers })
+    })
+    const account = (await apps.act({ action: 'connect', slug: 'gmail' })).view.accounts[0]!
+    fake.state.accounts.get('ca_1')!.status = 'ACTIVE'
+    await apps.act({ action: 'refresh', id: account.id })
+    await apps.act({ action: 'attach', id: account.id, agentId: 'ada', attached: true })
+    const previous = (await db.execute('SELECT revision FROM desktop_managed_app_key')).rows[0].revision
+    await expect(apps.act({ action: 'set-key', key: other })).rejects.toMatchObject({ status: 409 })
+    expect((await db.execute('SELECT revision FROM desktop_managed_app_key')).rows[0].revision).toBe(previous)
+    expect(await apps.tools('ada', signal())).toHaveLength(1)
+    await apps.act({ action: 'remove-key' })
+    expect((await apps.act({ action: 'set-key', key: other })).view).toMatchObject({ configured: true, accounts: [] })
+    expect(await apps.tools('ada', signal())).toEqual([])
+})
+
+test('a delayed project sign-in link cannot install a row or URL under a replacement key', async () => {
+    let release!: () => void, started!: () => void
+    const received = new Promise<void>(resolve => { started = resolve })
+    const resume = new Promise<void>(resolve => { release = resolve })
+    const fake = composio(), apps = await service(async (input, init) => {
+        const answer = await fake.network(input, init)
+        if (String(input).endsWith('/connected_accounts/link')) {
+            started()
+            await resume
+        }
+        return answer
+    })
+    const pending = apps.act({ action: 'connect', slug: 'gmail' })
+    await received
+    try { await apps.act({ action: 'set-key', key: KEY }) }
+    finally { release() }
+    await expect(pending).rejects.toMatchObject({ status: 409 })
+    expect((await apps.view()).accounts).toEqual([])
+})
+
+test('removing a project key leaves a separately held consumer Connect sign-in intact', async () => {
+    const fake = composio(), apps = await service(fake.network)
+    await apps.act({ action: 'connect', slug: 'gmail' })
+    await db.execute("INSERT INTO desktop_managed_app_accounts(id,slug,toolkit,name,user_id,connected_account_id,status,created_at) VALUES('consumer','slack','slack','Slack','','','active','today')")
+    await expect(apps.act({ action: 'attach', id: 'consumer', agentId: 'ada', attached: true })).rejects.toMatchObject({ status: 409 })
+    await expect(apps.act({ action: 'remove', id: 'consumer' })).rejects.toMatchObject({ status: 409 })
+    await apps.act({ action: 'remove-key' })
+    expect((await db.execute('SELECT id FROM desktop_managed_app_accounts')).rows.map(row => row.id)).toEqual(['consumer'])
+    expect(fake.state.removed).toEqual(['ca_1'])
+})
+
+test('a late project removal cannot delete a reconnected account or its coworker assignment', async () => {
+    let release!: () => void, started!: () => void
+    const received = new Promise<void>(resolve => { started = resolve })
+    const resume = new Promise<void>(resolve => { release = resolve })
+    const fake = composio(), apps = await service(async (input, init) => {
+        const answer = await fake.network(input, init)
+        if (String(input).endsWith('/connected_accounts/ca_1') && init?.method === 'DELETE') {
+            started()
+            await resume
+        }
+        return answer
+    })
+    const row = (await apps.act({ action: 'connect', slug: 'gmail' })).view.accounts[0]!
+    fake.state.accounts.get('ca_1')!.status = 'ACTIVE'
+    await apps.act({ action: 'refresh', id: row.id })
+    await apps.act({ action: 'attach', id: row.id, agentId: 'ada', attached: true })
+    const pending = apps.act({ action: 'remove', id: row.id })
+    await received
+    try {
+        await db.execute({ sql: "UPDATE desktop_managed_app_accounts SET connected_account_id='ca_replacement' WHERE id=?", args: [row.id] })
+    } finally { release() }
+    await expect(pending).rejects.toMatchObject({ status: 409 })
+    expect((await apps.view()).accounts[0]?.agentIds).toEqual(['ada'])
+    expect(fake.state.removed).toEqual(['ca_1'])
+})
+
+test.each(['ownership-502', 'delete-502', 'delete-refused'])('Vault keeps a project account and asks before leaving it signed in after %s', async problem => {
+    const fake = composio()
+    const apps = await service(async (input, init) => {
+        if (String(input).endsWith('/connected_accounts/ca_1')) {
+            if (problem === 'ownership-502' && init?.method === 'GET') return Response.json({}, { status: 502 })
+            if (init?.method === 'DELETE' && problem === 'delete-502') return Response.json({}, { status: 502 })
+            if (init?.method === 'DELETE' && problem === 'delete-refused') return Response.json({ success: false })
+        }
+        return fake.network(input, init)
+    })
+    const row = (await apps.act({ action: 'connect', slug: 'gmail' })).view.accounts[0]!
+    await expect(apps.act({ action: 'remove', id: row.id })).rejects.toMatchObject({ status: 502 })
+    expect((await apps.view()).accounts.map(entry => entry.id)).toEqual([row.id])
+    const held = await apps.act({ action: 'remove-key' })
+    expect(held.notSignedOut).toEqual(['Gmail'])
+    expect(held.view).toMatchObject({ configured: true, accounts: [{ id: row.id }] })
+    const forced = await apps.act({ action: 'remove-key', leaveSignedIn: true })
+    expect(forced.view).toMatchObject({ configured: false, accounts: [] })
+    expect(fake.state.accounts.has('ca_1')).toBe(true)
+})
+
+test('a confirmed 404 between account lookup and removal permits clearing the local row', async () => {
+    const fake = composio()
+    const apps = await service(async (input, init) => {
+        if (String(input).endsWith('/connected_accounts/ca_1') && init?.method === 'DELETE') {
+            fake.state.accounts.delete('ca_1')
+            return Response.json({}, { status: 404 })
+        }
+        return fake.network(input, init)
+    })
+    const row = (await apps.act({ action: 'connect', slug: 'gmail' })).view.accounts[0]!
+    expect((await apps.act({ action: 'remove', id: row.id })).view.accounts).toEqual([])
+})
+
+test('the same Gmail sign-in name and label in two modes preserves both owners across reopen and discovery', async () => {
+    await initializeDesktopRound66(db)
+    const consumer = connectServer(), project = composio(), identity = await seedConnectCredential(db)
+    const open = () => desktopManagedApps(db, crypto, 1, {
+        network: project.network, returnUrl: RETURN, coworkerExists: async () => true,
+        connect: async () => ({
+            ...managedAppsConnectClient('ck_fixture_consumer', consumer.network), identity,
+            signedIn: async () => ['gmail'],
+        }),
+    })
+    const apps = open()
+    const consumerRow = (await apps.act({ action: 'connect', slug: 'gmail' })).view.accounts[0]!
+    expect(consumerRow.status).toBe('active')
+    // Upgrade an existing profile with a personal sign-in before adding an independent project account.
+    await initializeDesktopRound73(db)
+    await initializeDesktopRound73(db)
+    expect((await apps.act({ action: 'set-key', key: KEY })).view.accounts).toEqual([])
+    const added = await apps.act({ action: 'connect', slug: 'gmail' })
+    expect(added.view.accounts).toHaveLength(1)
+    const projectRow = added.view.accounts[0]!
+    expect(projectRow.id).not.toBe(consumerRow.id)
+    project.state.accounts.get('ca_1')!.status = 'ACTIVE'
+    await apps.act({ action: 'refresh', id: projectRow.id })
+    await apps.act({ action: 'attach', id: projectRow.id, agentId: 'ada', attached: true })
+    await expect(apps.act({ action: 'connect', slug: 'gmail' })).rejects.toMatchObject({ status: 409 })
+
+    // Expose each credential independently without exercising the explicit sign-out/removal action.
+    // A real SQLite reopen makes sure the assignments and both mode-specific ids are durable.
+    db.close()
+    db = createClient({ url: `file:${join(dir, 'app.db')}` })
+    await db.execute('PRAGMA foreign_keys = ON')
+    const reopened = open()
+    expect((await reopened.view()).accounts).toMatchObject([{ id: projectRow.id, agentIds: ['ada'] }])
+    const storedKey = (await db.execute('SELECT sealed,revision,updated_at FROM desktop_managed_app_key WHERE id=1')).rows[0]!
+    await db.execute('DELETE FROM desktop_managed_app_key')
+    expect((await reopened.view()).accounts).toMatchObject([{ id: consumerRow.id, agentIds: [] }])
+    const found = await reopened.act({ action: 'find' })
+    expect(found.view.accounts).toMatchObject([{ id: consumerRow.id, status: 'active' }])
+    await expect(reopened.act({ action: 'refresh', id: projectRow.id })).rejects.toMatchObject({ status: 409 })
+    await db.execute({ sql: 'INSERT INTO desktop_managed_app_key(id,sealed,revision,updated_at) VALUES(1,?,?,?)', args: [storedKey.sealed, storedKey.revision, storedKey.updated_at] })
+    expect((await reopened.view()).accounts).toMatchObject([{ id: projectRow.id, agentIds: ['ada'] }])
+    await expect(reopened.act({ action: 'refresh', id: consumerRow.id })).rejects.toMatchObject({ status: 409 })
+    expect((await db.execute('SELECT id FROM desktop_managed_app_accounts')).rows.map(row => row.id).sort()).toEqual([consumerRow.id, projectRow.id].sort())
 })

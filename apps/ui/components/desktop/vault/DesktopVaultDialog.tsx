@@ -13,6 +13,7 @@ import { PanelSteps } from '@/components/ui/panel-steps'
 import { PanelScroller } from '@/components/ui/panel-list'
 import { Skeleton } from '@/components/ui/skeleton'
 import { desktopVaultListing, type DesktopVaultEntry, type DesktopVaultListing } from '@/lib/desktop/vault'
+import { invalidateDesktopConnectorApps } from '@/lib/desktop/use-connector-apps'
 import { DesktopManagedApps } from './DesktopManagedApps'
 import { DesktopVaultAdd, type VaultAddKind } from './DesktopVaultAdd'
 import { DesktopVaultDetail, type VaultDestination, type VaultRequest } from './DesktopVaultDetail'
@@ -42,17 +43,19 @@ type SuggestedApp = { slug: string; onUse: (account: { key: string; revision: st
 // Past this many entries the list gets a search field: a handful is read at a glance.
 const SEARCH_FROM = 8
 
-export function DesktopVaultDialog({ onClose, suggestedApp, coworkerApp }: { onClose: () => void; suggestedApp?: SuggestedApp; coworkerApp?: string }) {
+type VaultDialogProps = { onClose: () => void; suggestedApp?: SuggestedApp; coworkerApp?: string; managedApp?: string }
+
+export function DesktopVaultDialog({ onClose, suggestedApp, coworkerApp, managedApp }: VaultDialogProps) {
     const opener = useRef<HTMLElement | null>(typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null)
     return <Dialog open onOpenChange={open => { if (!open) onClose() }}>
         <PanelDialogContent className="sm:h-[min(48rem,90dvh)] sm:max-w-2xl"
             onCloseAutoFocus={event => {
                 event.preventDefault()
-                const target = (suggestedApp || coworkerApp) && opener.current?.isConnected ? opener.current
+                const target = (suggestedApp || coworkerApp || managedApp) && opener.current?.isConnected ? opener.current
                     : document.querySelector<HTMLElement>('[aria-label^="Workspace menu,"]')
                 target?.focus({ preventScroll: true })
             }}>
-            <VaultPanel suggestedApp={suggestedApp} coworkerApp={coworkerApp} onClose={onClose} />
+            <VaultPanel suggestedApp={suggestedApp} coworkerApp={coworkerApp} managedApp={managedApp} onClose={onClose} />
         </PanelDialogContent>
     </Dialog>
 }
@@ -62,9 +65,9 @@ export function DesktopVaultDialog({ onClose, suggestedApp, coworkerApp }: { onC
  * tiles, the MCP servers, local programs and secrets as rows under them, and the Mac's managed
  * (Composio) apps as their own section at the bottom.
  */
-function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: SuggestedApp; coworkerApp?: string; onClose: () => void }) {
+function VaultPanel({ suggestedApp, coworkerApp, managedApp, onClose }: VaultDialogProps) {
     const [listing, setListing] = useState<DesktopVaultListing | null>(null)
-    const [page, setPage] = useState(suggestedApp ? 'add' : 'list')
+    const [page, setPage] = useState(suggestedApp ? 'add' : managedApp ? 'managed' : 'list')
     const [query, setQuery] = useState('')
     const [error, setError] = useState('')
     const [busy, setBusy] = useState(true)
@@ -79,6 +82,7 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
             const result = await requestVault(controller.signal, input)
             if (controller.signal.aborted) return new Error('The Vault request was cancelled.')
             setListing(result)
+            if (input?.operation === 'share' || input?.operation === 'delete') invalidateDesktopConnectorApps()
             if (next) setPage(typeof next === 'function' ? next(result) : next)
             return null
         } catch (cause) {
@@ -138,17 +142,25 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
     const others = order.flatMap(group => filtered.filter(item => entryGroup(item) === group))
     const empty = !coworkerApp && listing?.entries.length === 0
     const alert = error && <p className="text-sm text-destructive" role="alert">{error}</p>
+    const managedSection = listing && <DesktopManagedApps initialSearch={managedApp} coworkers={listing.coworkers} disabled={busy}
+        onVaultChanged={() => { void run() }}
+        onChooseCoworkers={name => { void run(undefined, fresh => {
+            const connector = fresh.entries.find(item => 'kind' in item && item.kind === 'mcp' && item.name === name)
+            if (!connector) throw new Error('The Composio connector is no longer in this Vault.')
+            return connector.id
+        }) }} />
     return <>
-        <DialogHeaderBar icon={LockKeyholeIcon} title={suggestedApp ? 'Add account to Vault' : coworkerApp ? 'Manage app in Vault' : 'Vault'}
+        <DialogHeaderBar icon={LockKeyholeIcon} title={suggestedApp ? 'Add account to Vault' : coworkerApp || managedApp ? 'Manage app in Vault' : 'Vault'}
             description="Sign in to an app once, then pick the coworkers that use it."
             actions={stepKey === 'list' && listing && !empty && !suggestedApp
                 && <Button size="xs" variant="secondary" disabled={busy} onClick={() => add('app', coworkerApp)}><Plus className="size-3" />{coworkerApp ? 'Add account' : 'Add'}</Button>} />
         <div className="flex min-h-0 flex-1 flex-col">
             <PanelSteps stepKey={stepKey} depth={stepKey === 'list' ? 0 : 1}>
                 {!listing ? (error ? <div className="space-y-4 p-4">{alert}<Button variant="outline" disabled={busy} onClick={() => void run()}>Try again</Button></div> : <VaultSkeleton />)
+                    : page === 'managed' ? <PanelScroller className="space-y-4 p-4">{alert}{managedSection}</PanelScroller>
                     : page === 'add' ? <DesktopVaultAdd kind={addKind} onKind={kind => { setError(''); setAddKind(kind) }} slug={suggestedApp?.slug ?? coworkerApp ?? addSlug}
                         busy={busy} alert={alert} existingAccounts={accounts}
-                        onBack={suggestedApp ? undefined : () => navigate('list')} onCancel={suggestedApp ? onClose : () => navigate('list')}
+                        onBack={suggestedApp ? undefined : () => navigate(managedApp ? 'managed' : 'list')} onCancel={suggestedApp ? onClose : () => navigate('list')}
                         onCreate={input => void run(input, 'list')}
                         onSaveApp={async (slug, methodId, values, account) => {
                             const previousIds = new Set(listing.entries.map(item => item.id))
@@ -160,7 +172,7 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
                             if (failure) throw failure
                         }} />
                     : entry ? <DesktopVaultDetail key={entry.revision} entry={entry} icon={logoOf(entry)} coworkers={listing.coworkers} busy={busy} alert={alert} onSubmit={run}
-                        onBack={suggestedApp ? undefined : () => navigate('list')}
+                        onBack={suggestedApp ? undefined : () => navigate(managedApp ? 'managed' : 'list')}
                         onUseInChat={suggestedApp && (() => suggestedApp.onUse({ key: 'vault:' + entry.id, revision: entry.revision }))} />
                     : suggestedApp ? <div className="space-y-4 p-4">{alert}<Button variant="outline" onClick={onClose}>Return to chat</Button></div>
                     : <PanelScroller className={empty ? 'flex flex-col gap-4 p-4' : 'space-y-4 p-4'}>
@@ -184,7 +196,7 @@ function VaultPanel({ suggestedApp, coworkerApp, onClose }: { suggestedApp?: Sug
                                 </div>}
                             </>}
                         {/* The Mac's own: apps signed in through the person's Composio account. Last, so the top reads as the cloud's Vault. */}
-                        {!coworkerApp && <DesktopManagedApps coworkers={listing.coworkers} disabled={busy} onVaultChanged={() => { void run() }} />}
+                        {!coworkerApp && managedSection}
                     </PanelScroller>}
             </PanelSteps>
         </div>

@@ -14,10 +14,10 @@ const coworkers = [{ id: 'c1', name: 'Pat' }, { id: 'c2', name: 'Sam' }]
 
 async function mount(first: unknown, answers: Record<string, { status?: number; body: unknown }> = {}) {
     const posts: unknown[] = []
-    const opened = vi.fn(), vaultChanged = vi.fn()
+    const opened = vi.fn(), vaultChanged = vi.fn(), chooseCoworkers = vi.fn()
     vi.stubGlobal('open', opened)
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
-        if (init?.method !== 'POST') return Response.json(first)
+        if (init?.method !== 'POST') return typeof first === 'function' ? first() : Response.json(first)
         const body = JSON.parse(String(init.body)); posts.push(body)
         const answer = answers[body.action] ?? { body: { view: first } }
         return Response.json(answer.body, { status: answer.status ?? 200 })
@@ -26,9 +26,9 @@ async function mount(first: unknown, answers: Record<string, { status?: number; 
     document.body.appendChild(host)
     const root = createRoot(host)
     roots.push(root)
-    await act(async () => { root.render(<DesktopManagedApps coworkers={coworkers} onVaultChanged={vaultChanged} />) })
+    await act(async () => { root.render(<DesktopManagedApps coworkers={coworkers} onVaultChanged={vaultChanged} onChooseCoworkers={chooseCoworkers} />) })
     await act(async () => { await Promise.resolve() })
-    return { host, posts, opened, vaultChanged }
+    return { host, posts, opened, vaultChanged, chooseCoworkers }
 }
 const press = async (host: HTMLElement, label: string) => {
     await act(async () => { [...host.querySelectorAll('button')].find(node => (node.getAttribute('aria-label') ?? node.textContent) === label)!.click() })
@@ -101,11 +101,14 @@ test('a Composio Connect key becomes a Vault connector and the Vault list is rea
 
 test('with Composio kept in the Vault: apps connect here, coworkers are chosen on the Vault entry', async () => {
     const view = { configured: true, connector: 'composio', apps, accounts: [{ id: ACCOUNT, slug: 'gmail', name: 'Gmail', status: 'pending', agentIds: [] }] }
-    const { host, posts, opened } = await mount(view, {
+    const { host, posts, opened, chooseCoworkers } = await mount(view, {
         connect: { body: { view, signIn: 'https://connect.composio.dev/link/lk_1' } },
         refresh: { body: { view: { ...view, accounts: [{ ...view.accounts[0], status: 'active' }] }, signIn: 'https://connect.composio.dev/link/lk_2' } },
     })
-    expect(host.textContent).toContain('Coworkers given “composio” in the list above can then use it.')
+    expect(host.textContent).toContain('all its signed-in apps when their Custom MCP servers permission is on.')
+    await press(host, 'Choose coworkers for Composio')
+    expect(chooseCoworkers).toHaveBeenCalledWith('composio')
+    expect(posts).toEqual([])
     expect(host.textContent).not.toContain('Remove the Composio key')
     await press(host, 'Connect Outlook')
     expect(opened).toHaveBeenCalledWith('https://connect.composio.dev/link/lk_1', '_blank', 'noopener,noreferrer')
@@ -113,7 +116,7 @@ test('with Composio kept in the Vault: apps connect here, coworkers are chosen o
     expect(posts.at(-1)).toEqual({ action: 'refresh', id: ACCOUNT, retry: true })
     // Signed in: no coworker boxes, and removing is only from this list.
     expect(host.querySelector('input[type="checkbox"]')).toBeNull()
-    expect(host.textContent).toContain('Removing it signs it out at Composio too.')
+    expect(host.textContent).toContain('Removing this account signs it out at Composio.')
     await press(host, 'Find apps already signed in at Composio')
     expect(posts.at(-1)).toEqual({ action: 'find' })
 })
@@ -184,4 +187,51 @@ test('removing the key with no account signed in says there is nothing to sign o
     const none = await mount({ configured: true, apps, accounts: [], keyRemovalSignsOut: 0 })
     await press(none.host, 'Remove the Composio key')
     expect(document.body.textContent).toContain('No account here has a sign-in at Composio to sign out.')
+})
+
+
+test('allows retrying a failed managed-apps read without asking for the key again', async () => {
+    const read = vi.fn().mockResolvedValueOnce(Response.json({ error: 'Service unavailable' }, { status: 503 }))
+        .mockResolvedValueOnce(Response.json({ configured: true, apps, accounts: [] }))
+    const { host } = await mount(read)
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Could not load managed apps')
+    expect(host.querySelector('input[aria-label="Composio key"]')).toBeNull()
+    await press(host, 'Retry managed apps')
+    expect(host.querySelector('button[aria-label="Connect Gmail"]')).not.toBeNull()
+    expect(read).toHaveBeenCalledTimes(2)
+})
+
+test('returning from the browser verifies the opened account without starting another login', async () => {
+    const other = { id: '22222222-2222-4222-8222-222222222222', slug: 'outlook', name: 'Outlook', status: 'pending', agentIds: [] }
+    const gmail = { id: ACCOUNT, slug: 'gmail', name: 'Gmail', status: 'pending', agentIds: [] }
+    const first = { configured: true, apps, accounts: [other] }
+    const { host, posts, opened } = await mount(first, {
+        connect: { body: { view: { ...first, accounts: [other, gmail] }, signIn: 'https://connect.composio.example/link/1' } },
+        refresh: { body: { view: { ...first, accounts: [other, { ...gmail, status: 'active' }] } } },
+    })
+    await press(host, 'Connect Gmail')
+    await press(host, 'Open sign-in page')
+    expect(posts).toEqual([{ action: 'connect', slug: 'gmail' }])
+    expect(opened.mock.calls.map(args => args[0])).toEqual(['https://connect.composio.example/link/1', 'https://connect.composio.example/link/1'])
+    await act(async () => { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('focus')) })
+    expect(posts).toEqual([{ action: 'connect', slug: 'gmail' }, { action: 'refresh', id: ACCOUNT }])
+    expect(host.querySelector('[data-managed-account="gmail"]')?.textContent).toContain('Signed in')
+    expect(host.querySelector('[data-managed-account="outlook"]')?.textContent).toContain('Waiting')
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    expect(posts).toHaveLength(2)
+    expect(opened).toHaveBeenCalledTimes(2)
+    expect(host.textContent).not.toContain('Open sign-in page')
+})
+
+
+test('checks a saved Connect account without opening a login and shows a revoked sign-in', async () => {
+    const account = { id: ACCOUNT, slug: 'gmail', name: 'Gmail', status: 'active', agentIds: [] }
+    const saved = { configured: true, connector: 'composio', apps, accounts: [account] }
+    const { host, posts, opened } = await mount(saved, {
+        refresh: { body: { view: { ...saved, accounts: [{ ...account, status: 'expired' }] } } },
+    })
+    await press(host, 'Check sign-in')
+    expect(posts).toEqual([{ action: 'refresh', id: ACCOUNT }])
+    expect(opened).not.toHaveBeenCalled()
+    expect(host.textContent).toContain('The sign-in has expired.')
 })

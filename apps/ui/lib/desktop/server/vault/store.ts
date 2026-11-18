@@ -12,6 +12,8 @@ import { oauthHttps } from '../mcp/oauth-network'
 import type { OAuthTokenBundle } from '../mcp/store'
 import { withRosterWrite } from '../roster-writes'
 import { vaultProgramCredentialContext } from './mcp-programs'
+import { COMPOSIO_CONNECT, COMPOSIO_CONNECT_HEADER } from '../managed-apps/client'
+import { clearConnectAccounts } from '../managed-apps/assigned'
 import type { DesktopSecretCrypto } from '../secret-requests/crypto'
 
 // Whether a browser sign-in entry has no usable saved sign-in, as its own status reports it.
@@ -236,6 +238,10 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                     const entry = listing.entries.find(row => row.id === input.id)
                     if (!entry) throw new DesktopHttpError(404, 'Vault entry not found.')
                     if (input.revision !== entry.revision) throw new DesktopHttpError(409, 'This Vault entry changed. Reopen it and try again.')
+                    const changesKey = input.operation === 'delete' || input.operation === 'replace-server-header' || input.operation === 'replace-server-bearer' || input.operation === 'enable-server-oauth'
+                    if (changesKey && 'kind' in entry && entry.kind === 'mcp' && !entry.catalog && entry.name === 'composio' && entry.url === COMPOSIO_CONNECT && entry.headerName === COMPOSIO_CONNECT_HEADER) {
+                        await clearConnectAccounts(tx)
+                    }
                     if (input.operation === 'share') {
                         const agentIds = [...new Set(input.agentIds)]
                         if (agentIds.some(id => !listing.coworkers.some(agent => agent.id === id))) {

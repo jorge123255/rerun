@@ -6,7 +6,6 @@ const state = vi.hoisted(() => ({
     mutations: [] as DesktopVaultMutation[],
     checks: [] as string[],
     receipt: null as null | { state: string; credentialRejected?: true } | Error,
-    forgotten: 0,
 }))
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 const account = (n: number, hasBearer = true) => ({ id: id(n), revision: id(100 + n), name: 'agentmail', kind: 'mcp' as const, url: 'https://mcp.agentmail.to/mcp', hasBearer,
@@ -31,13 +30,12 @@ vi.mock('@/lib/desktop/server/mcp-binding', () => ({ getDesktopRemoteMcpService:
     checkVaultCatalogHealth: async (entry: string) => { state.checks.push(entry); if (state.receipt instanceof Error) throw state.receipt; return state.receipt },
 }) }))
 
-vi.mock('@/lib/desktop/server/managed-apps/binding', () => ({ openDesktopManagedApps: async () => ({ forgetConnect: async () => { state.forgotten++ } }) }))
-vi.mock('@/lib/desktop/server/managed-apps/service', () => ({ COMPOSIO_CONNECT_NAME: 'composio' }))
+const { POST } = await import('./route')
 
-const add = (methodId = 'api-key') => import('./route').then(({ POST }) => POST(new Request('http://127.0.0.1/api/desktop/vault', { method: 'POST',
-    body: JSON.stringify({ operation: 'add-app', slug: 'agentmail', methodId, values: { AGENTMAIL_API_KEY: 'synthetic-key' } }) })))
+const add = (methodId = 'api-key') => POST(new Request('http://127.0.0.1/api/desktop/vault', { method: 'POST',
+    body: JSON.stringify({ operation: 'add-app', slug: 'agentmail', methodId, values: { AGENTMAIL_API_KEY: 'synthetic-key' } }) }))
 
-beforeEach(() => { state.entries = [account(1)]; state.mutations = []; state.checks = []; state.receipt = null; state.forgotten = 0 })
+beforeEach(() => { state.entries = [account(1)]; state.mutations = []; state.checks = []; state.receipt = null })
 
 test('an account whose key the app refuses is removed again and the person is told which app refused it', async () => {
     state.receipt = { state: 'error', credentialRejected: true }
@@ -68,8 +66,8 @@ test('an account saved without a key is not dialed', async () => {
     expect(state.checks).toEqual([])
 })
 
-const replace = () => import('./route').then(({ POST }) => POST(new Request('http://127.0.0.1/api/desktop/vault', { method: 'POST',
-    body: JSON.stringify({ operation: 'replace-server-bearer', id: id(1), revision: id(101), bearer: 'synthetic-new-key' }) })))
+const replace = () => POST(new Request('http://127.0.0.1/api/desktop/vault', { method: 'POST',
+    body: JSON.stringify({ operation: 'replace-server-bearer', id: id(1), revision: id(101), bearer: 'synthetic-new-key' }) }))
 
 test('a replaced key the app refuses stays saved and the person is told now', async () => {
     state.receipt = { state: 'error', credentialRejected: true }
@@ -88,16 +86,13 @@ test('a replaced key the app accepts, or an app that does not answer, saves quie
     expect((await replace()).status).toBe(200)
 })
 
-test('removing the Composio Connect entry takes the apps listed through it out of Managed apps, and no other entry does', async () => {
-    const { POST } = await import('./route')
+test('forwards deletion to the atomic Vault store for the exact selected entry', async () => {
     const remove = (n: number) => POST(new Request('http://127.0.0.1/api/desktop/vault', { method: 'POST', body: JSON.stringify({ operation: 'delete', id: id(n), revision: id(100 + n) }) }))
     state.entries = [account(1), { id: id(2), revision: id(102), name: 'composio', kind: 'mcp' as const, url: 'https://connect.composio.dev/mcp', hasBearer: false, headerName: 'x-consumer-api-key', agentIds: [], sharedWithAll: false },
         // A server that only borrows the name reaches somewhere else and is not the Connect entry.
         { id: id(3), revision: id(103), name: 'composio', kind: 'mcp' as const, url: 'https://mcp.example.test/mcp', hasBearer: true, agentIds: [], sharedWithAll: false }]
     expect((await remove(1)).status).toBe(200)
     expect((await remove(3)).status).toBe(200)
-    expect(state.forgotten).toBe(0)
     expect((await remove(2)).status).toBe(200)
-    expect(state.forgotten).toBe(1)
     expect(state.entries).toEqual([])
 })

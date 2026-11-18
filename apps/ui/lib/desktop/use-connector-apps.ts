@@ -7,7 +7,7 @@ import { buildDesktopConnectorApps, desktopCoworkerConnectorsSchema, NO_CONNECTO
 // in place while a newer one is read, so rows never flash back to their generic icon.
 const snapshots = new Map<string, { apps: DesktopConnectorApps; at: number }>()
 const listeners = new Map<string, Set<() => void>>()
-const inflight = new Set<string>()
+const inflight = new Map<string, AbortController>()
 // How many mounted replies of each coworker hold a step that may belong to an app.
 const asking = new Map<string, number>()
 /** A chat opened again this soon reuses what the last one read. */
@@ -15,16 +15,18 @@ const FRESH_MS = 30_000
 
 async function load(agentId: string) {
     if (inflight.has(agentId)) return
-    inflight.add(agentId)
+    const controller = new AbortController()
+    inflight.set(agentId, controller)
     let apps = snapshots.get(agentId)?.apps ?? NO_CONNECTOR_APPS
     try {
-        const response = await fetch(`/api/desktop/coworkers/${encodeURIComponent(agentId)}/connectors`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) })
+        const response = await fetch(`/api/desktop/coworkers/${encodeURIComponent(agentId)}/connectors`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]) })
         if (response.ok) {
             const listing = desktopCoworkerConnectorsSchema.parse(await response.json())
             if (listing.agentId === agentId) apps = buildDesktopConnectorApps(listing)
         }
     } catch { /* Rows keep what they showed: the last snapshot, or today's generic row. */ }
-    finally { inflight.delete(agentId) }
+    finally { if (inflight.get(agentId) === controller) inflight.delete(agentId) }
+    if (controller.signal.aborted) return
     snapshots.set(agentId, { apps, at: Date.now() })
     for (const listener of listeners.get(agentId) ?? []) listener()
 }
@@ -46,13 +48,21 @@ function subscribe(agentId: string, wanted: boolean, listener: () => void) {
     }
 }
 
-/** After the coworker's apps change, so an open chat's rows follow. */
-export function invalidateDesktopConnectorApps(agentId: string) {
-    if (asking.has(agentId)) void load(agentId)
-    else snapshots.delete(agentId)
+export const DESKTOP_CONNECTOR_APPS_CHANGED = 'rerun:connector-apps-changed'
+
+/** Refresh visible chat annotations and the open coworker Apps list after a Vault change. */
+export function invalidateDesktopConnectorApps(agentId?: string) {
+    for (const id of agentId ? [agentId] : new Set([...asking.keys(), ...snapshots.keys(), ...inflight.keys()])) {
+        inflight.get(id)?.abort()
+        inflight.delete(id)
+        if (asking.has(id)) void load(id)
+        else snapshots.delete(id)
+    }
+    window.dispatchEvent(new CustomEvent(DESKTOP_CONNECTOR_APPS_CHANGED, { detail: agentId }))
 }
 
 export function resetDesktopConnectorAppsForTest() {
+    for (const controller of inflight.values()) controller.abort()
     snapshots.clear(); listeners.clear(); inflight.clear(); asking.clear()
 }
 

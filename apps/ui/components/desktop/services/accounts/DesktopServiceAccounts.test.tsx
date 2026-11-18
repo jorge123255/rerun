@@ -15,8 +15,8 @@ const state = vi.hoisted(() => ({
 vi.mock('@/lib/desktop/service-accounts-client', () => ({ createDesktopServiceAccountsClient: () => state }))
 vi.mock('@/components/ui/panel-steps', () => ({ PanelSteps: ({ children }: { children: ReactNode }) => children }))
 vi.mock('../../vault/DesktopVaultDialog', () => ({
-    DesktopVaultDialog: ({ coworkerApp, onClose }: { coworkerApp: string; onClose: () => void }) =>
-        <div role="dialog" aria-label={coworkerApp}><button onClick={onClose}>Close Vault</button></div>,
+    DesktopVaultDialog: ({ coworkerApp, managedApp, onClose }: { coworkerApp?: string; managedApp?: string; onClose: () => void }) =>
+        <div role="dialog" aria-label={coworkerApp ?? managedApp}><button onClick={onClose}>Close Vault</button></div>,
 }))
 import { DesktopServiceAccounts } from './DesktopServiceAccounts'
 import { DesktopCoworkerServices } from '../DesktopCoworkerServices'
@@ -25,9 +25,12 @@ import { DesktopCoworkerServices } from '../DesktopCoworkerServices'
 const roots: Array<{ root: Root; host: HTMLElement }> = []
 const agentId = '00000000-0000-4000-8000-000000000001'
 const vaultRequest = vi.fn<typeof fetch>()
+const connectorsRequest = vi.fn<typeof fetch>()
 beforeEach(() => {
     vaultRequest.mockReset().mockResolvedValue(Response.json({ agentId, attached: [], available: [] }))
-    vi.stubGlobal('fetch', vaultRequest)
+    connectorsRequest.mockReset().mockImplementation(async url => Response.json({ agentId: String(url).split('/')[4], servers: [], toolkits: [], managedAccounts: [] }))
+    vi.stubGlobal('fetch', (url: RequestInfo | URL, init?: RequestInit) =>
+        String(url).endsWith('/connectors') ? connectorsRequest(url, init) : vaultRequest(url, init))
 })
 afterEach(() => { vi.unstubAllGlobals() })
 afterEach(() => { for (const { root, host } of roots.splice(0)) { act(() => root.unmount()); host.remove() }; state.detail.mockReset(); state.installed.mockReset().mockResolvedValue([]); state.reconfigure.mockReset() })
@@ -136,4 +139,37 @@ it('opens the migrated app in Vault and refreshes the Apps list when it closes',
     await act(async () => { [...host.querySelectorAll('button')].find(button => button.textContent === 'Close Vault')!.click() })
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     expect(vaultRequest).toHaveBeenCalledTimes(before + 1)
+})
+
+
+it('lists only the coworker’s managed accounts and follows a revoked connector', async () => {
+    const account = { id: '11111111-1111-4111-8111-111111111111', slug: 'gmail', name: 'Gmail', label: 'Work', source: 'connect', status: 'active' }
+    const reply = (owner: string, managedAccounts: unknown[]) => Response.json({ agentId: owner, servers: [], toolkits: [], managedAccounts })
+    connectorsRequest.mockResolvedValueOnce(reply('coworker-1', [account]))
+    const gmail = { ...row(null, false, false), slug: 'gmail', name: 'Gmail', authMethods: [{ ...details().authMethods[0], kind: 'composio' as const }] }
+    const host = await render([gmail])
+    expect([...host.querySelectorAll('button')].some(button => button.textContent === 'Install')).toBe(false)
+    expect(host.textContent).toContain('Gmail · Work')
+    expect(host.textContent).toContain('Custom MCP servers')
+    expect(host.textContent).not.toContain('No apps installed')
+    connectorsRequest.mockResolvedValueOnce(reply('coworker-1', []))
+    await act(async () => { window.dispatchEvent(new CustomEvent('rerun:connector-apps-changed', { detail: 'coworker-1' })) })
+    expect(host.textContent).not.toContain('Gmail · Work')
+    expect(host.textContent).toContain('No apps installed')
+    expect([...host.querySelectorAll('button')].some(button => button.textContent === 'Install')).toBe(true)
+    connectorsRequest.mockResolvedValueOnce(reply('another-coworker', [account]))
+    await act(async () => { window.dispatchEvent(new CustomEvent('rerun:connector-apps-changed')) })
+    expect(host.textContent).not.toContain('Gmail · Work')
+    expect(host.textContent).toContain('Could not load assigned Composio apps')
+    expect(host.textContent).not.toContain('No apps installed')
+})
+
+
+it('opens the managed Vault sign-in from Install when the app only offers Composio', async () => {
+    const method = { ...details().authMethods[0], id: 'composio', kind: 'composio' as const, availability: { id: 'composio', supported: false, reason: 'Composio auth is not a local desktop method' } }
+    state.detail.mockResolvedValue({ ...details(), name: 'Gmail', accounts: [], authMethods: [method] })
+    const host = await render([row(null, false, false)])
+    await act(async () => { [...host.querySelectorAll('button')].find(button => button.textContent === 'Install')!.click() })
+    expect(host.querySelector('[role=dialog][aria-label=Gmail]')).not.toBeNull()
+    expect(host.textContent).not.toContain('Composio auth is not a local desktop method')
 })
