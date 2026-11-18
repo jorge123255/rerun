@@ -151,6 +151,24 @@ test('browser takeover renders with original waiting metadata and opens its exac
     await act(async () => root.unmount())
 })
 
+test('a setup waiting for the person reads « Setup waiting for you » and opens that setup chat without answering it', async () => {
+    const setup = { id: 'setup:setup-chat', kind: 'setup', agentId: 'researcher', agentName: 'Researcher', agentEnabled: true, sessionId: 'setup-chat', title: 'Setup', summary: 'Setup waiting for you', requestedAt: '2026-11-04T11:58:00.000Z', updatedAt: '2026-11-04T11:58:00.000Z' }
+    const fetcher = routedFetch(() => Response.json({ items: [setup], unavailableAgentIds: [], checkedAt }))
+    vi.stubGlobal('fetch', fetcher)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container), onOpen = vi.fn()
+    await act(async () => root.render(<DesktopActionsInbox open onOpenConversation={onOpen} />))
+    const row = container.querySelector<HTMLElement>('[data-actions-inbox-item="setup:setup-chat"]')!
+    expect(row.textContent).toContain('Setup waiting for you')
+    expect(row.textContent).toContain('Researcher · Setup')
+    expect(pillOf(container).getAttribute('aria-label')).toBe('Actions: 1 pending')
+    await act(async () => row.click())
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'setup-chat', agentId: 'researcher', title: 'Setup' }))
+    // Opening navigates only: nothing was posted.
+    expect(fetcher.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true)
+    await act(async () => root.unmount())
+})
+
 test('lists pending question and approval rows, opens a navigation hit, and stops polling on unmount', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')

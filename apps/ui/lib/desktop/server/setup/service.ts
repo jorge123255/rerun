@@ -3,7 +3,7 @@ import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { DESKTOP_SETUP_DEFAULT_PROMPT, desktopSetupMutationResultSchema, type DesktopSetupMutationResult, type DesktopSetupView } from '@rerun/contracts'
-import { EngineRequestError, getSessionMessages, request } from '@/lib/engine/client'
+import { EngineRequestError, getSessionMessages, listRuns, request } from '@/lib/engine/client'
 import type { Client, Row } from '@libsql/client'
 import { DesktopHttpError } from '../auth'
 import { openDesktopDatabase } from '../database'
@@ -197,4 +197,31 @@ export async function assertDesktopSetupChatAllowed(runtime: DesktopRuntime, age
     if (!setup.pending || await skippedOf(db, agentId)) return
     const session = sessionId ? await findDesktopSession(db, sessionId) : null
     if (!session || session.agentId !== agentId || session.engineSessionId !== setup.sessionId) throw new DesktopSetupPendingError(setup.sessionId !== null)
+}
+
+/**
+ * Read-only: the local chat of a switched-on coworker whose setup was started and now waits for the
+ * person (no setup turn running, not skipped, not finished). Null when nothing waits on the person.
+ * Unlike readDesktopSetupView this resumes no saved intent and creates no chat row. An engine
+ * without this coworker's setup (404) has nothing waiting; any other failed read throws.
+ */
+export async function readDesktopSetupWaitingChat(runtime: DesktopRuntime, agentId: string, signal?: AbortSignal): Promise<{ sessionId: string } | null> {
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    await ensureDesktopSetupSchema(db)
+    const agent = await findDesktopAgent(db, agentId)
+    if (!agent || !agent.enabled) return null
+    try { await assertCoworkerNotDeleting(db, agentId) } catch { return null }
+    let setup: EngineSetup
+    try {
+        setup = await request(engineOf(runtime), `/agents/${encodeURIComponent(agent.engineAgentId)}/setup`, { method: 'GET', ...(signal && { signal }) }, value => engineSetupSchema.parse(value))
+    } catch (error) {
+        if (error instanceof EngineRequestError && error.status === 404) return null
+        throw error
+    }
+    if (!setup.pending || !setup.sessionId || setup.completedAt || await skippedOf(db, agentId)) return null
+    const local = (await db.execute({ sql: 'SELECT id FROM desktop_sessions WHERE agent_id=? AND engine_session_id=?', args: [agent.id, setup.sessionId] })).rows[0]
+    if (!local) return null
+    // A setup turn still running is the coworker's move, not the person's.
+    const running = await listRuns(engineOf(runtime), agent.engineAgentId, { sessionId: setup.sessionId, status: 'running', limit: 1 }, signal ? { signal } : {})
+    return running.length ? null : { sessionId: String(local.id) }
 }

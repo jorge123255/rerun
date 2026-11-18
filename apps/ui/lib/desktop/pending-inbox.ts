@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { desktopAttentionItemSchema, type DesktopAttentionItem } from './attention'
+import { desktopAttentionItemSchema } from './attention'
 
 // The desktop pending-inbox contract: the shared attention projection filtered by durable,
 // inbox-only read receipts. The receipts are keyed on the exact pending request identity the
@@ -9,13 +9,18 @@ import { desktopAttentionItemSchema, type DesktopAttentionItem } from './attenti
 
 // One row of the pending inbox: the same shape as the shared attention projection, minus the
 // items this user already marked read.
+// The inbox's own rows add one kind to the shared attention ones: « setup », a coworker whose
+// started setup waits for the person. Opening it opens that setup chat; it answers nothing.
+export const desktopPendingInboxItemSchema = desktopAttentionItemSchema.extend({
+    kind: z.enum([...desktopAttentionItemSchema.shape.kind.options, 'setup']),
+})
 export const desktopPendingInboxSchema = z.object({
-    items: z.array(desktopAttentionItemSchema),
+    items: z.array(desktopPendingInboxItemSchema),
     // A partial read cannot be presented as an empty or fully resolved workspace.
     unavailableAgentIds: z.array(z.string()),
     checkedAt: z.string(),
 })
-export type DesktopPendingInboxItem = DesktopAttentionItem
+export type DesktopPendingInboxItem = z.infer<typeof desktopPendingInboxItemSchema>
 export type DesktopPendingInbox = z.infer<typeof desktopPendingInboxSchema>
 export const DESKTOP_PENDING_INBOX_URL = '/api/desktop/pending-inbox'
 export const DESKTOP_PENDING_INBOX_READ_URL = '/api/desktop/pending-inbox/read'
@@ -26,7 +31,7 @@ export const DESKTOP_PENDING_INBOX_READ_URL = '/api/desktop/pending-inbox/read'
 // (like `desktopCompletionReadSchema`); this type keeps the client and the server in sync.
 export type DesktopPendingReadTarget = {
     id: string
-    kind: 'question' | 'approval' | 'takeover' | 'service' | 'secret' | 'mcp' | 'tool-install' | 'info'
+    kind: DesktopPendingInboxItem['kind']
     agentId: string
     sessionId: string
 }

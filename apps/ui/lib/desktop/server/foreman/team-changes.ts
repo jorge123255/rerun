@@ -91,7 +91,7 @@ export function sealTeamChanges(raw: unknown, workspace: TeamChangeWorkspace): {
             : line.action === 'allow_calls' ? [`Let ${chief ? 'the Chief of Staff' : name} ask ${targets.length > 3 ? `${targets.slice(0, 3).map(target => target.name).join(', ')} and ${targets.length - 3} more` : targets.map(target => target.name).join(', ')} for help`,
                 chief ? 'It can send them a message and read the answer. Each coworker still works with its own permissions.' : 'Added to who it may already ask. It also needs the Call coworkers permission.']
             : line.action === 'give_github' ? [`Let ${name} work on its GitHub repository`, 'A copy kept on this Mac; no app from the Vault is given. A pull request or a comment asks you first, every time.']
-            : line.action === 'start_setup' ? [`Start ${name}'s setup`, 'Runs one conversation turn on its model.']
+            : line.action === 'start_setup' ? [`Start ${name}'s setup`, 'Runs one conversation turn on its model, then waits for your reply in its setup chat. Until you finish or skip its setup, other coworkers and the Chief of Staff cannot reach it.']
             : line.action === 'set_model' ? [`Set ${name} to answer with ${model}`, null]
             : [`Set ${model} to ${line.effort} effort`, 'Applies wherever this model runs, not to one coworker.']
         changes.push({
