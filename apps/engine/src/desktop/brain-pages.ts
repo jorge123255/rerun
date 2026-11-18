@@ -182,19 +182,26 @@ export function createDesktopBrainPagesStore(directory: string, getDatabase: () 
         if (rows.length > MAX_PAGES) throw new HttpError(413, 'Too many Brain backlinks.')
         return { page: { ...page, links: parseLinks(page.content, slug), backlinks: rows.map(row => ({ slug: String(row.slug), title: String(row.title) })) }, revisions: await revisions(db, slug) }
     }
-    async function unindex(db: Transaction, slug: string) {
+    async function clearPageSearchIndex(db: Transaction, slug: string) {
         await db.execute({ sql: 'DELETE FROM brain_chunks_fts WHERE chunk_id IN (SELECT id FROM brain_chunks WHERE slug = ?)', args: [slug] })
-        for (const table of ['brain_chunks', 'brain_links', 'brain_pages']) await db.execute({ sql: `DELETE FROM ${table} WHERE ${table === 'brain_links' ? 'from_slug' : 'slug'} = ?`, args: [slug] })
+        await db.execute({ sql: 'DELETE FROM brain_chunks WHERE slug = ?', args: [slug] })
+        await db.execute({ sql: 'DELETE FROM brain_links WHERE from_slug = ?', args: [slug] })
     }
     async function index(db: Transaction, page: PageFile) {
-        await unindex(db, page.slug)
+        await clearPageSearchIndex(db, page.slug)
         for (const chunk of chunkPage(page)) {
             const id = randomUUID()
             await db.execute({ sql: 'INSERT INTO brain_chunks(id, slug, heading, ordinal, content, text_hash) VALUES (?, ?, ?, ?, ?, ?)', args: [id, page.slug, chunk.heading, chunk.ordinal, chunk.content, chunk.textHash] })
             await db.execute({ sql: 'INSERT INTO brain_chunks_fts(content, chunk_id) VALUES (?, ?)', args: [chunk.text, id] })
         }
         for (const target of parseLinks(page.content, page.slug)) await db.execute({ sql: 'INSERT OR IGNORE INTO brain_links(from_slug, to_slug) VALUES (?, ?)', args: [page.slug, target] })
-        await db.execute({ sql: 'INSERT INTO brain_pages(slug, title, type, hash, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?)', args: [page.slug, page.title, page.type, page.hash, page.updatedAt, page.updatedBy] })
+        await db.execute({
+            sql: `INSERT INTO brain_pages(slug, title, type, hash, updated_at, updated_by, created_by)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(slug) DO UPDATE SET title = excluded.title, type = excluded.type,
+                      hash = excluded.hash, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+            args: [page.slug, page.title, page.type, page.hash, page.updatedAt, page.updatedBy, page.updatedBy],
+        })
     }
     async function save(db: Transaction, slug: string, rawInput: unknown, separateRevision = false, restoredSeed = false, proposalId: string | null = null, author = DESKTOP_BRAIN_AUTHOR): Promise<Detail> {
         const input = desktopBrainWriteSchema.parse(rawInput)
@@ -235,7 +242,9 @@ export function createDesktopBrainPagesStore(directory: string, getDatabase: () 
                 if (!page) throw new HttpError(503, 'Brain page disappeared during indexing.')
                 pages.push(page)
             }
-            for (const table of ['brain_chunks_fts', 'brain_chunks', 'brain_links', 'brain_pages']) await db.execute(`DELETE FROM ${table}`)
+            // Search rows are derived. A retained page row also owns its migrated first author, tags and Box.
+            for (const table of ['brain_chunks_fts', 'brain_chunks', 'brain_links']) await db.execute(`DELETE FROM ${table}`)
+            await db.execute({ sql: 'DELETE FROM brain_pages WHERE slug NOT IN (SELECT value FROM json_each(?))', args: [JSON.stringify(slugs)] })
             for (const page of pages) await index(db, page)
             return { indexed: pages.length }
         }),
@@ -264,7 +273,8 @@ export function createDesktopBrainPagesStore(directory: string, getDatabase: () 
                 const raw = await rawPage(slug)
                 if (raw === null) throw notFound('page')
                 if (parsePage(slug, raw).hash !== expectedHash) throw conflict()
-                await unindex(db, slug)
+                await clearPageSearchIndex(db, slug)
+                await db.execute({ sql: 'DELETE FROM brain_pages WHERE slug = ?', args: [slug] })
                 await stage(db, slug, null)
                 return { ok: true as const }
             })

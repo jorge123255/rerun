@@ -109,6 +109,26 @@ it('reconciles local file edits only at explicit rebuild and keeps history', asy
     expect((await store.readPage('company')).page.content).toBe('new facts')
     expect((await store.readRevision('company', first.revisions[0]!.id)).content).toBe('old facts')
 })
+it('preserves migrated authors and filing metadata on startup rebuild and the next edit', async () => {
+    const first = await save('old facts')
+    const meta = { created_by: 'agent:first-author', tags_json: '["price"]', space_id: 'sales' }
+    await db.execute({
+        sql: 'UPDATE brain_pages SET created_by = ?, tags_json = ?, space_id = ? WHERE slug = ?',
+        args: [meta.created_by, meta.tags_json, meta.space_id, 'company'],
+    })
+    const metadata = async () => (await db.execute("SELECT created_by, tags_json, space_id FROM brain_pages WHERE slug = 'company'")).rows[0]
+    await store.rebuildLocalIndex()
+    expect(await metadata()).toEqual(meta)
+    await save('new facts', first.page.hash)
+    expect(await metadata()).toEqual(meta)
+
+    await rm(join(directory, 'company.md'))
+    await store.rebuildLocalIndex()
+    expect(await metadata()).toBeUndefined()
+    expect((await store.readRevision('company', first.revisions[0]!.id)).content).toBe('new facts')
+    await save('recreated page')
+    expect(await metadata()).toMatchObject({ created_by: DESKTOP_BRAIN_AUTHOR, space_id: null })
+})
 it('requires receipt identities, guarded DELETE and original strict schemas on HTTP', async () => {
     const api = createDesktopBrainPagesRouter(async () => store)
     const put = (body: unknown) => api.request('/company', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
