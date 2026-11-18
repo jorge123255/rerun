@@ -101,13 +101,17 @@ export function DesktopVaultDetail({ entry, icon, coworkers, busy, alert, onBack
                     <Button variant="outline" size="sm" disabled={busy}>{deleteLabel}</Button>
                 </ConfirmDialog>
             </div>
-            {renaming && server?.catalog && <form className="space-y-2" onSubmit={event => {
+            {renaming && server?.catalog && <form className="space-y-2" onSubmit={async event => {
                 event.preventDefault()
-                const label = String(new FormData(event.currentTarget).get('label')).trim()
-                if (label) void onSubmit({ operation: 'rename-app', ...target, label })
+                const name = String(new FormData(event.currentTarget).get('label') ?? '').trim()
+                if (name !== (label ?? '')) {
+                    const failure = await onSubmit({ operation: 'rename-app', ...target, label: name })
+                    if (failure) return
+                }
+                setRenaming(false)
             }}>
                 <label className="block space-y-1 text-sm">Account name
-                    <Input name="label" defaultValue={entryTitle(entry)} required maxLength={120} disabled={busy} />
+                    <Input name="label" defaultValue={label ?? ''} placeholder="Use default account name" maxLength={120} disabled={busy} />
                 </label>
                 <Button type="submit" size="sm" disabled={busy}>Save account name</Button>
             </form>}

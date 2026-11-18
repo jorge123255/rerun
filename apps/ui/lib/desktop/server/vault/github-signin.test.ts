@@ -13,6 +13,7 @@ import { initializeDesktopRound50 } from '../round50-schema'
 import { initializeDesktopRound51 } from '../round51-schema'
 import { initializeDesktopRound52 } from '../round52-schema'
 import { initializeDesktopRound53 } from '../round53-schema'
+import { initializeDesktopRound74 } from '../round74-schema'
 import { initializeDesktopRound54 } from '../round54-schema'
 import { initializeDesktopRound55 } from '../round55-schema'
 import { initializeDesktopRound56 } from '../round56-schema'
@@ -54,7 +55,7 @@ async function fixture() {
     await db.execute({ sql: 'INSERT INTO desktop_agents(id,name,workspace_id) VALUES (?,?,1)', args: [agent, 'First'] })
     for (const step of [initializeDesktopRound45, initializeDesktopRound46, initializeDesktopRound47, initializeDesktopRound48, initializeDesktopRound49,
         initializeDesktopRound50, initializeDesktopRound51, initializeDesktopRound52, initializeDesktopRound53, initializeDesktopRound54,
-        initializeDesktopRound55, initializeDesktopRound56, initializeDesktopRound57, initializeDesktopRound58]) await step(db)
+        initializeDesktopRound55, initializeDesktopRound56, initializeDesktopRound57, initializeDesktopRound58, initializeDesktopRound74]) await step(db)
     await db.executeMultiple(desktopServicesSchema)
     return { db, root, file, vault: desktopVault(db, crypto, 7, 'launch') }
 }

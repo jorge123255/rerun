@@ -27,7 +27,7 @@ const agentId = '00000000-0000-4000-8000-000000000001'
 const vaultRequest = vi.fn<typeof fetch>()
 const connectorsRequest = vi.fn<typeof fetch>()
 beforeEach(() => {
-    vaultRequest.mockReset().mockResolvedValue(Response.json({ agentId, attached: [], available: [] }))
+    vaultRequest.mockReset().mockImplementation(async () => Response.json({ agentId, attached: [], available: [] }))
     connectorsRequest.mockReset().mockImplementation(async url => Response.json({ agentId: String(url).split('/')[4], servers: [], toolkits: [], managedAccounts: [] }))
     vi.stubGlobal('fetch', (url: RequestInfo | URL, init?: RequestInit) =>
         String(url).endsWith('/connectors') ? connectorsRequest(url, init) : vaultRequest(url, init))
@@ -45,7 +45,7 @@ async function render(services: ServiceAccountLibraryRow[]) {
     document.body.append(host)
     const root = createRoot(host)
     roots.push({ root, host })
-    act(() => root.render(<DesktopServiceAccounts agentId="coworker-1" />))
+    act(() => root.render(<DesktopServiceAccounts agentId={agentId} />))
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 250)) })
     return host
 }
@@ -129,6 +129,41 @@ it('adds and removes assigned secrets from the Apps list and explains shared ent
 })
 
 
+it('refreshes the same assigned catalog account when its Vault nickname changes or is cleared', async () => {
+    let nickname = ''
+    const entry = {
+        id: '00000000-0000-4000-8000-000000000002', revision: '00000000-0000-4000-8000-000000000003',
+        kind: 'mcp', name: 'microsoft-learn', url: 'https://learn.microsoft.com/api/mcp', hasBearer: false, sharedWithAll: false,
+    }
+    vaultRequest.mockImplementation(async () => Response.json({
+        agentId, available: [], attached: [{ ...entry, catalog: { slug: 'microsoft', methodId: 'default', name: 'Microsoft Learn', ...(nickname && { label: nickname }) } }],
+    }))
+    const host = await render([])
+    const attached = () => host.querySelector('button[aria-label^="Remove "]')?.getAttribute('aria-label')
+    expect(attached()).toBe('Remove Microsoft Learn')
+    expect(host.textContent).not.toContain('No apps installed')
+    nickname = 'Team docs'
+    await act(async () => { window.dispatchEvent(new CustomEvent('rerun:connector-apps-changed')) })
+    expect(attached()).toBe('Remove Team docs')
+    nickname = ''
+    await act(async () => { window.dispatchEvent(new CustomEvent('rerun:connector-apps-changed')) })
+    expect(attached()).toBe('Remove Microsoft Learn')
+    expect(host.textContent).not.toContain('Team docs')
+})
+
+it('only reports that no apps are installed after the coworker’s Vault assignments can be read', async () => {
+    let finish!: (response: Response) => void
+    vaultRequest.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const host = await render([])
+    expect(host.textContent).not.toContain('No apps installed')
+    await act(async () => { finish(Response.json({ error: 'Vault unavailable' }, { status: 503 })) })
+    expect(host.textContent).toContain('Vault unavailable')
+    expect(host.textContent).not.toContain('No apps installed')
+    await act(async () => { [...host.querySelectorAll('button')].find(button => button.textContent === 'Refresh Vault')!.click() })
+    expect(host.textContent).toContain('No apps installed')
+    expect(host.textContent).not.toContain('Vault unavailable')
+})
+
 it('opens the migrated app in Vault and refreshes the Apps list when it closes', async () => {
     state.detail.mockResolvedValue({ ...details(), accounts: [], vaultManaged: true })
     const host = await render([row(null, false, false)])
@@ -145,15 +180,15 @@ it('opens the migrated app in Vault and refreshes the Apps list when it closes',
 it('lists only the coworker’s managed accounts and follows a revoked connector', async () => {
     const account = { id: '11111111-1111-4111-8111-111111111111', slug: 'gmail', name: 'Gmail', label: 'Work', source: 'connect', status: 'active' }
     const reply = (owner: string, managedAccounts: unknown[]) => Response.json({ agentId: owner, servers: [], toolkits: [], managedAccounts })
-    connectorsRequest.mockResolvedValueOnce(reply('coworker-1', [account]))
+    connectorsRequest.mockResolvedValueOnce(reply(agentId, [account]))
     const gmail = { ...row(null, false, false), slug: 'gmail', name: 'Gmail', authMethods: [{ ...details().authMethods[0], kind: 'composio' as const }] }
     const host = await render([gmail])
     expect([...host.querySelectorAll('button')].some(button => button.textContent === 'Install')).toBe(false)
     expect(host.textContent).toContain('Gmail · Work')
     expect(host.textContent).toContain('Custom MCP servers')
     expect(host.textContent).not.toContain('No apps installed')
-    connectorsRequest.mockResolvedValueOnce(reply('coworker-1', []))
-    await act(async () => { window.dispatchEvent(new CustomEvent('rerun:connector-apps-changed', { detail: 'coworker-1' })) })
+    connectorsRequest.mockResolvedValueOnce(reply(agentId, []))
+    await act(async () => { window.dispatchEvent(new CustomEvent('rerun:connector-apps-changed', { detail: agentId })) })
     expect(host.textContent).not.toContain('Gmail · Work')
     expect(host.textContent).toContain('No apps installed')
     expect([...host.querySelectorAll('button')].some(button => button.textContent === 'Install')).toBe(true)

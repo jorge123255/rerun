@@ -164,7 +164,7 @@ export async function adoptDesktopCatalogApps(input: {
                 if (itemId) {
                     const count = await tx.execute({ sql: 'SELECT count(*) AS total FROM desktop_vault_mcp_attachments WHERE item_id=?', args: [itemId] })
                     if (Number(count.rows[0]?.total) >= 250) return false
-                    await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,catalog_label=NULL WHERE id=?', args: [revision, itemId] })
+                    await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,catalog_label=NULL,catalog_default_label=NULL WHERE id=?', args: [revision, itemId] })
                 } else {
                     itemId = randomUUID()
                     const bytes = secret === null ? null : Buffer.from(secret)
@@ -179,9 +179,9 @@ export async function adoptDesktopCatalogApps(input: {
                     for (let ordinal = 2; names.has(display.toLowerCase()); ordinal++) display = label.slice(0, 110) + ' ' + ordinal
                     await tx.execute({
                         sql: `INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,credential_header,oauth_enabled,
-                              catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label,transport) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                              catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label,transport,catalog_default_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                         args: [itemId, connection.name, connection.url, revision, revision, sealed, header, Number(isOAuth),
-                            plan.slug, plan.methodId, connection.displayName, instanceId ?? null, display, connection.transport],
+                            plan.slug, plan.methodId, connection.displayName, instanceId ?? null, display, connection.transport, display],
                     })
                 }
                 await tx.execute({ sql: 'INSERT INTO desktop_vault_mcp_attachments(item_id,agent_id) VALUES(?,?)', args: [itemId, record.owner] })

@@ -24,6 +24,7 @@ import { COMPOSIO_CONNECT, COMPOSIO_CONNECT_HEADER } from '../managed-apps/clien
 import { initializeDesktopRound58 } from '../round58-schema'
 import { initializeDesktopRound54 } from '../round54-schema'
 import { initializeDesktopRound53 } from '../round53-schema'
+import { initializeDesktopRound74 } from '../round74-schema'
 import { desktopServicesSchema } from '../services/schema'
 import { vaultCatalog } from './catalog'
 import { stdioRuntime } from '../mcp-stdio/runtime'
@@ -76,6 +77,7 @@ async function fixture(migrate = true, headerMigration = true, namedAccounts = t
     await initializeDesktopRound56(db)
     await initializeDesktopRound57(db)
     await initializeDesktopRound58(db)
+    if (namedAccounts) await initializeDesktopRound74(db)
     await db.executeMultiple(desktopServicesSchema)
     return { db, root, file, open, vault: desktopVault(db, crypto, 7) }
 }
@@ -102,7 +104,7 @@ test('upgrades a prior workspace, saves redacted metadata, rotates ciphertext, a
             await initializeDesktopRound45(reopened)
             await initializeDesktopRound46(reopened)
             expect(await desktopVault(reopened, crypto, 7).list()).toEqual(updated)
-            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }, { version: 50 }, { version: 51 }, { version: 52 }, { version: 53 }, { version: 54 }, { version: 55 }, { version: 56 }, { version: 57 }, { version: 58 }])
+            expect((await reopened.execute('SELECT version FROM desktop_schema_migrations ORDER BY version')).rows).toEqual([{ version: 44 }, { version: 45 }, { version: 46 }, { version: 47 }, { version: 48 }, { version: 49 }, { version: 50 }, { version: 51 }, { version: 52 }, { version: 53 }, { version: 54 }, { version: 55 }, { version: 56 }, { version: 57 }, { version: 58 }, { version: 74 }])
             expect((await reopened.execute('PRAGMA foreign_key_check')).rows).toEqual([])
         } finally { reopened.close() }
         expect((await readFile(f.file)).includes(secret)).toBe(false)
@@ -787,6 +789,90 @@ test('named catalog accounts keep independent credentials, revisions and assignm
     } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
 })
 
+
+test('clearing a Vault nickname keeps the assigned account and its credential after reopening', async () => {
+    const f = await fixture()
+    const mutation = (id: string, revision: string, label: string | null) =>
+        desktopVaultMutation.parse({ operation: 'rename-app', id, revision, label })
+    try {
+        const [added] = (await f.vault.mutate({ operation: 'add-app', slug: 'linear', methodId: 'api-key', values: { LINEAR_API_KEY: secret } }, allow)).entries
+        const [assigned] = (await f.vault.assignCoworker(firstAgent, { id: added.id, revision: added.revision, attached: true }, allow)).attached
+        const credential = async () => (await f.db.execute({ sql: 'SELECT sealed, credential_revision FROM desktop_vault_mcp_servers WHERE id = ?', args: [added.id] })).rows[0]
+        const original = await credential()
+        const [named] = (await f.vault.mutate(mutation(added.id, assigned.revision, '  Engineering  '), allow)).entries
+        expect((await f.vault.forCoworker(firstAgent)).attached).toMatchObject([{ id: added.id, catalog: { label: 'Engineering' } }])
+        const reset = mutation(added.id, named.revision, '  ')
+        await expect(f.vault.mutate(mutation(added.id, assigned.revision, ''), allow)).rejects.toMatchObject({ status: 409 })
+        const [cleared] = (await f.vault.mutate(reset, allow)).entries
+        expect(cleared).toMatchObject({ id: added.id, name: added.name, catalog: { name: 'Linear' }, agentIds: [firstAgent] })
+        expect(cleared).not.toHaveProperty('catalog.label')
+        expect(cleared.revision).not.toBe(named.revision)
+        const [unchanged] = (await f.vault.mutate(mutation(added.id, cleared.revision, null), allow)).entries
+        expect(unchanged.revision).toBe(cleared.revision)
+        expect(await credential()).toEqual(original)
+        const reopened = f.open()
+        try {
+            const vault = desktopVault(reopened, crypto, 7)
+            expect((await vault.forCoworker(firstAgent)).attached).toMatchObject([{ id: added.id, revision: cleared.revision }])
+            expect((await vault.forCoworker(firstAgent)).attached[0]).not.toHaveProperty('catalog.label')
+            expect((await vault.forCoworker(secondAgent)).attached).toEqual([])
+        } finally { reopened.close() }
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('clearing a secondary account nickname restores its original number after a lower number is freed', async () => {
+    const f = await fixture()
+    const seed = { operation: 'add-app' as const, slug: 'linear', methodId: 'api-key', values: { LINEAR_API_KEY: secret } }
+    try {
+        const [one] = (await f.vault.mutate(seed, allow)).entries
+        const two = (await f.vault.mutate({ ...seed, expectedAccounts: 1 }, allow)).entries.find(e => e.id !== one.id)!
+        const three = (await f.vault.mutate({ ...seed, expectedAccounts: 2 }, allow)).entries.find(e => e.id !== one.id && e.id !== two.id)!
+        expect(three).toMatchObject({ catalog: { label: 'Linear 3' } })
+        const named = (await f.vault.mutate({ operation: 'rename-app', id: three.id, revision: three.revision, label: 'Support' }, allow)).entries.find(e => e.id === three.id)!
+        await f.vault.mutate({ operation: 'delete', id: two.id, revision: two.revision }, allow)
+        const cleared = (await f.vault.mutate(desktopVaultMutation.parse({ operation: 'rename-app', id: three.id, revision: named.revision, label: '' }), allow)).entries.find(e => e.id === three.id)
+        expect(cleared).toMatchObject({ id: three.id, name: three.name, catalog: { label: 'Linear 3' } })
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('upgrading an older named-account database keeps a recognizable default number without resetting its assignment', async () => {
+    const f = await fixture(true, true, false)
+    try {
+        await initializeDesktopRound53(f.db)
+        const id = randomUUID(), revision = randomUUID()
+        await f.db.execute({ sql: `INSERT INTO desktop_vault_mcp_servers
+            (id,name,url,revision,credential_revision,catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label)
+            VALUES(?,?,?,?,?,'linear','oauth','Linear','abc123','Linear 4')`,
+            args: [id, 'linear-abc123', 'https://mcp.linear.app/mcp', revision, revision] })
+        await f.db.execute({ sql: 'INSERT INTO desktop_vault_mcp_attachments(item_id,agent_id) VALUES(?,?)', args: [id, firstAgent] })
+        await initializeDesktopRound74(f.db)
+        await initializeDesktopRound74(f.db)
+        expect((await f.db.execute('SELECT catalog_default_label FROM desktop_vault_mcp_servers')).rows[0].catalog_default_label).toBe('Linear 4')
+        await initializeDesktopRound54(f.db)
+        const [named] = (await f.vault.mutate({ operation: 'rename-app', id, revision, label: 'Support' }, allow)).entries
+        const [cleared] = (await f.vault.mutate({ operation: 'rename-app', id, revision: named.revision, label: null }, allow)).entries
+        expect(cleared).toMatchObject({ id, name: 'linear-abc123', catalog: { label: 'Linear 4', instanceId: 'abc123' }, agentIds: [firstAgent] })
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('the nickname migration restores only adoption names vouched for by the original receipt', async () => {
+    const f = await fixture(true, true, false)
+    try {
+        await initializeDesktopRound53(f.db)
+        for (const match of [true, false]) {
+            const id = randomUUID(), revision = randomUUID(), name = match ? 'Alice' : 'New nickname'
+            await f.db.execute({ sql: `INSERT INTO desktop_vault_mcp_servers
+                (id,name,url,revision,credential_revision,catalog_slug,catalog_method,catalog_name,catalog_label)
+                VALUES(?,?,?,?,?,'linear','oauth','Linear',?)`,
+                args: [id, match ? 'linear' : 'linear-abc123', 'https://mcp.linear.app/mcp', revision, revision, name] })
+            await f.db.execute({ sql: 'INSERT INTO desktop_vault_catalog_adoptions VALUES(?,?,?,?,?)',
+                args: [randomUUID(), firstAgent, 'first', id, match ? revision : randomUUID()] })
+        }
+        await initializeDesktopRound74(f.db)
+        const { rows } = await f.db.execute('SELECT catalog_default_label FROM desktop_vault_mcp_servers ORDER BY name')
+        expect(rows.map(row => row.catalog_default_label)).toEqual(['Alice', null])
+    } finally { f.db.close(); await rm(f.root, { recursive: true, force: true }) }
+})
 
 test('the named-account migration keeps the original Vault app and OAuth identity', async () => {
     const f = await fixture(true, true, false)

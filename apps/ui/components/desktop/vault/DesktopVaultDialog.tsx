@@ -82,7 +82,7 @@ function VaultPanel({ suggestedApp, coworkerApp, managedApp, onClose }: VaultDia
             const result = await requestVault(controller.signal, input)
             if (controller.signal.aborted) return new Error('The Vault request was cancelled.')
             setListing(result)
-            if (input?.operation === 'share' || input?.operation === 'delete') invalidateDesktopConnectorApps()
+            if (input?.operation === 'share' || input?.operation === 'delete' || input?.operation === 'rename-app') invalidateDesktopConnectorApps()
             if (next) setPage(typeof next === 'function' ? next(result) : next)
             return null
         } catch (cause) {

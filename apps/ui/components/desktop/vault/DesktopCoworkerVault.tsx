@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { KeyRound, Plug } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
 import { PanelList, PanelSection } from '@/components/ui/panel-list'
 import { PanelRow } from '@/components/ui/panel-row'
+import { SkeletonPanelRows } from '@/components/ui/skeleton'
+import { UnplugIcon } from '@/lib/icons'
 import { invalidateDesktopConnectorApps } from '@/lib/desktop/use-connector-apps'
 import { desktopCoworkerVaultListing, type DesktopCoworkerVaultListing, type DesktopCoworkerVaultMutation } from '@/lib/desktop/vault'
 
@@ -12,7 +15,7 @@ import { vaultAccountHealthText } from './vault-account-health'
 
 type Entry = DesktopCoworkerVaultListing['attached'][number]
 
-export function DesktopCoworkerVault({ agentId, query }: { agentId: string; query: string }) {
+export function DesktopCoworkerVault({ agentId, query, showInstalledFallback }: { agentId: string; query: string; showInstalledFallback: boolean }) {
     const [listing, setListing] = useState<DesktopCoworkerVaultListing | null>(null)
     const [error, setError] = useState('')
     const [busy, setBusy] = useState(false)
@@ -72,6 +75,7 @@ export function DesktopCoworkerVault({ agentId, query }: { agentId: string; quer
     const matches = (entry: Entry) => `${title(entry)} ${detail(entry)}`.toLowerCase().includes(query.trim().toLowerCase())
     const attached = listing?.attached.filter(matches) ?? []
     const available = listing?.available.filter(matches) ?? []
+    const hasAssignedApp = listing?.attached.some(entry => 'kind' in entry && entry.kind === 'mcp' && entry.catalog)
     const row = (entry: Entry, attached: boolean) => (
         <PanelRow key={entry.id} title={title(entry)}
             description={entry.sharedWithAll ? `${detail(entry)} · Shared with every coworker` : detail(entry)}
@@ -88,6 +92,9 @@ export function DesktopCoworkerVault({ agentId, query }: { agentId: string; quer
         />
     )
     return <>
+        {showInstalledFallback && !error && !hasAssignedApp && <PanelSection label="Installed">
+            {listing ? <EmptyState icon={UnplugIcon} title="No apps installed" description="Add an app from the Library to extend this coworker’s tools." /> : <SkeletonPanelRows rows={3} leading />}
+        </PanelSection>}
         {error && <div className="space-y-2">
             <p role="alert" className="text-xs text-destructive">{error}</p>
             <Button size="sm" variant="outline" disabled={busy} onClick={() => submit()}>Refresh Vault</Button>

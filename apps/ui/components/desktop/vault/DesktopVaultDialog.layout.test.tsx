@@ -11,6 +11,7 @@ vi.mock('./DesktopVaultCatalog', () => ({ DesktopVaultCatalog: ({ slug, listHead
 vi.mock('../mcp/DesktopMcpOAuthAuthorize', () => ({ DesktopMcpOAuthAuthorize: () => null }))
 vi.mock('@rerun/ui/iso-grid', () => ({ AgentBuddy: ({ agentId }: { agentId: string }) => <i data-buddy={agentId} /> }))
 import { DesktopVaultDialog } from './DesktopVaultDialog'
+import { DESKTOP_CONNECTOR_APPS_CHANGED } from '@/lib/desktop/use-connector-apps'
 
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 let root: Root | undefined
@@ -147,6 +148,45 @@ it('the detail keeps the Mac\'s own actions behind a back-arrow header', async (
     expect(posts).toEqual([{ url: '/api/desktop/vault/health', id: app.id, revision: app.revision }])
     await press('Back')
     expect(document.querySelector('[data-vault-apps]')).not.toBeNull()
+})
+
+it('clears the account nickname, keeps the same assigned account, and refreshes the coworker list', async () => {
+    const cleared = { ...app, revision: uuid(9), catalog: { slug: 'notion', methodId: 'oauth', name: 'Notion' } }
+    const posts = serve(full, [{ ...full, entries: [cleared] }])
+    const changed = vi.fn()
+    window.addEventListener(DESKTOP_CONNECTOR_APPS_CHANGED, changed)
+    try {
+        await mount(<DesktopVaultDialog onClose={() => {}} />)
+        await press('Signed outNotionSales')
+        await press('Rename account')
+        const input = document.querySelector<HTMLInputElement>('input[name=label]')!
+        expect(input.value).toBe('Sales')
+        input.value = ''
+        expect(input.checkValidity()).toBe(true)
+        await press('Save account name')
+        expect(posts).toEqual([{ url: '/api/desktop/vault', operation: 'rename-app', id: app.id, revision: app.revision, label: '' }])
+        expect(changed).toHaveBeenCalledOnce()
+        expect(toggle('Ada').getAttribute('aria-checked')).toBe('true')
+        expect(toggle('Bo').getAttribute('aria-checked')).toBe('false')
+        await press('Back')
+        expect(document.querySelector(`[data-vault-tile="${app.id}"]`)?.textContent?.trim()).toBe('Signed outNotion')
+    } finally {
+        window.removeEventListener(DESKTOP_CONNECTOR_APPS_CHANGED, changed)
+    }
+})
+
+it('keeps the account name editor open if the Vault refuses a stale rename', async () => {
+    const posts = serve(full, [{ status: 409, error: 'Reopen this account.' }])
+    await mount(<DesktopVaultDialog onClose={() => {}} />)
+    await press('Signed outNotionSales')
+    await press('Rename account')
+    const input = document.querySelector<HTMLInputElement>('input[name=label]')!
+    input.value = 'Team'
+    await press('Save account name')
+    expect(posts[0]).toMatchObject({ operation: 'rename-app', id: app.id, revision: app.revision, label: 'Team' })
+    expect(document.querySelector('[role=alert]')?.textContent).toBe('Reopen this account.')
+    expect(input.isConnected).toBe(true)
+    expect(input.value).toBe('Team')
 })
 
 it('opened for one coworker app it lists that app only and adds an account of it', async () => {

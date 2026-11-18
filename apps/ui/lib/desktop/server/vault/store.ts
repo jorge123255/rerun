@@ -98,13 +98,28 @@ function overlaps(a: DesktopVaultEntry, b: Pick<DesktopVaultEntry, 'agentIds' | 
     return a.agentIds.some(id => b.agentIds.includes(id))
 }
 
-function catalogAccounts(listing: DesktopVaultListing, slug: string) {
-    return listing.entries.flatMap(entry => 'kind' in entry && entry.kind === 'mcp' && entry.catalog?.slug === slug
-        ? [{ id: entry.id, displayName: entry.catalog.label ?? entry.catalog.name, instanceId: entry.catalog.instanceId }]
-        : [])
+async function catalogAccounts(tx: Transaction, slug: string) {
+    const { rows } = await tx.execute({
+        sql: `SELECT id, COALESCE(catalog_label,catalog_name) AS display_name, catalog_instance, catalog_default_label
+              FROM desktop_vault_mcp_servers WHERE catalog_slug=?`, args: [slug],
+    })
+    return rows.map(row => ({
+        id: String(row.id), displayName: String(row.display_name),
+        instanceId: typeof row.catalog_instance === 'string' ? row.catalog_instance : undefined,
+        defaultLabel: typeof row.catalog_default_label === 'string' ? row.catalog_default_label : null,
+    }))
 }
 
-function checkAccountLabel(accounts: ReturnType<typeof catalogAccounts>, label: string) {
+type CatalogAccount = Awaited<ReturnType<typeof catalogAccounts>>[number]
+
+function numberedAccountLabel(name: string, siblings: CatalogAccount[]) {
+    const used = new Set(siblings.flatMap(account => [account.displayName.toLowerCase(), account.defaultLabel?.toLowerCase()]))
+    let number = 2
+    while (used.has((name + ' ' + number).toLowerCase())) number++
+    return name + ' ' + number
+}
+
+function checkAccountLabel(accounts: CatalogAccount[], label: string) {
     if (accounts.some(account => account.displayName.toLowerCase() === label.toLowerCase())) {
         throw new DesktopHttpError(409, 'Choose a different name for this app account.', 'vault_conflict')
     }
@@ -194,11 +209,12 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                 } else if (input.operation === 'create-server' || input.operation === 'add-app') {
                     let connection: Extract<DesktopVaultMutation, { operation: 'create-server' }>
                     let catalogName: string | null = null, instanceId: string | undefined, catalogLabel: string | undefined
+                    let defaultLabel: string | null = null
                     let transport: 'http' | 'sse' = 'http'
                     let url: string
                     try {
                         if (input.operation === 'add-app') {
-                            const accounts = catalogAccounts(listing, input.slug)
+                            const accounts = await catalogAccounts(tx, input.slug)
                             if ((input.expectedAccounts ?? 0) !== accounts.length) {
                                 throw new DesktopHttpError(409, 'This app’s accounts changed. Reopen the Vault and try again.', 'vault_conflict')
                             }
@@ -209,13 +225,8 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                             const app = compileVaultCatalogApp(input.slug, input.methodId, input.values, instanceId)
                             transport = app.transport
                             catalogName = app.displayName
-                            catalogLabel = input.label
-                            if (!catalogLabel && accounts.length) {
-                                const names = new Set(accounts.map(account => account.displayName.toLowerCase()))
-                                let number = 2
-                                while (names.has((catalogName + ' ' + number).toLowerCase())) number++
-                                catalogLabel = catalogName + ' ' + number
-                            }
+                            defaultLabel = instanceId ? numberedAccountLabel(catalogName, accounts) : null
+                            catalogLabel = input.label ?? defaultLabel ?? undefined
                             checkAccountLabel(accounts, catalogLabel ?? catalogName)
                             connection = app
                         } else connection = input
@@ -230,9 +241,9 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                     const id = randomUUID()
                     const sealed = await sealServerCredential(id, url, revision, connection.header ? { header: connection.header } : { bearer: connection.bearer })
                     await tx.execute({
-                        sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,credential_header,oauth_enabled,catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label,transport) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                        sql: 'INSERT INTO desktop_vault_mcp_servers(id,name,url,revision,credential_revision,sealed,credential_header,oauth_enabled,catalog_slug,catalog_method,catalog_name,catalog_instance,catalog_label,transport,catalog_default_label) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                         args: [id, connection.name, url, revision, revision, sealed, connection.header?.name ?? null, Number(connection.browserSignIn === true),
-                            input.operation === 'add-app' ? input.slug : null, input.operation === 'add-app' ? input.methodId : null, catalogName, instanceId ?? null, catalogLabel ?? null, transport],
+                            input.operation === 'add-app' ? input.slug : null, input.operation === 'add-app' ? input.methodId : null, catalogName, instanceId ?? null, catalogLabel ?? null, transport, defaultLabel],
                     })
                 } else {
                     const entry = listing.entries.find(row => row.id === input.id)
@@ -316,9 +327,21 @@ export function desktopVault(db: Client, crypto: DesktopSecretCrypto, workspaceI
                         await tx.execute({ sql: 'UPDATE desktop_vault_mcp_programs SET revision=? WHERE id=?', args: [revision, entry.id] })
                     } else if (input.operation === 'rename-app') {
                         if (!('kind' in entry) || entry.kind !== 'mcp' || !entry.catalog) throw new DesktopHttpError(400, 'This entry is not a catalog app.')
-                        checkAccountLabel(catalogAccounts(listing, entry.catalog.slug).filter(account => account.id !== entry.id), input.label)
-                        await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,catalog_label=? WHERE id=?',
-                            args: [revision, input.label, entry.id] })
+                        const catalog = entry.catalog
+                        const accounts = await catalogAccounts(tx, catalog.slug)
+                        const siblings = accounts.filter(account => account.id !== entry.id)
+                        const original = accounts.find(account => account.id === entry.id)?.defaultLabel
+                            ?? (catalog.instanceId ? numberedAccountLabel(catalog.name, siblings) : null)
+                        const nickname = input.label?.trim() || null
+                        let label = nickname ?? original
+                        if (nickname) checkAccountLabel(siblings, nickname)
+                        else if (siblings.some(account => account.displayName.toLowerCase() === (label ?? catalog.name).toLowerCase())) {
+                            label = numberedAccountLabel(catalog.name, siblings)
+                        }
+                        if (label !== (entry.catalog.label ?? null)) {
+                            await tx.execute({ sql: 'UPDATE desktop_vault_mcp_servers SET revision=?,catalog_label=?,catalog_default_label=? WHERE id=?',
+                                args: [revision, label, original, entry.id] })
+                        }
                     } else if (input.operation === 'configure-app') {
                         if (!('kind' in entry) || entry.kind !== 'mcp' || !entry.catalog) throw new DesktopHttpError(400, 'This entry is not a catalog app.')
                         let connection: ReturnType<typeof compileVaultCatalogApp>
