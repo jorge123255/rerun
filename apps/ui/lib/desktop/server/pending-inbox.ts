@@ -6,7 +6,8 @@ import { readDesktopSecretRequestView } from './secret-requests/binding'
 import 'server-only'
 import { pendingConnectorApproval } from './connector-approvals/store'
 import { z } from 'zod'
-import type { DesktopPendingInbox, DesktopPendingReadTarget } from '../pending-inbox'
+import type { DesktopPendingInbox, DesktopPendingInboxItem, DesktopPendingReadTarget } from '../pending-inbox'
+import { acknowledgeDesktopSetupWaiting, readDesktopSetupWaiting } from './setup/waiting'
 import { readDesktopAttention } from './attention'
 import { readDesktopTakeover } from './takeover'
 import { readDesktopApproval } from './approvals'
@@ -26,20 +27,29 @@ export { initializeDesktopPendingInbox, DESKTOP_PENDING_INBOX_SCHEMA } from './p
 // Nothing here answers, declines, approves or executes; the receipt only hides the row from this
 // inbox, and the chat cards and the board keep showing the pending request until it is answered.
 export async function readDesktopPendingInbox(runtime: DesktopRuntime): Promise<DesktopPendingInbox> {
-    const attention = await readDesktopAttention(runtime)
+    // Setup chats waiting for the person ride along: they are this inbox's own rows, not part of the
+    // shared attention projection that the board and notifications read.
+    const [attention, setups] = await Promise.all([readDesktopAttention(runtime), readDesktopSetupWaiting(runtime)])
     const db = await openDesktopDatabase(runtime.dataRoot)
     await initializeDesktopPendingInbox(db)
+    const unavailableAgentIds = [...new Set([...attention.unavailableAgentIds, ...setups.unavailableAgentIds])].sort()
     const ids = attention.items.map(item => item.id)
-    if (!ids.length) return { items: [], unavailableAgentIds: attention.unavailableAgentIds, checkedAt: attention.checkedAt }
-    const result = await db.execute({ sql: `SELECT item_id FROM desktop_pending_inbox_seen_v5 WHERE item_id IN (${ids.map(() => '?').join(',')})`, args: ids })
+    const result = ids.length ? await db.execute({ sql: `SELECT item_id FROM desktop_pending_inbox_seen_v5 WHERE item_id IN (${ids.map(() => '?').join(',')})`, args: ids }) : { rows: [] }
     const seen = new Set(result.rows.map(row => String(row.item_id)))
-    return { items: attention.items.filter(item => !seen.has(item.id)), unavailableAgentIds: attention.unavailableAgentIds, checkedAt: attention.checkedAt }
+    const items: DesktopPendingInboxItem[] = attention.items.filter(item => !seen.has(item.id))
+    // A setup chat that already shows a question or another request is listed once, by that request.
+    const asked = new Set(attention.items.map(item => item.sessionId))
+    for (const item of setups.items) if (!asked.has(item.sessionId)) items.push(item)
+    items.sort((a, b) => time(b.requestedAt ?? b.updatedAt) - time(a.requestedAt ?? a.updatedAt) || a.agentId.localeCompare(b.agentId) || a.sessionId.localeCompare(b.sessionId) || a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id))
+    return { items, unavailableAgentIds, checkedAt: attention.checkedAt }
 }
+
+const time = (value: string) => { const parsed = Date.parse(value); return Number.isFinite(parsed) ? parsed : 0 }
 
 export const desktopPendingInboxReadSchema = z.object({
     items: z.array(z.object({
         id: z.string().min(1).max(8192),
-        kind: z.enum(['question', 'approval', 'takeover', 'service', 'secret', 'mcp', 'tool-install', 'info']),
+        kind: z.enum(['question', 'approval', 'takeover', 'service', 'secret', 'mcp', 'tool-install', 'info', 'setup']),
         agentId: z.string().min(1).max(200),
         sessionId: z.string().min(1).max(200),
     }).strict()).max(500),
@@ -67,7 +77,12 @@ export async function markDesktopPendingInboxRead(runtime: DesktopRuntime, input
         if (await acknowledgeDesktopUserNotification(db, runtime, item) || await acknowledgeDesktopRoutineAutoOff(db, runtime, item)) marked++
         else failed.add(item.id)
     }
-    const remaining = targets.filter(item => item.kind !== 'info')
+    for (const item of targets) {
+        if (item.kind !== 'setup') continue
+        if (await acknowledgeDesktopSetupWaiting(runtime, item)) marked++
+        else failed.add(item.id)
+    }
+    const remaining = targets.filter(item => item.kind !== 'info' && item.kind !== 'setup')
     if (!remaining.length) return { marked, failedIds: [...failed] }
     const signal = AbortSignal.timeout(DESKTOP_PENDING_INBOX_DEADLINE_MS)
     // Group by session so no two workers revalidate the same chat concurrently. A submitted

@@ -40,6 +40,8 @@ test('each line is resolved to a real coworker, permission and model, in the app
     expect(sealed.changes[2]!.caution).toContain('no app from the Vault is given')
     expect(sealed.changes[5]!.caution).toContain('wherever this model runs')
     expect(sealed.changes[6]!.caution).toContain('still asks you first')
+    // Starting a setup says, in plain words, that the coworker is out of reach until it is finished or skipped.
+    expect(sealed.changes[3]!.caution).toBe('Runs one conversation turn on its model, then waits for your reply in its setup chat. Until you finish or skip its setup, other coworkers and the Chief of Staff cannot reach it.')
     expect(sealed.changes[4]).toMatchObject({ connectionId: 'mac-chatgpt', model: 'gpt-6-luna' })
 })
 

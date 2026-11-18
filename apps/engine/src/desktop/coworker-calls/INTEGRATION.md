@@ -49,3 +49,31 @@ Private rows also require `requestFingerprint: string`: SHA256 of JSON.stringify
 of `{agentRef: trimmedRef, message, context: context ?? '', wait: wait === true}`,
 in that field order. Both inflight and durable source-identity replays reject a
 different fingerprint. The public snapshot never contains this value.
+
+## What the caller is told
+
+The bridge client (`http-store.ts`) tells two failures apart. `unreachable`: the app could not
+be reached, did not answer within 30 seconds, or failed on its side (5xx). `refused`: the app
+answered 4xx (or `ok: false`); the caller gets the app's own `error` text, on one line and at
+most 400 characters, never a body the engine wrote. A target whose setup is not finished or
+skipped is refused by `prepare-target` as `desktopCoworkerCallSetupRefusal(name)`. A failure
+before the called coworker starts returns "The call to X was not started: <reason>" rather than
+throwing out of the tool.
+
+A dispatched call (`wait: false`) answers with its call id and keeps the called coworker's answer
+in `resultText` when it finishes. `check_agent_call` (same `callAgent` grant) reads calls the
+caller started through the bridge operation `status` (`{caller, callId?}`): the app authorizes the
+caller as for `authorize`, returns only rows whose `parentAgentId` is the caller (one by id, or the
+latest `DESKTOP_COWORKER_CALL_STATUS_LIST` of the caller's conversation), and states each as
+accepted, working, blocked (question, approval, takeover, service, secret, the person, or setup for
+a call refused while the target's setup is still pending), completed, not-delivered, failed or
+stopped. A list cuts each answer at `DESKTOP_COWORKER_CALL_STATUS_PREVIEW_CHARS`.
+
+Retries never make a second assignment. A retried tool call shares its source key (inflight join,
+or the durable row). A lost `insert` acknowledgement is found by the retry (`getBySource`, or the
+app answering `exists`) and launched by this epoch's executor; a lost `claim` acknowledgement is
+read back once, and a later retry adopts the still-reserved claimed row (only one executor per
+source key runs in an epoch). A retried message under a new tool call is matched by `insert`
+(`reason: 'duplicate'`): same caller conversation, target and request fingerprint, while the
+earlier call is delivered and still in hand, or finished or waiting on the person in the same run.
+A failed, stopped or never-delivered call never blocks sending again.
