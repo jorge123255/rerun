@@ -144,7 +144,42 @@
             },
             "openOnMac": "Zum Bestätigen auf deinem Mac öffnen",
             "intakeTitle": "Einrichtung auf deinem Mac abschließen",
-            "intakeBody": "Der Chief of Staff hat noch ein paar Fragen zu deinem Unternehmen. Beantworte sie in Rerun auf deinem Mac und komm dann hierher zurück."
+            "intakeBody": "Der Chief of Staff hat noch ein paar Fragen zu deinem Unternehmen. Beantworte sie in Rerun auf deinem Mac und komm dann hierher zurück.",
+            "voice": {
+                "talk": "Mit dem Chief of Staff sprechen",
+                "mute": "Mikrofon stummschalten",
+                "unmute": "Mikrofon wieder einschalten",
+                "close": "Gespräch beenden",
+                "connecting": "Verbindung über deinen Mac…",
+                "listening": "Hört zu",
+                "thinking": "Denkt nach",
+                "speaking": "Spricht",
+                "muted": "Stumm. Nichts, was du sagst, wird gesendet.",
+                "micOn": "Mikrofon an",
+                "you": "Du",
+                "chief": "Chief of Staff",
+                "keptAsText": "Was du sagst und hörst, wird in diesem Gespräch als Text gespeichert.",
+                "tryAgain": "Erneut versuchen",
+                "openSettings": "Einstellungen öffnen",
+                "done": "Schließen",
+                "ended": {
+                    "closed": "Das Gespräch ist beendet.",
+                    "away": "Das Gespräch wurde beendet, als Rerun den Bildschirm verlassen hat.",
+                    "interrupted": "Das Gespräch wurde wegen eines Anrufs oder eines anderen Tons auf diesem Telefon beendet.",
+                    "chief": "Das Gespräch wurde von der anderen Seite beendet."
+                },
+                "problems": {
+                    "notSetUp": "Sprache ist auf deinem Mac nicht eingerichtet. Schalte in Rerun auf deinem Mac Allow voice conversations from paired phones ein.",
+                    "unavailable": "Dein Mac kann gerade kein Sprachgespräch starten: Seine Sprachverbindung ist getrennt. Versuche es gleich noch einmal.",
+                    "notAllowed": "Dieses Telefon darf keine Nachrichten senden. Öffne auf deinem Mac Connect iPhone und schalte Send messages dafür ein.",
+                    "rateLimited": "Zu viele Versuche. Warte eine Minute und versuche es dann erneut.",
+                    "microphone": "Rerun darf das Mikrofon nicht nutzen. Erlaube es in den Einstellungen und versuche es dann erneut.",
+                    "dropped": "Die Verbindung wurde unterbrochen.",
+                    "unreachable": "Dein Mac ist nicht erreichbar.",
+                    "removed": "Dein Mac akzeptiert dieses Telefon nicht mehr.",
+                    "failed": "Das Sprachgespräch konnte nicht starten."
+                }
+            }
         }
     }
 }

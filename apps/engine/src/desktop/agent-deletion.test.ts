@@ -143,3 +143,27 @@ test('a fresh lifecycle module rejects the durable deleted identity after its in
     expect(() => fresh.beginDesktopAgentWork(id)).toThrow('agent not found')
     expect(existsSync(agentDir(id))).toBe(false)
 })
+
+test('a same-Mac duplicate needs its own paid Claude sub-agent opt-in', async () => {
+    const original = await coworker('native-opt-in')
+    const sourceGrants = { claudeSubagents: true, delegate: true, memoryRecall: true }
+    expect((await send('PATCH', `/agents/${original}`, { tools: { desktopToolGrants: sourceGrants } })).status).toBe(200)
+    const requestId = crypto.randomUUID()
+    const copy = await duplicateAgent(original, { name: 'native-copy' }, requestId)
+    const { readAgentConfig } = await import('../agents/loader.js')
+    expect((await readAgentConfig(original)).tools.desktopToolGrants).toEqual(sourceGrants)
+    expect((await readAgentConfig(copy.id)).tools.desktopToolGrants).toEqual({ ...sourceGrants, claudeSubagents: false })
+    expect((await send('PATCH', `/agents/${copy.id}`, { tools: { desktopToolGrants: { claudeSubagents: true } } })).status).toBe(200)
+    expect(await duplicateAgent(original, { name: 'native-copy' }, requestId)).toEqual(copy)
+    expect((await readAgentConfig(copy.id)).tools.desktopToolGrants).toEqual(sourceGrants)
+})
+
+test('a desktop creation payload cannot opt a new coworker into paid Claude helpers', async () => {
+    const response = await send('POST', '/agents', { config: {
+        name: 'native-create',
+        tools: { desktopToolGrants: { claudeSubagents: true, memoryRecall: true } },
+    } })
+    expect(response.status).toBe(201)
+    const { config } = await response.json() as { config: { tools: { desktopToolGrants: object } } }
+    expect(config.tools.desktopToolGrants).toEqual({ claudeSubagents: false, memoryRecall: true })
+})

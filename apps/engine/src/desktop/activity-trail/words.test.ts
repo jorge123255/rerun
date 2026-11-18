@@ -94,6 +94,7 @@ describe('a decision from another part of the app', () => {
     it('fits the same shape a browser-action approval would use, and refuses anything else', () => {
         expect(desktopActivityDecisionSchema.parse({ outcome: 'declined-by-person', rule: 'ask-first:post', kind: 'post' })).toEqual({ outcome: 'declined-by-person', rule: 'ask-first:post', kind: 'post' })
         expect(desktopActivityDecisionSchema.safeParse({ outcome: 'allowed', rule: 'x' }).success).toBe(false)
+        for (const outcome of ['started', 'cancelled']) expect(desktopActivityDecisionSchema.safeParse({ outcome }).success).toBe(false)
         expect(desktopActivityDecisionSchema.safeParse({ outcome: 'failed', secret: 'x' }).success).toBe(false)
     })
 })

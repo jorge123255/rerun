@@ -19,7 +19,7 @@ const scope = new AsyncLocalStorage<Draft>()
 // A later, weaker word never replaces a stronger one: the permission re-check after a call must
 // not turn "allowed once by you" back into "allowed by a permission".
 const WEIGHT: Record<DesktopActivityOutcome, number> = {
-    completed: 0, 'allowed-by-permission': 1, 'allowed-once-by-person': 2, failed: 2, 'asked-person': 3, 'declined-by-person': 3, 'refused-policy': 3, 'refused-no-permission': 3,
+    started: 0, cancelled: 2, completed: 0, 'allowed-by-permission': 1, 'allowed-once-by-person': 2, failed: 2, 'asked-person': 3, 'declined-by-person': 3, 'refused-policy': 3, 'refused-no-permission': 3,
 }
 
 /** Says how the call in progress was decided. Outside a recorded tool call it does nothing. */
@@ -174,6 +174,18 @@ export function recordDesktopActivityTools(ctx: RunContext, tools: ToolSet, isCo
         } catch { /* A tool that cannot be wrapped still runs; its calls reach the trail from the step record. */ }
     }
     return tools
+}
+
+// A child can be stopped before its enclosing provider step finishes. Write the
+// start and terminal receipt as each is observed, and suppress generic duplicates.
+export function recordNativeSubagentStep(ctx: RunContext, callId: string, name: string, outcome: 'started' | 'completed' | 'failed' | 'cancelled') {
+    const run = runOf(ctx)
+    run.calls.add(callId)
+    recordDesktopActivity({
+        id: randomUUID(), at: new Date().toISOString(), agentId: ctx.agent.id, sessionId: ctx.sessionId ?? null,
+        runId: ctx.runId ?? null, source: run.source, sourceSlug: run.slug, tool: 'native_subagent',
+        action: null, app: null, kind: null, outcome, rule: 'permission:claudeSubagents', durationMs: null, summary: name,
+    })
 }
 
 /**

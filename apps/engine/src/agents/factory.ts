@@ -5,6 +5,7 @@ import { newId } from '../lib/ids.js'
 import { insertAgentIndex } from '../db/repos/agents.js'
 import { agentConfigSchema, type AgentConfig, type LoadedAgent } from './types.js'
 import { serializeEnv, writeAgentEnv } from './env.js'
+import { clearInheritedClaudeSubagentGrant } from './config-write.js'
 import { defaultSoul } from './soul.js'
 import { resolveConfiguredModel } from './availability.js'
 import { desktopApp } from '../desktop/policy.js'
@@ -24,6 +25,7 @@ export async function createAgent(input: CreateAgentInput): Promise<LoadedAgent>
     // Refused keys must fail before the folder exists, or the agent is left on disk with no index row.
     serializeEnv(env)
     if (desktopApp()) {
+        clearInheritedClaudeSubagentGrant(config)
         await mkdir(agentsDir(), { recursive: true })
         await mkdir(agentDir(id), { mode: 0o700 })
         await recordUnusedScreen(id)

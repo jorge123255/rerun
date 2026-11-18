@@ -32,6 +32,7 @@ const en = {
     recordedOutcome: 'Recorded outcome',
     outcomeNotRecorded: 'Outcome not recorded',
     outcomeSucceeded: 'Succeeded',
+    outcomeCancelled: 'Stopped',
     outcomeFailed: 'Failed',
 }
 
@@ -69,6 +70,7 @@ export const desktopRunHistoryCopy = {
         recordedOutcome: 'Résultat enregistré',
         outcomeNotRecorded: 'Résultat non enregistré',
         outcomeSucceeded: 'Réussi',
+        outcomeCancelled: 'Arrêté',
         outcomeFailed: 'Échec',
     },
     es: {
@@ -103,6 +105,7 @@ export const desktopRunHistoryCopy = {
         recordedOutcome: 'Resultado registrado',
         outcomeNotRecorded: 'Resultado sin registrar',
         outcomeSucceeded: 'Completado',
+        outcomeCancelled: 'Detenido',
         outcomeFailed: 'Falló',
     },
     pt: {
@@ -137,6 +140,7 @@ export const desktopRunHistoryCopy = {
         recordedOutcome: 'Resultado registrado',
         outcomeNotRecorded: 'Resultado não registrado',
         outcomeSucceeded: 'Concluído',
+        outcomeCancelled: 'Interrompido',
         outcomeFailed: 'Falhou',
     },
     de: {
@@ -171,6 +175,7 @@ export const desktopRunHistoryCopy = {
         recordedOutcome: 'Erfasstes Ergebnis',
         outcomeNotRecorded: 'Ergebnis nicht erfasst',
         outcomeSucceeded: 'Erfolgreich',
+        outcomeCancelled: 'Gestoppt',
         outcomeFailed: 'Fehlgeschlagen',
     },
 } satisfies Record<Locale, Record<keyof typeof en, string>>

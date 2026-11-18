@@ -46,6 +46,7 @@ const TOOL_LABELS: Record<string, string> = {
 
     vision_analyze: 'Analyze Image',
 
+    native_subagent: 'Sub-agent',
     delegate_tasks: 'Delegate Tasks',
     call_agent: 'Call Coworker',
     check_agent_call: 'Check Coworker Call',
@@ -207,6 +208,7 @@ const TOOL_ACTIVITIES: Record<string, string> = {
 
     vision_analyze: 'Looking at an image',
 
+    native_subagent: 'Running a sub-agent',
     delegate_tasks: 'Delegating tasks',
     call_agent: 'Calling a coworker',
     check_agent_call: 'Checking a coworker call',

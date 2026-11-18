@@ -1,7 +1,7 @@
 'use client'
 
 import { getToolName, type DynamicToolUIPart, type ToolUIPart } from 'ai'
-import { stripBridgePrefix } from '@rerun/contracts'
+import { nativeSubagentName, stripBridgePrefix } from '@rerun/contracts'
 import { ToolStepRow } from '@/components/chat/ToolStepRow'
 import { desktopToolPresentation } from '@/lib/desktop/tool-presentation'
 import { getToolMeta } from '@/lib/tool-meta'
@@ -20,6 +20,7 @@ import { DesktopHistoricalStepGroup } from './tool-presentations/DesktopHistoric
  */
 export function desktopToolStepDisplay(toolName: string, input?: unknown, connectors?: DesktopConnectorApps): { icon: ToolIconProps['icon']; iconProps: ToolIconProps; label: string } {
     const display = getToolMeta(toolName === 'exec' ? 'shell_exec' : toolName === 'patch' ? 'fs_edit' : toolName)
+    if (toolName === 'native_subagent') return { icon: display.icon, iconProps: { icon: display.icon }, label: nativeSubagentName(input) }
     const connector = connectors ? resolveDesktopConnectorTool(toolName, connectors, input) : null
     if (connector) return { icon: display.icon, iconProps: desktopConnectorIconProps(connector.service), label: connector.label }
     // A connector tool that runs other tools by name (Composio) is named after what it ran.

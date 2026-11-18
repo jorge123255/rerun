@@ -1,0 +1,9 @@
+{
+    "platforms": ["apple", "android"],
+    "apple": {
+        "modules": ["AudioInterruptionModule"]
+    },
+    "android": {
+        "modules": ["expo.modules.audiointerruption.AudioInterruptionModule"]
+    }
+}

@@ -176,3 +176,28 @@ test('the legal tool name formed by server _ and remote tool proto__ survives re
         await resolved.close()
     } finally { await built.close() }
 })
+
+test('only a granted top-level desktop Claude turn exposes its native Agent', async () => {
+    const { agent, ctx } = setup('public_add', 'claude')
+    const signal = new AbortController().signal
+    const resolve = (scope?: AbortSignal) => resolveModel(agent, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, ctx.sessionId, {}, scope)
+    const denied = resolve(signal)
+    const off = captured.claude.at(-1)!
+    expect(off.tools).not.toContain('Agent')
+    expect(await off.canUseTool('Agent', {})).toMatchObject({ behavior: 'deny' })
+    await denied.close()
+    agent.config.tools.desktopToolGrants = { ...agent.config.tools.desktopToolGrants, claudeSubagents: true }
+    const enabled = resolve(signal)
+    const on = captured.claude.at(-1)!
+    expect(on.tools).toEqual(['Agent'])
+    expect(on.hooks.Stop.length).toBeGreaterThan(0)
+    expect(on.hooks.PreToolUse[0].onFailure).toBe('block')
+    await enabled.close()
+    const noParent = resolve()
+    expect(captured.claude.at(-1)!.tools).not.toContain('Agent')
+    await noParent.close()
+    agent.config.ephemeral = true
+    const child = resolve(signal)
+    expect(captured.claude.at(-1)!.tools).not.toContain('Agent')
+    await child.close()
+})

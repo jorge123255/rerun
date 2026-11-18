@@ -1,5 +1,5 @@
 import { assertDesktopRunAdmission } from '../desktop/workspace-admission.js'
-import { desktopDocumentContextParts } from '@rerun/contracts'
+import { desktopDocumentContextParts, nativeSubagentOutcome } from '@rerun/contracts'
 import { streamText, type LanguageModelUsage, type ModelMessage, type StepResult, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
 import { FOREMAN_AGENT_ID, PROVIDER_LABELS, RERUN_CONNECTION_ID, STREAM_RETRY_PART, desktopCoworkerMentionContextParts, contextTextPart, workspaceAttachmentParts, desktopResolvedAttachmentParts, isDesktopSubscriptionProvider, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
@@ -42,9 +42,10 @@ import { createDesktopNativeWorker, type DesktopNativeWorker } from '../desktop/
 import { partialResultsNote } from './partial-results.js'
 import { persistNativeWriteback } from '../desktop/native-writeback/client.js'
 import { requireDesktopToolGrant } from '../desktop/tool-grants.js'
-import { beginDesktopActivityRun, recordDesktopProviderCalls } from '../desktop/activity-trail/recorder.js'
+import { nativeSubagentSteps } from '../desktop/native-subagent-steps.js'
+import { beginDesktopActivityRun, recordDesktopProviderCalls, recordNativeSubagentStep } from '../desktop/activity-trail/recorder.js'
 import { readAgentConfig } from '../agents/loader.js'
-import { beginDesktopCodexRun, endDesktopCodexRun } from '../desktop/native-grants.js'
+import { beginDesktopNativeRun, endDesktopNativeRun } from '../desktop/native-grants.js'
 import { registerRunAbort, setRunCancel, unregisterRunAbort } from './run-control.js'
 import { assertExactDesktopScheduleModel } from '../desktop/schedule-model.js'
 import { assertDesktopProvider, desktopApp } from '../desktop/policy.js'
@@ -210,7 +211,7 @@ async function recordStepTelemetry(agentId: string, sessionId: string, runId: st
             toolName: call.toolName,
             inputJson: safeJson(call.input),
             resultJson: result ? safeJson(result.output) : null,
-            isError: result ? 0 : 1,
+            isError: result && (call.toolName !== 'native_subagent' || nativeSubagentOutcome(result.output) !== 'failed') ? 0 : 1,
             durationMs: null,
             createdAt: nowIso(),
         })
@@ -269,6 +270,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
     let codexToolAccess: string | undefined
     let codexThreadId: string | undefined
     let steps = 0
+    let childSteps: ReturnType<typeof nativeSubagentSteps> | undefined
     let decisionSaved = false
     let sourceSteps: StepResult<ToolSet>[] = []
     const partialResults: PartialResult[] = []
@@ -282,7 +284,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         let modelClosed = true
         try {
             try { await closeModel() } finally { await nativeWorker?.close() }
-            endDesktopCodexRun(agent.id, run.id)
+            endDesktopNativeRun(agent.id, run.id)
         } catch (err) {
             modelClosed = false
             logger.warn({ err: String(err), agent: agent.id }, 'close model or command worker failed')
@@ -333,6 +335,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         let costMicros: number | null = null
 
         const messages = canonicalizeHitlNames('messages' in settlement ? settlement.messages ?? [] : [])
+        childSteps?.settle(messages, settlement.kind === 'cancelled')
         const rows = desktopSourceRows(messages, sourceSteps)
         if (settlement.kind === 'done') pending = findPendingHitl(messages)
         const foremanReply = settlement.kind === 'done' && desktopApp() && agent.id === FOREMAN_AGENT_ID &&
@@ -492,21 +495,31 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         agent = resolved === baseAgent.resolved ? baseAgent : { ...baseAgent, resolved }
         ;({ connection, provider, model } = resolved)
         assertDesktopProvider(provider, resolved.connection?.id)
+        const nativeParent = desktopApp() && !agent.config.ephemeral && agent.config.kind === 'user' && !foremanAlternate
+            && (trigger.source !== 'chat' || !trigger.calledBy)
         if (foremanAlternate) {
             // An alternate has no authority over the original chat's tools, decisions or files.
             agent = { ...agent, config: { ...agent.config, tools: { ...agent.config.tools, desktopCodexGrants: {} } } }
         } else if (desktopApp() && provider === 'codex') {
             assertDesktopRunAdmission(admission)
-            const config = await beginDesktopCodexRun(agent.id, run.id, controller.signal)
+            const config = await beginDesktopNativeRun(agent.id, run.id, controller.signal, 'codex')
             if (!agent.config.selfImprovement.enabled) config.selfImprovement = { ...config.selfImprovement, enabled: false }
             agent = { ...agent, config }
+        } else if (nativeParent && provider === 'claude' && agent.config.tools.desktopToolGrants?.claudeSubagents === true) {
+            const config = await beginDesktopNativeRun(agent.id, run.id, controller.signal, 'claude')
+            // Only refresh the locked permission; the caller can carry narrower tools for this run.
+            agent = { ...agent, config: { ...agent.config, tools: { ...agent.config.tools, desktopToolGrants: {
+                ...agent.config.tools.desktopToolGrants, claudeSubagents: config.tools.desktopToolGrants?.claudeSubagents === true,
+            } } } }
         }
+        const nativeSubagentSignal = nativeParent && provider === 'claude' && agent.config.tools.desktopToolGrants?.claudeSubagents === true ? controller.signal : undefined
         const effort = await desktopCodexEffort(resolved)
         const t0 = Date.now()
         const order = turnOrder(provider, await answeringModel(provider, model))
         const ctx: RunContext = { agent, sessionId, logger, provider, model, turnOrder: order, author, writer, abortSignal: controller.signal, callTargets: [], hostBreaker: new HostBreaker(), partialResults, skillProposals }
 
         ctx.runId = run.id
+        if (nativeSubagentSignal) childSteps = nativeSubagentSteps((id, name, state) => recordNativeSubagentStep(ctx, id, name, state))
         const triggerSlug = 'slug' in trigger ? trigger.slug : null
         // The activity trail names what started the run on every action it records.
         if (desktopApp()) beginDesktopActivityRun(ctx, trigger.source === 'schedule' ? 'routine' : trigger.source === 'trigger' ? 'trigger' : agent.config.ephemeral ? 'delegated' : trigger.calledBy ? 'call' : 'chat', triggerSlug)
@@ -622,7 +635,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
                 if (desktopApp() && !settled) writer?.write({ type: STREAM_RETRY_PART, id: `stream-retry-${run.id}`, data: { ...notice, provider: (provider === 'custom' && connection?.config.name.trim().slice(0, 80)) || PROVIDER_LABELS[provider] } })
             },
         }
-        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun, reasoningEffort, sessionId, streamRetry)
+        const resolvedModel = resolveModel(agent, override, tools, mcpServers, systemText, id => ctx.screenshots?.get(id), nativeWorker, imageRun, reasoningEffort, sessionId, streamRetry, nativeSubagentSignal)
         closeModel = resolvedModel.close
         contextUsage = resolvedModel.contextUsage
         // Cut out of the text whoever wrote it; only a coworker that offers replies gets the buttons.
@@ -652,6 +665,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
                     ...(!CLI_PROVIDERS.has(provider) && hitlStepLacksMessage(steps) ? { toolChoice: 'none' as const } : {}),
                 }
             },
+            ...(childSteps && { onChunk: ({ chunk }) => { if (!settled) childSteps?.observe(chunk) } }),
             onStepFinish: async step => {
                 // A provider may emit a late step after Stop has settled and deletion is allowed.
                 if (desktopApp() && settled) return

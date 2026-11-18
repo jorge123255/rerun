@@ -40,7 +40,17 @@ export async function restartOnMac(): Promise<void> {
     await reloadAppAsync('paired with a Mac')
 }
 
+// What has to stop before the phone lets go of the Mac, a voice conversation above all: the app
+// starts again right after, and a microphone left open across that restart would be nobody's.
+const leaving = new Set<() => Promise<void> | void>()
+
+export function onLeavingMac(listener: () => Promise<void> | void): () => void {
+    leaving.add(listener)
+    return () => void leaving.delete(listener)
+}
+
 export async function leaveMac(): Promise<void> {
+    await Promise.allSettled([...leaving].map(async listener => listener()))
     await SecureStore.deleteItemAsync(PHONE_SESSION_KEY).catch(() => {})
     await reloadAppAsync('left the Mac')
 }

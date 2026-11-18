@@ -2,6 +2,6 @@
     "ios": {
         "NSPhotoLibraryUsageDescription": "Rerun utilise votre photothèque pour joindre des photos à un message.",
         "NSCameraUsageDescription": "Rerun utilise l'appareil photo pour joindre une photo à un message.",
-        "NSMicrophoneUsageDescription": "Rerun utilise le micro pour enregistrer des messages vocaux."
+        "NSMicrophoneUsageDescription": "Rerun utilise le micro pour enregistrer des messages vocaux et pour parler à votre Chief of Staff."
     }
 }

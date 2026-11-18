@@ -144,7 +144,42 @@
             },
             "openOnMac": "Ouvrez-le sur votre Mac pour l’approuver",
             "intakeTitle": "Terminez la configuration sur votre Mac",
-            "intakeBody": "Le Chief of Staff a encore quelques questions sur votre entreprise. Répondez-y dans Rerun sur votre Mac, puis revenez ici."
+            "intakeBody": "Le Chief of Staff a encore quelques questions sur votre entreprise. Répondez-y dans Rerun sur votre Mac, puis revenez ici.",
+            "voice": {
+                "talk": "Parler au Chief of Staff",
+                "mute": "Couper le micro",
+                "unmute": "Rallumer le micro",
+                "close": "Terminer la conversation",
+                "connecting": "Connexion via votre Mac…",
+                "listening": "À l’écoute",
+                "thinking": "Réflexion",
+                "speaking": "Parle",
+                "muted": "Micro coupé. Rien de ce que vous dites n’est envoyé.",
+                "micOn": "Micro allumé",
+                "you": "Vous",
+                "chief": "Chief of Staff",
+                "keptAsText": "Ce que vous dites et entendez est enregistré dans cette conversation, sous forme de texte.",
+                "tryAgain": "Réessayer",
+                "openSettings": "Ouvrir les Réglages",
+                "done": "Fermer",
+                "ended": {
+                    "closed": "La conversation est terminée.",
+                    "away": "La conversation s’est terminée quand Rerun a quitté l’écran.",
+                    "interrupted": "La conversation s’est terminée à cause d’un appel ou d’un autre son sur ce téléphone.",
+                    "chief": "La conversation a été terminée de l’autre côté."
+                },
+                "problems": {
+                    "notSetUp": "La voix n’est pas configurée sur votre Mac. Dans Rerun sur votre Mac, activez Allow voice conversations from paired phones.",
+                    "unavailable": "Votre Mac ne peut pas lancer de conversation vocale pour le moment : sa connexion vocale est coupée. Réessayez dans un instant.",
+                    "notAllowed": "Ce téléphone ne peut pas envoyer de messages. Sur votre Mac, ouvrez Connect iPhone et activez Send messages pour lui.",
+                    "rateLimited": "Trop d’essais. Attendez une minute, puis réessayez.",
+                    "microphone": "Rerun n’a pas accès au micro. Autorisez-le dans les Réglages, puis réessayez.",
+                    "dropped": "La connexion a été coupée.",
+                    "unreachable": "Impossible de joindre votre Mac.",
+                    "removed": "Votre Mac n’accepte plus ce téléphone.",
+                    "failed": "La conversation vocale n’a pas pu démarrer."
+                }
+            }
         }
     }
 }

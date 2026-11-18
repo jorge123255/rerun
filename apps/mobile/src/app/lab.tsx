@@ -100,6 +100,8 @@ const SCREENS: { label: string; href: Href }[] = [
     { label: 'Controls: menus, picker, pills', href: '/lab-controls' },
     { label: 'Controls, dark', href: '/lab-controls?scheme=dark' },
     { label: 'Rerun on the Home', href: '/lab-foreman' },
+    { label: 'Voice, Chief of Staff on a Mac', href: '/lab-voice' },
+    { label: 'Voice, not set up on the Mac', href: '/lab-voice?refuse=not_found' },
     { label: 'Rerun chat, conversation', href: '/lab-chat?coworker=foreman&tabs=1&state=conversation' },
     { label: 'Rerun chat, running', href: '/lab-chat?coworker=foreman&tabs=1&state=running' },
     { label: 'Rerun chat, question', href: '/lab-chat?coworker=foreman&tabs=1&state=question' },
