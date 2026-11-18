@@ -2,7 +2,7 @@ import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Client } from '@libsql/client'
 import {
-    connectionReasoningOptions, DESKTOP_TEAM_CHANGE_CHIEF, DESKTOP_TEAM_CHANGE_EVERYONE, desktopTeamChangePermissionLabel, desktopTeamChangesInputSchema, desktopTeamChangesSchema,
+    connectionReasoningOptions, redactHistoricalText, DESKTOP_TEAM_CHANGE_CHIEF, DESKTOP_TEAM_CHANGE_EVERYONE, desktopTeamChangePermissionLabel, desktopTeamChangesInputSchema, desktopTeamChangesSchema,
     type ConnectionSummary, type DesktopForemanBinding, type DesktopForemanChatRef, type DesktopTeamChange, type DesktopTeamChanges, type DesktopTeamModelOption,
 } from '@rerun/contracts'
 
@@ -26,7 +26,13 @@ function ensure(db: Client): Promise<void> {
 
 export type TeamChangeWorkspace = {
     /** `setupWaiting` false: nothing to start (no setup, already started, or done). Left out when it could not be read. */
-    coworkers: readonly { id: string; name: string; setupWaiting?: boolean }[]
+    coworkers: readonly {
+        id: string
+        name: string
+        setupWaiting?: boolean
+        setupActions?: { revision: string; canSkip: boolean; resume?: 'start' | 'continue' }
+        setupStep?: Omit<NonNullable<DesktopTeamChange['setupReply']>, 'text'>
+    }[]
     connections: readonly Pick<ConnectionSummary, 'id' | 'name' | 'provider' | 'connected' | 'models' | 'extraModels' | 'codexReasoning' | 'customReasoning' | 'subscriptionModels'>[]
 }
 
@@ -78,6 +84,28 @@ export function sealTeamChanges(raw: unknown, workspace: TeamChangeWorkspace): {
         }
         if (line.action === 'start_setup' && who?.setupWaiting === false) { refuse('this coworker has no setup waiting to start'); continue }
         if (line.action === 'set_effort' && (!line.effort || !connectionReasoningOptions(connection as never, line.model!)?.supported.includes(line.effort))) { refuse('that model does not offer this effort'); continue }
+        // Skipping conflicts with continuing this same setup in any form. Never pick a
+        // winner by line order when the owner could reasonably approve the entire card.
+        const isSkip = line.action === 'skip_setup'
+        if (line.action.endsWith('_setup') && parsed.data.changes.some(other =>
+            other.coworker && line.coworker && same(other.coworker, line.coworker) &&
+            other.action.endsWith('_setup') && (other.action === 'skip_setup') !== isSkip)) {
+            refuse('choose either skipping or continuing this coworker’s setup'); continue
+        }
+        if (line.action === 'skip_setup' && !who?.setupActions?.canSkip) { refuse('this setup cannot be skipped in its current state'); continue }
+        if (line.action === 'continue_setup' && !who?.setupActions?.resume) { refuse('this setup has no skipped or interrupted start to resume'); continue }
+        const step = who?.setupStep
+        if (line.action === 'reply_setup') {
+            if (!step || !line.reply || step.stepId !== line.stepId) {
+                refuse('inspect the current setup question and propose an answer to that exact step'); continue
+            }
+            if (redactHistoricalText(line.reply, line.reply.length) !== line.reply) {
+                refuse('use the coworker’s credential control for sensitive values'); continue
+            }
+            if (changes.some(change => change.action === 'reply_setup' && change.agentId === who?.id && change.setupReply?.text !== line.reply)) {
+                refuse('a different answer is already proposed for this question'); continue
+            }
+        }
         const identity = JSON.stringify([line.action, chief ? 'chief' : who?.id ?? null, line.permission ?? null, connection?.id ?? null, line.model ?? null])
         if (seen.has(identity)) continue
         seen.add(identity)
@@ -91,12 +119,18 @@ export function sealTeamChanges(raw: unknown, workspace: TeamChangeWorkspace): {
             : line.action === 'allow_calls' ? [`Let ${chief ? 'the Chief of Staff' : name} ask ${targets.length > 3 ? `${targets.slice(0, 3).map(target => target.name).join(', ')} and ${targets.length - 3} more` : targets.map(target => target.name).join(', ')} for help`,
                 chief ? 'It can send them a message and read the answer. Each coworker still works with its own permissions.' : 'Added to who it may already ask. It also needs the Call coworkers permission.']
             : line.action === 'give_github' ? [`Let ${name} work on its GitHub repository`, 'A copy kept on this Mac; no app from the Vault is given. A pull request or a comment asks you first, every time.']
-            : line.action === 'start_setup' ? [`Start ${name}'s setup`, 'Runs one conversation turn on its model, then waits for your reply in its setup chat. Until you finish or skip its setup, other coworkers and the Chief of Staff cannot reach it.']
+            : line.action === 'start_setup' ? [`Start ${name}'s setup`, 'Starts a setup conversation on this coworker’s model. The Chief can check its next step. Sign-ins and permission requests still need you.']
+            : line.action === 'skip_setup' ? [`Skip ${name}’s guided setup`, 'Leaves setup unfinished and marks it skipped. No app connection or permission is granted.']
+            : line.action === 'continue_setup' ? [`Resume ${name}’s guided setup`, 'Returns to guided setup on this coworker’s model.']
+            : line.action === 'reply_setup' ? [`Reply to ${name}’s setup`, 'Sends the answer below to this setup question when you approve.']
             : line.action === 'set_model' ? [`Set ${name} to answer with ${model}`, null]
             : [`Set ${model} to ${line.effort} effort`, 'Applies wherever this model runs, not to one coworker.']
         changes.push({
             key: `change-${changes.length}`, action: line.action, agentId: who?.id ?? null, coworker: who?.name ?? null, permission: line.permission ?? null,
             connectionId: connection?.id ?? null, model: connection ? line.model! : null, effort: line.action === 'set_effort' ? line.effort! : null,
+            ...((line.action === 'skip_setup' || line.action === 'continue_setup') && who?.setupActions ? { setupRevision: who.setupActions.revision } : {}),
+            ...(line.action === 'continue_setup' && who?.setupActions?.resume ? { setupResumeAction: who.setupActions.resume } : {}),
+            ...(line.action === 'reply_setup' && step ? { setupReply: { ...step, text: line.reply! } } : {}),
             targetAgentIds: line.action === 'allow_calls' ? targets.map(target => target.id) : null, chief, label, caution, result: null,
         })
     }
@@ -143,6 +177,8 @@ export async function settleDesktopTeamChanges(db: Client, chat: DesktopForemanC
         const result = settle.results.find(item => item.key === change.key)
         return result ? { ...change, result: { ok: result.ok, message: result.message } } : change
     }) }
-    await db.execute({ sql: 'UPDATE desktop_foreman_team_changes SET body=? WHERE id=?', args: [JSON.stringify(next), record.id] })
-    return next
+    const updated = await db.execute({ sql: 'UPDATE desktop_foreman_team_changes SET body=? WHERE id=? AND body=?', args: [JSON.stringify(next), record.id, String(row!.body)] })
+    if (updated.rowsAffected) return next
+    // Another window settled this same card while this one was reading it.
+    return recordOf((await db.execute({ sql: 'SELECT body FROM desktop_foreman_team_changes WHERE id=? AND workspace_id=? AND chat_id=?', args: [record.id, ...of(chat)] })).rows[0])
 }

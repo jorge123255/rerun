@@ -172,16 +172,25 @@ const chiefChatId = z.string().regex(/^fmc_[0-9a-f-]{36}$/)
 export const macPhoneChiefConversationSchema = z.object({ id: chiefChatId, title: z.string().nullable(), kind: z.enum(['general', 'thread']), createdAt: z.string(), updatedAt: z.string() })
 export const macPhoneChiefSchema = z.object({ state: z.enum(['ready', 'intake']), conversations: z.array(macPhoneChiefConversationSchema), permissions: sendPermission.optional() })
 export type MacPhoneChiefConversation = z.infer<typeof macPhoneChiefConversationSchema>
-// A card of the Chief of Staff that changes things once approved: a plan to build, changes to the
-// team, a starter pack. In words only, with nothing that names it to the Mac: it is settled there.
-export const macPhoneChiefCardSchema = z.object({ kind: z.enum(['plan', 'team-changes', 'starter']), title: z.string(), lines: z.array(z.string()) })
+// A shortcut only opens an existing coworker surface. The phone gets neither a team card id nor
+// the step binding that the Mac uses to approve a proposed reply.
+const chiefOwnerSetup = z.object({ agentId: savedId, coworker: z.string().min(1).max(200), sessionId: savedId })
+export const macPhoneChiefSetupTargetSchema = z.union([
+    chiefOwnerSetup.extend({ sessionId: z.null() }),
+    chiefOwnerSetup.extend({ reply: z.string().max(1200).optional(), question: z.string().max(800).optional() }),
+])
+export type MacPhoneChiefSetupTarget = z.infer<typeof macPhoneChiefSetupTargetSchema>
+export const macPhoneChiefCardSchema = z.object({
+    kind: z.enum(['plan', 'team-changes', 'starter']), title: z.string(), lines: z.array(z.string()),
+    setupTargets: z.array(macPhoneChiefSetupTargetSchema).max(40).optional(),
+})
 export type MacPhoneChiefCard = z.infer<typeof macPhoneChiefCardSchema>
 // GET /workspaces/:workspace/chief/chat?chat=: one conversation, read as a coworker's chat is.
 // `running` says a reply is being written, whoever started it.
 export const macPhoneChiefChatSchema = z.object({
     state: z.enum(['ready', 'intake']),
     chat: macPhoneChiefConversationSchema.optional(),
-    messages: z.array(macPhoneMessageSchema).default([]),
+    messages: z.array(macPhoneMessageSchema.extend({ ownerSetups: z.array(chiefOwnerSetup).max(40).optional() })).default([]),
     running: z.boolean().default(false),
     pending: macPhonePendingSchema.optional(),
     cards: z.array(macPhoneChiefCardSchema).default([]),

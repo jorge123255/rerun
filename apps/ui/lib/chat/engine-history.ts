@@ -1,3 +1,4 @@
+import { ownerSetupLink } from '@/lib/desktop/foreman/owner-setup-link'
 import { desktopToolInstallReferenceOf } from '@/lib/desktop/tool-install-reference'
 import { DESKTOP_FOREMAN_DOCS_LIMITS, RERUN_PUBLIC_DOCS_CORPUS, desktopForemanDocsResultSchema, desktopStoredDocumentReferences, type DesktopDocumentReference } from '@rerun/contracts'
 import { type DesktopCompactionReceipt, desktopStoredCoworkerMentions, desktopCoworkerMentionFieldsOf, type DesktopCoworkerMentionFields } from '@rerun/contracts'
@@ -277,6 +278,11 @@ export function publicDesktopHistory(messages: HistoryMessage[]): HistoryMessage
                     state: part.state, input: {},
                     ...(proposalId && { output: JSON.stringify({ status: 'shown', proposalId }) }),
                 }
+            }
+            if (toolName === 'inspect_coworker_setup') {
+                const link = projectDesktopToolStatus(part) === 'succeeded' ? ownerSetupLink(part.output) : null
+                return { type: part.type, toolName: part.toolName, toolCallId: part.toolCallId, desktopPreview: true as const,
+                    state: part.state, input: {}, ...(link && { output: JSON.stringify(link) }) }
             }
             if (toolName === 'search_docs' && part.state === 'output-available') {
                 const result = publicForemanDocsResult(part.output)

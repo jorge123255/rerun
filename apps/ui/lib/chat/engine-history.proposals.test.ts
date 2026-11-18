@@ -92,3 +92,14 @@ describe('desktop proposal source markers across history and restart', () => {
         expect(desktopSkillProposalIds([{ ...chatA[0], role: 'user' }])).toEqual(new Set())
     })
 })
+
+it('projects only the original guided setup destination and optional scoped question id from the saved tool result', () => {
+    const source = { agentId: 'ada', coworker: 'Ada', state: 'needs_owner', ownerSessionId: 'setup-ada', ownerQuestionId: 'a'.repeat(64), privateForm: 'PRIVATE' }
+    const saved = reopened(rows({ type: 'json', value: source }, 'mcp__rerun__inspect_coworker_setup'))
+    const part = saved[0]!.parts[0]!
+    expect(part).toMatchObject({ desktopPreview: true, input: {}, state: 'output-available' })
+    expect(JSON.stringify(saved)).toContain('setup-ada')
+    expect(JSON.stringify(saved)).not.toMatch(/PRIVATE|private-input|Private proposed rule/)
+    expect(publicDesktopHistory(saved)).toEqual(saved)
+    expect(JSON.stringify(reopened(rows({ ...source, state: 'working' }, 'inspect_coworker_setup')))).not.toContain('setup-ada')
+})

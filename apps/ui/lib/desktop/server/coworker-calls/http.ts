@@ -158,6 +158,10 @@ const STOP_DETAIL: Record<string, string> = {
     'stopped along with the calling run': 'It stopped along with the run that started it.',
 }
 
+function chiefSetupCallRefusal(name: string) {
+    return `${name} is still in guided setup and did not receive this call. Use inspect_coworker_setup to check its next step. When it is ready for an ordinary answer, propose a reply_setup line for review.`
+}
+
 async function setupStillPending(runtime: DesktopRuntime, agentId: string): Promise<boolean> {
     try { await assertDesktopSetupChatAllowed(runtime, agentId); return false }
     catch (error) { return error instanceof DesktopSetupPendingError }
@@ -191,7 +195,8 @@ async function callerViewOf(runtime: DesktopRuntime, row: CoworkerCallRecord, wh
             if (delivered) { state = 'failed'; detail = row.error; break }
             if (await setupStillPending(runtime, row.targetAgentId)) {
                 state = 'blocked'; waitingOn = 'setup'
-                detail = `${row.targetName} has not received this message: its setup is not finished. Ask the person to finish or skip its setup, then send it again.`
+                if (row.parentAgentId === FOREMAN_AGENT_ID) detail = chiefSetupCallRefusal(row.targetName)
+                else detail = `${row.targetName} has not received this message: its setup is not finished. Ask the person to finish or skip its setup, then send it again.`
             } else { state = 'not-delivered'; detail = row.error }
             break
         default:
@@ -371,7 +376,7 @@ export async function handleDesktopCoworkerCallBridge(runtime: DesktopRuntime, b
                     catch (error) {
                         // The caller is told who is still in setup and what the person can do, in place of
                         // the chat refusal meant for the person's own window.
-                        if (error instanceof DesktopSetupPendingError) throw new DesktopHttpError(409, desktopCoworkerCallSetupRefusal(target.name))
+                        if (error instanceof DesktopSetupPendingError) throw new DesktopHttpError(409, input.caller.engineAgentId === FOREMAN_AGENT_ID ? chiefSetupCallRefusal(target.name) : desktopCoworkerCallSetupRefusal(target.name))
                         throw error
                     }
                     return target

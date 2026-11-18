@@ -1,20 +1,47 @@
 import 'server-only'
 import type { Client } from '@libsql/client'
-import type { DesktopTeamModelOption } from '@rerun/contracts'
+import { desktopTeamChangesInputSchema, type DesktopForemanBinding, type DesktopTeamModelOption } from '@rerun/contracts'
 import type { DesktopRuntime } from '../runtime'
 import { readDesktopProviders } from '../settings'
-import { readDesktopSetupView } from '../setup/service'
+import { observeDesktopSetup } from '../setup/service'
+import { DesktopHttpError } from '../auth'
 import { listDesktopAgents } from '../store'
+import { inspectChiefSetup } from './setup-coordination'
 import { teamModelOptions, type TeamChangeWorkspace } from './team-changes'
 import type { DesktopTeamCoworkerState } from './team-state'
 
 /** The real workspace a proposal is checked against. */
-export async function desktopTeamWorkspace(runtime: DesktopRuntime, db: Client): Promise<TeamChangeWorkspace> {
-    const [coworkers, providers] = await Promise.all([listDesktopAgents(db), readDesktopProviders(runtime)])
-    // Whether each coworker's setup is waiting, so a line that would start nothing is refused before the card.
-    const waiting = await Promise.all(coworkers.map(agent => readDesktopSetupView(runtime, agent.id)
-        .then(view => view.required === true && view.completedAt === null && view.sessionId === null && view.prompt.trim().length > 0, () => undefined)))
-    return { coworkers: coworkers.map((agent, index) => ({ id: agent.id, name: agent.name, ...(waiting[index] === undefined ? {} : { setupWaiting: waiting[index] }) })), connections: providers.connections }
+export async function desktopTeamWorkspace(runtime: DesktopRuntime, db: Client, binding: DesktopForemanBinding, input: unknown, signal: AbortSignal): Promise<TeamChangeWorkspace> {
+    const [agents, providers] = await Promise.all([listDesktopAgents(db), readDesktopProviders(runtime)])
+    const parsed = desktopTeamChangesInputSchema.safeParse(input)
+    const lines = parsed.success ? parsed.data.changes : []
+    const named = (action: string, name: string) => lines.some(line => line.action === action && line.coworker?.trim().toLowerCase() === name.trim().toLowerCase())
+    const coworkers = await Promise.all(agents.map(async agent => {
+        const coworker: TeamChangeWorkspace['coworkers'][number] = { id: agent.id, name: agent.name }
+        if (['start_setup', 'continue_setup', 'skip_setup'].some(action => named(action, agent.name))) {
+            const view = await observeDesktopSetup(runtime, agent.id).catch(() => null)
+            coworker.setupWaiting = !!view && view.pending && view.canStart
+            if (view) {
+                // An interrupted kickoff resumes its own claim. A setup skipped before it ever
+                // started has no claim to resume, so an explicit resume must use the start action.
+                const resume = view.skipped && view.canStart ? 'start' as const
+                    : view.canContinue && (view.skipped || !view.sessionId) ? 'continue' as const : undefined
+                coworker.setupActions = { revision: view.revision, canSkip: view.canSkip, resume }
+            }
+        }
+        if (named('reply_setup', agent.name)) {
+            const inspection = await inspectChiefSetup(runtime, db, binding, agent.name, signal).catch(error => {
+                signal.throwIfAborted()
+                if (error instanceof DesktopHttpError && [403, 404, 409].includes(error.status)) return null
+                throw error
+            })
+            if (inspection?.agentId === agent.id && inspection.state === 'awaiting_reply' && inspection.step) {
+                coworker.setupStep = { ...inspection.step, ...(inspection.lastMessage ? { question: inspection.lastMessage } : {}) }
+            }
+        }
+        return coworker
+    }))
+    return { coworkers, connections: providers.connections }
 }
 
 /**
@@ -59,6 +86,7 @@ function teamChangesText(models: string, team: string, chiefAsks: string[] | 'ev
             '3. Everyday permissions, as one question with several choices: searching and reading the web (webSearch, webFetch), remembering between conversations (memoryRecall, memoryWrite), routines (schedule), skills, and seeing the team (teamRead). Say in a few words what each lets a coworker do.',
             '4. GitHub, only for coworkers that have a repository: whether they may work on a copy of it (give_github).',
             '5. Whether to switch on the coworkers that are off and start the setup of those whose setup is "needed" in the data above. Never propose start_setup for a coworker whose setup is not needed, skipped, started or done. A skipped setup does not block a permitted coworker call.',
+            "For a coworker already in guided setup, use inspect_coworker_setup even when ordinary messages are blocked. Inspect each named coworker. When its current step accepts a plain reply, use a known, non-sensitive answer or ask the person for the missing detail, then propose reply_setup with that exact stepId and reply. The person reviews the answer on your card. Recheck the step after it runs. For a sign-in, credential, permission or approval, name the specific coworker and what the person needs to do in its original card or masked form. If inspection returns ownerSessionId, direct them to Open setup for that coworker in this chat. To resume a skipped setup, propose continue_setup for that coworker. Propose skip_setup only when the person explicitly asks to skip that named coworker’s setup. Both require their card approval. Skipping leaves setup incomplete. Never put a secret in a reply or decide for the person. Report waiting work as waiting.",
             "Then call propose_team_changes once, with one line per coworker and change that differs from the data above, never a line for something already so. Say in one or two sentences what the card will do and that they can untick any line. If a card comes back with refused lines, tell them which and why, plainly. After a new team is built, offer this conversation in one sentence instead of listing where to click. Permissions that reach the Mac itself (files, the shell, the browser, the computer) are not yours to propose: say they are set on the coworker's own Tools screen.",
         ].join('\n'),
         'Staffing. When they ask for more coworkers (more developers, another tester), ask before you propose, with ask_user, in one question card: which provider and model the new coworkers should answer with, offering the connected ones below as options, and for a model that lists efforts, which reasoning effort. Skip a question they already answered. Then show the new coworkers with show_plan, setting `provider` and `model` on each item to their answer, and if they chose an effort add a set_effort line on a propose_team_changes card after the team is built. Say that an effort belongs to the model wherever it runs, not to one coworker.',

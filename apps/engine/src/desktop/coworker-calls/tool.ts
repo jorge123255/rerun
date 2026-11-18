@@ -1,5 +1,6 @@
 import {
     DESKTOP_COWORKER_CALL_CONTEXT_MAX_CHARS,
+    FOREMAN_AGENT_ID,
     DESKTOP_COWORKER_CALL_MESSAGE_MAX_CHARS,
     DESKTOP_COWORKER_CALL_NAME_MAX_CHARS,
 } from '@rerun/contracts'
@@ -15,7 +16,9 @@ const CHECK_DESCRIPTION = 'See where coworker calls you started with call_agent 
 export function desktopCallAgentTools(ctx: RunContext, runtime: DesktopCoworkerCallRuntime): ToolSet {
     return {
         call_agent: tool({
-            description: DESCRIPTION,
+            description: ctx.agent.id === FOREMAN_AGENT_ID && ctx.agent.config.kind === 'foreman'
+                ? DESCRIPTION + ' When guided setup blocks the call, use inspect_coworker_setup to find the current step and help the person finish it here.'
+                : DESCRIPTION,
             inputSchema: z.object({
                 agent: z.string().min(1).max(DESKTOP_COWORKER_CALL_NAME_MAX_CHARS).describe('Name or local id of the target coworker'),
                 message: z.string().min(1).max(DESKTOP_COWORKER_CALL_MESSAGE_MAX_CHARS).describe('The message to send'),

@@ -108,7 +108,7 @@ const WAITING_ON: Record<DesktopCoworkerCallWaitingOn, string> = {
     takeover: 'the person to help in its browser',
     service: 'the person to connect an app',
     secret: 'the person to enter credentials',
-    setup: 'its setup, which the person has to finish or skip',
+    setup: 'the coworker’s guided setup',
     person: 'the person',
 }
 

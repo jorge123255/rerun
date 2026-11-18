@@ -80,7 +80,10 @@ text, a message, a new task thread, the live text of the reply, stop, and its qu
 phone that may send (any approved phone reads). While the Mac's Chief of Staff still asks its first-run
 company questions, the page says to finish setup on the Mac. Its cards that change things (a plan to
 build, team changes, a starter pack) are words with "Open on your Mac to approve", and its approvals
-are words too: nothing on the phone settles them.
+stay on the Mac. For a proposed setup reply the phone also shows the saved question, the full reply,
+and **Open setup for [coworker]**. That button reads the current setup and opens its chat. The owner
+can answer directly there with the phone’s existing permissions. When setup needs the owner’s
+original question or sign-in, the same shortcut opens the saved setup chat.
 
 Not served, and hidden or answered "not available": new coworkers, files and attachments, voice
 (for the Chief of Staff, the composer and its question card offer no recording), routines (the Chief

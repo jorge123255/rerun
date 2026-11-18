@@ -48,10 +48,10 @@ test('authenticated Foreman plan tools reach the real Codex filter without grant
     const built = await buildTools(ctx)
     try {
         const live = resolveModel(agent, undefined, built.tools)
-        expect(names()).toEqual(['show_plan', 'open_panel', 'propose_team_changes', 'search_docs', 'ask_user'])
+        expect(names()).toEqual(['show_plan', 'open_panel', 'propose_team_changes', 'inspect_coworker_setup', 'search_docs', 'ask_user'])
         expect(captured.settings.at(-1)?.env).toMatchObject({ RERUN_NATIVE_SHELL: '0', RERUN_DESKTOP_CODEX_CODE_MODE: '0', RERUN_DESKTOP_CODEX_WEB: '0' })
         await live.close()
-        const copied = resolveModel(agent, undefined, { show_plan: { ...built.tools.show_plan! }, open_panel: built.tools.show_plan! })
+        const copied = resolveModel(agent, undefined, { show_plan: { ...built.tools.show_plan! }, open_panel: built.tools.show_plan!, inspect_coworker_setup: { ...built.tools.inspect_coworker_setup! } })
         expect(names()).toEqual([])
         await copied.close()
         const sibling = resolveModel({ ...agent, id: 'sibling' }, undefined, built.tools)
@@ -117,6 +117,7 @@ test('Foreman call_agent remains hidden unless its separate desktop grant is ena
         expect(names().includes('call_agent')).toBe(callAgent)
         await live.close()
         if (callAgent) {
+            expect(tools.call_agent!.description).toContain('inspect_coworker_setup')
             expect(await tools.call_agent!.execute!({ agent: 'Bob', message: 'Review the note', wait: true } as never, { toolCallId: 'fixture-call', messages: [] })).toBe('Fixture reply')
             expect(calls.execute).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
                 engineAgentId: 'foreman', engineSessionId: 'session', engineRunId: 'run', toolCallId: 'fixture-call', agentRef: 'Bob',

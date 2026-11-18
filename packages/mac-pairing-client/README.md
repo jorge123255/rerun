@@ -89,8 +89,9 @@ dismisses) the question card a conversation waits on; `readChiefTurn`,
 The Mac sends through the Chief of Staff's own path with the model it chose; the
 phone names no model, instructions, attachment or run, and the ids the Mac sees
 are made from the phone and its request. Cards that change things (a plan to
-build, team changes, a starter pack) arrive as words only, and nothing a phone
-can call settles one: they are approved on the Mac.
+build, team changes, a starter pack) are approved on the Mac. A setup proposal can also
+carry `setupTargets` with a coworker and its setup chat, plus the proposed reply and any saved
+question. This lets the phone open the coworker’s current setup through its existing read path.
 
 ## Coworker settings
 

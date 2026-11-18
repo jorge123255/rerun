@@ -116,17 +116,29 @@ export function chiefCardText(card: MacPhoneChiefCard, words: MacWords = ENGLISH
 // the person allowed this phone to approve requests on the Mac: the card shows the action and its
 // detail as the Mac's does, and nothing is decided without a tap. Otherwise the approval is shown as
 // text, like the requests only the Mac settles (a held app action, a secret, a sign-in).
-export function messagesOf(read: Pick<MacPhoneChatRead, 'messages' | 'pending' | 'permissions'> & { cards?: MacPhoneChiefCard[] }, words: MacWords = ENGLISH): ConversationMessage[] {
+export function messagesOf(read: Pick<MacPhoneChatRead, 'pending' | 'permissions'> & { messages: MacPhoneChiefChat['messages']; cards?: MacPhoneChiefCard[] }, words: MacWords = ENGLISH): ConversationMessage[] {
     const messages: ConversationMessage[] = read.messages.map(message => ({
         id: message.id,
         role: message.role,
-        parts: [{ type: 'text', text: message.content.text }],
+        parts: [
+            { type: 'text', text: message.content.text },
+            ...(message.role === 'assistant' ? message.ownerSetups ?? [] : []).map(target => ({ type: 'data-mac-chief-setup', data: target })),
+        ],
         ...(message.createdAt ? { metadata: { createdAt: message.createdAt } } : {}),
     }))
     // The Chief of Staff's cards that change things are words in a message of their own, after the
     // reply that showed them: the chat would run them into the end of that reply.
     const chief = read.cards ?? []
-    if (chief.length > 0) messages.push({ id: `cards-${messages.at(-1)?.id ?? 'chief'}`, role: 'assistant', parts: chief.map(card => ({ type: 'text', text: chiefCardText(card, words) })) })
+    if (chief.length > 0) {
+        const parts: ConversationMessage['parts'] = []
+        for (const card of chief) {
+            parts.push({ type: 'text', text: chiefCardText(card, words) })
+            if (card.kind === 'team-changes') {
+                for (const target of card.setupTargets ?? []) parts.push({ type: 'data-mac-chief-setup', data: target })
+            }
+        }
+        messages.push({ id: `cards-${messages.at(-1)?.id ?? 'chief'}`, role: 'assistant', parts })
+    }
     const { question, approval, macOnly } = read.pending ?? { question: null, approval: null }
     const cards: ConversationMessage['parts'] = []
     if (approval && read.permissions?.approveRequests) cards.push({ type: 'tool-request_approval', toolCallId: approval.toolCallId, state: 'input-available', input: { approvals: approval.approvals } })

@@ -453,6 +453,7 @@ export function DesktopForemanColumn({
                         onStopBuild={() => void foreman.actOnBuild('stop')}
                         buildBusy={foreman.buildBusy}
                         onStartLead={foreman.startLead}
+                        onOpenSetup={onOpenCalledChat}
                         onOpenCreated={step => foreman.navigate({ kind: 'open_coworker', agentId: step.agentId, sessionId: step.sessionId })}
                         onOpenCoworker={input => foreman.navigate({ kind: 'open_coworker', agentId: input.agentId, sessionId: input.sessionId })}
                         onOpenBox={spaceId => foreman.navigate({ kind: 'open_box', spaceId })}

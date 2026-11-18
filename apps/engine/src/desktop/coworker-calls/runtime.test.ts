@@ -656,7 +656,7 @@ describe('coworker messaging that says what happened', () => {
         const text = await child.runtime.status!({ caller: { engineAgentId: 'engine-caller', engineSessionId: 's', engineRunId: 'r' } })
         expect(text).toContain('Call 66666666-6666-4666-8666-666666666666 to Bob: completed.')
         expect(text).toContain('Answer:\nThe answer')
-        expect(text).toContain('Call 77777777-7777-4777-8777-777777777777 to Cy: blocked, waiting on its setup, which the person has to finish or skip.')
+        expect(text).toContain('Call 77777777-7777-4777-8777-777777777777 to Cy: blocked, waiting on the coworker’s guided setup.')
         expect(describeCoworkerCallForCaller({ ...views[0]!, state: 'blocked', waitingOn: 'question', result: null })).toContain('blocked, waiting on the person to answer its question')
         expect(describeCoworkerCallForCaller({ ...views[0]!, state: 'not-delivered', detail: 'Bob is switched off.', result: null })).toContain('not delivered. Started 2026-11-05T00:00:00.000Z, last change 2026-11-05T00:01:00.000Z.\nBob is switched off.')
         expect(await harness({ readCalls: async () => { throw new CoworkerCallBridgeError('No call with this id was started by you.', 'refused', 404) } }).runtime.status!({ caller: { engineAgentId: 'e', engineSessionId: 's', engineRunId: 'r' }, callId: views[0]!.callId }))

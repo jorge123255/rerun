@@ -1,11 +1,13 @@
-import type { DesktopForemanRevision, DesktopTeamChanges } from '@rerun/contracts'
+import { stripBridgePrefix } from '@rerun/contracts'
+import { ownerSetupLink } from '../foreman/owner-setup-link'
+import type { DesktopForemanRevision, DesktopTeamChanges, MacPhoneChiefCard, MacPhoneChiefSetupTarget } from '@rerun/contracts'
 
 // The Chief of Staff as a paired phone reads it: its conversations, the text of their messages, the
 // question one waits on, and the plain words of the cards that change things. Those cards (a plan to
 // build, team changes, a starter pack) are only ever settled on the Mac: the phone is handed their
-// words and nothing that names them to the Mac again, so nothing on a phone can apply one.
+// words and read-only setup shortcuts. Team-change approvals remain on the Mac.
 
-export type PhoneChiefCard = { kind: 'plan' | 'team-changes' | 'starter'; title: string; lines: string[] }
+export type PhoneChiefCard = MacPhoneChiefCard
 
 export type PhoneChiefConversation = { id: string; title: string | null; kind: 'general' | 'thread'; createdAt: string; updatedAt: string }
 
@@ -26,14 +28,21 @@ export function phoneChiefInIntake(input: { finished: boolean; savedProgress: bo
     return !input.finished && (input.messageCount === 0 || input.savedProgress)
 }
 
-// A saved message as text, as a coworker's chat is read: no tool call, no reasoning, no attachment.
+// Only the words and the destinations of completed, public Chief setup inspections go to a phone.
 export function phoneChiefMessages(messages: readonly { id: string; role: 'user' | 'assistant'; parts: readonly unknown[]; metadata?: { createdAt?: string } }[]) {
     return messages.flatMap(message => {
         const text = message.parts.flatMap(part => {
             const { type, text } = (part && typeof part === 'object' ? part : {}) as { type?: unknown; text?: unknown }
             return type === 'text' && typeof text === 'string' ? [text] : []
         }).join('\n')
-        return text ? [{ id: message.id, role: message.role, ...(message.metadata?.createdAt && { createdAt: message.metadata.createdAt }), content: { type: 'text' as const, text } }] : []
+        const ownerSetups = message.role === 'assistant' ? message.parts.flatMap(raw => {
+            const part = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+            if (part.desktopPreview !== true || part.state !== 'output-available' || typeof part.toolName !== 'string'
+                || stripBridgePrefix(part.toolName) !== 'inspect_coworker_setup') return []
+            const link = ownerSetupLink(part.output)
+            return link ? [{ agentId: link.agentId, coworker: link.coworker, sessionId: link.ownerSessionId }] : []
+        }).slice(0, LINES) : []
+        return text || ownerSetups.length ? [{ id: message.id, role: message.role, ...(ownerSetups.length > 0 && { ownerSetups }), ...(message.metadata?.createdAt && { createdAt: message.metadata.createdAt }), content: { type: 'text' as const, text } }] : []
     })
 }
 
@@ -59,7 +68,21 @@ export function phoneChiefCards(input: {
     }
     // The Mac holds this card back until the starter pack is settled and something was said.
     if (input.teamChanges?.state === 'shown' && !waitingStarter && input.messageCount > 0) {
-        cards.push({ kind: 'team-changes', title: words(input.teamChanges.summary), lines: input.teamChanges.changes.slice(0, LINES).map(change => words([change.label, change.caution].filter(Boolean).join(' — '), 600)) })
+        const changes = input.teamChanges.changes.slice(0, LINES)
+        const setupTargets: MacPhoneChiefSetupTarget[] = []
+        for (const change of changes) {
+            if (!change.agentId || !change.coworker) continue
+            if (change.action === 'start_setup') setupTargets.push({ agentId: change.agentId, coworker: change.coworker, sessionId: null })
+            if (change.action === 'reply_setup' && change.setupReply) {
+                const { sessionId, text, question } = change.setupReply
+                setupTargets.push({ agentId: change.agentId, coworker: change.coworker, sessionId, reply: text, ...(question && { question }) })
+            }
+        }
+        cards.push({
+            kind: 'team-changes', title: words(input.teamChanges.summary),
+            lines: changes.map(change => words([change.label, change.caution].filter(Boolean).join(' — '), 600)),
+            ...(setupTargets.length > 0 && { setupTargets }),
+        })
     }
     return cards
 }

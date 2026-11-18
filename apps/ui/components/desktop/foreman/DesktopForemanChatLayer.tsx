@@ -110,6 +110,7 @@ export function DesktopForemanChatLayer({
     onStartLead,
     onOpenCreated,
     onOpenCoworker,
+    onOpenSetup,
     onOpenBox,
     answerFeedback,
     replyRetry,
@@ -150,6 +151,7 @@ export function DesktopForemanChatLayer({
     buildBusy?: boolean
     onStartLead: (step: Extract<DesktopForemanNextStep, { kind: 'start_lead' }>) => void | Promise<void>
     onOpenCreated: (step: Extract<DesktopForemanNextStep, { kind: 'open_created' }>) => void
+    onOpenSetup?: (target: { agentId: string; sessionId: string }) => Promise<void>
     onOpenCoworker?: (input: { agentId: string; sessionId: string | null }) => void
     onOpenBox?: (spaceId: string) => void
     /** Local thumbs for a restored saved answer; absent on read-only or still-live transcripts. */
@@ -233,7 +235,8 @@ export function DesktopForemanChatLayer({
                                 {message.role === 'user' && message.coworkerMentions?.length
                                     ? <div data-chat-find-message className="whitespace-pre-wrap wrap-anywhere"><DesktopSelectedMentionText text={message.text} metadata={message} /></div>
                                     : <DesktopForemanHistoryMessage history={message.history} userLinks={message.role === 'user'}
-                                        draftActions={active && !streaming && message.role === 'assistant'} />}
+                                        draftActions={active && !streaming && message.role === 'assistant'}
+                                        onOpenSetup={active && !streaming && message.role === 'assistant' ? onOpenSetup : undefined} />}
                                 {message.role === 'assistant' && message.text.trim() && (
                                     <DesktopForemanAnswerActions
                                         copyText={active && !streaming ? message.text : undefined}

@@ -1,4 +1,5 @@
 import { desktopForemanDocsResultSchema, isContextPart, toolLabelOf } from '@rerun/contracts'
+import { ownerSetupLink } from '@/lib/desktop/foreman/owner-setup-link'
 import { selectDesktopHistoricalCard, type DesktopHistoricalCard } from '../../tool-presentations/select'
 import { desktopHistoricalToolName, projectDesktopToolStatus, resolveDesktopHistoricalIdentity, type DesktopHistoricalToolSource } from '../../tool-presentations/status'
 import { redactHistoricalText } from '../../tool-presentations/redact'
@@ -7,6 +8,7 @@ import type { DesktopHistoricalGenericItem } from '../../tool-presentations/plan
 export type ForemanHistoryPart =
     | { key: string; kind: 'text'; text: string }
     | { key: string; kind: 'reasoning'; text: string }
+    | { key: string; kind: 'owner-setup'; agentId: string; coworker: string; sessionId: string; questionId?: string }
     | { key: string; kind: 'link'; url: string; title: string }
     | { key: string; kind: 'card'; card: DesktopHistoricalCard }
     | { key: string; kind: 'docs'; links: { url: string; title: string; text?: string }[]; note?: string }
@@ -37,6 +39,10 @@ export function foremanHistoryParts(messageId: string, parts: readonly unknown[]
             const name = desktopHistoricalToolName(tool)
             if (part.state === 'output-available' && typeof part.toolCallId === 'string' && answeredCalls?.has(part.toolCallId)
                 && (name === 'ask_user' || name === 'request_approval')) return []
+            if (name === 'inspect_coworker_setup' && part.desktopPreview === true && projectDesktopToolStatus(tool) === 'succeeded') {
+                const link = ownerSetupLink(part.output)
+                if (link) return [{ key, kind: 'owner-setup', agentId: link.agentId, coworker: link.coworker, sessionId: link.ownerSessionId, ...(link.ownerQuestionId && { questionId: link.ownerQuestionId }) }]
+            }
             if (name === 'search_docs' && projectDesktopToolStatus(tool) === 'succeeded') {
                 let output = part.output
                 if (typeof output === 'string' && output.length <= 100000) { try { output = JSON.parse(output) } catch { output = null } }
