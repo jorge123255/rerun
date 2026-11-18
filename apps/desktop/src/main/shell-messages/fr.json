@@ -144,6 +144,8 @@
         "declineFailed": "Impossible de refuser la demande de jumelage.",
         "revokeFailed": "Impossible de révoquer l’accès de cet iPhone.",
         "decide": "Approuver les demandes",
+        "voice": "Changer la voix de l’espace de travail",
+        "voiceLabel": "Autoriser {name} à choisir la voix pour les appels et la lecture à voix haute",
         "decideLabel": "Autoriser {name} à approuver les demandes",
         "decideHint": "N’autorisez un téléphone à approuver les demandes que s’il doit pouvoir approuver ou refuser ce qu’un collègue demande avant d’agir. Les actions d’app en attente et les demandes de secrets se décident toujours sur ce Mac.",
         "sendFailed": "Ouvrez le workspace de cet iPhone et activez son accès au réseau local pour modifier l’autorisation d’envoi.",

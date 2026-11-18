@@ -171,6 +171,7 @@ async function refresh() {
         }
         grant(device.sendMessages, 'sendLabel', copy.send, window.desktopApp.phonePairing.setSendMessages)
         grant(device.approveRequests, 'decideLabel', copy.decide, window.desktopApp.phonePairing.setApproveRequests)
+        grant(device.changeVoice, 'voiceLabel', copy.voice, window.desktopApp.phonePairing.setChangeVoice)
         return item
     }))
 }

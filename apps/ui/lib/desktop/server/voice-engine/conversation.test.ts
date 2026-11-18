@@ -35,6 +35,36 @@ describe('a spoken conversation with the Chief of Staff', () => {
         }
     })
 
+    it('keeps the Chief working when a silent nudge arrives during a coworker request', async () => {
+        let release!: () => void
+        const gate = new Promise<void>(resolve => { release = resolve })
+        const { conversation, responses, sent, stops } = start(async ({ emit, end }) => {
+            await gate
+            emit({ type: 'text', partId: 'a', delta: 'Ada finished the report.' })
+            end()
+        }, { fillerMs: 5_000 })
+        await conversation.transcript([{ role: 'user', content: 'Ask Ada for the report.' }], 1)
+        try {
+            await conversation.transcript([{ role: 'user', content: '…' }], 3)
+            await conversation.transcript([{ role: 'user', content: 'Delayed event.' }], 2)
+            expect(stops).toEqual([])
+            expect(sent.map(turn => turn.text)).toEqual(['Ask Ada for the report.'])
+            expect(finals(responses).map(item => item.event_id)).toEqual([3])
+        } finally {
+            release()
+        }
+        await until(() => finals(responses).some(item => item.event_id === 1))
+        expect(said(responses, 1)).toBe('Ada finished the report. ')
+    })
+
+    it('does not replay a prior request from a history ending in an agent response', async () => {
+        const { conversation, sent, stops, responses } = start(({ end }) => end())
+        await conversation.transcript([{ role: 'user', content: 'Ask Ada for the report.' }, { role: 'agent', content: 'Already delivered.' }], 4)
+        expect(sent).toEqual([])
+        expect(stops).toEqual([])
+        expect(finals(responses).map(item => item.event_id)).toEqual([4])
+    })
+
     it('says "One moment." when no words come within the wait, and only once', async () => {
         const { conversation, responses } = start(async ({ emit, end }) => { await delay(120); emit({ type: 'text', partId: 'a', delta: 'Here it is.' }); end() })
         await conversation.transcript([{ role: 'user', content: 'Slow one.' }], 4)

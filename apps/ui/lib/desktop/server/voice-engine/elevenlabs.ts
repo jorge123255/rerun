@@ -26,12 +26,26 @@ const tokenReply = z.object({
     conversation_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
 }).passthrough()
 
+const requiredEvents = ['audio', 'interruption', 'user_transcript', 'tentative_user_transcript', 'agent_response', 'agent_response_correction']
+function audioSettings(voiceId: string) {
+    return {
+        tts: { voice_id: voiceId },
+        vad: { background_voice_detection: true },
+        conversation: { max_duration_seconds: VOICE_ENGINE_SETTINGS.maxDurationSeconds, client_events: requiredEvents },
+    }
+}
+
+const audioReply = engineReply.extend({
+    tts: z.object({ voice_id: z.string() }),
+    conversation: z.object({ client_events: z.array(z.string()) }),
+    vad: z.object({ background_voice_detection: z.boolean().optional() }).optional(),
+})
+
 export function engineRequestBody(input: { wsUrl: string; voiceId: string; retentionDays: number }) {
     return {
         name: VOICE_ENGINE_SETTINGS.name,
         speech_engine: { ws_url: input.wsUrl },
-        tts: { voice_id: input.voiceId },
-        conversation: { max_duration_seconds: VOICE_ENGINE_SETTINGS.maxDurationSeconds },
+        ...audioSettings(input.voiceId),
         privacy: { record_voice: false, retention_days: input.retentionDays },
         auth: { enable_auth: true },
         cascade_timeout_seconds: VOICE_ENGINE_SETTINGS.cascadeTimeoutSeconds,
@@ -77,6 +91,30 @@ export function voiceEngineApi(fetcher: typeof fetch = fetch) {
                 return { engineId: parsed.data.speech_engine_id }
             }
             throw unexpected()
+        },
+        async updateAudio(input: { apiKey: string; engineId: string; voiceId: string }, signal: AbortSignal): Promise<void> {
+            const path = `/v1/speech-engine/${encodeURIComponent(input.engineId)}`
+            async function readPrivateEngine(response: Response) {
+                if (!response.ok) throw await desktopSpeechRefusal(response, signal)
+                const result = audioReply.safeParse(await json(response, signal))
+                if (!result.success || result.data.speech_engine_id !== input.engineId ||
+                    !result.data.auth.enable_auth || result.data.privacy.record_voice) throw unexpected()
+                return result.data
+            }
+            const current = await readPrivateEngine(await call(path, { method: 'GET' }, input.apiKey, signal))
+            // Preserve the owner's additional events and duration, and only request the VAD filter on
+            // engines that expose it. Some API versions return an empty VAD configuration.
+            const events = [...new Set([...current.conversation.client_events, ...requiredEvents])]
+            const needsFilter = current.vad?.background_voice_detection === false
+            if (current.tts.voice_id === input.voiceId && !needsFilter && requiredEvents.every(event => current.conversation.client_events.includes(event))) return
+            const updated = await readPrivateEngine(await call(path, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tts: { voice_id: input.voiceId }, conversation: { client_events: events },
+                    ...(needsFilter && { vad: { background_voice_detection: true } }),
+                }),
+            }, input.apiKey, signal))
+            if (updated.tts.voice_id !== input.voiceId || !events.every(event => updated.conversation.client_events.includes(event))) throw unexpected()
         },
         /** A short-lived token for the phone and the id of the conversation it opens. */
         async conversationToken(input: { apiKey: string; engineId: string }, signal: AbortSignal): Promise<{ token: string; conversationId: string }> {

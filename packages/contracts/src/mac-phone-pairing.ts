@@ -211,5 +211,12 @@ export const macPhoneVoiceSessionSchema = z.object({
 }).strict()
 export type MacPhoneVoiceSession = z.infer<typeof macPhoneVoiceSessionSchema>
 
+const phoneVoiceId = z.string().regex(/^[A-Za-z0-9]{8,64}$/)
+export const macPhoneVoiceChoiceSchema = z.object({ voiceId: phoneVoiceId }).strict()
+export const macPhoneVoiceChoicesSchema = macPhoneVoiceChoiceSchema.extend({
+    voices: z.array(z.object({ id: phoneVoiceId, name: z.string().min(1).max(120) }).strict()).max(100),
+})
+export type MacPhoneVoiceChoices = z.infer<typeof macPhoneVoiceChoicesSchema>
+
 // Every refusal is `{ error: code }`. A phone that is not approved, or was removed, gets `unauthorized`.
 export const macPhoneErrorSchema = z.object({ error: z.string() })

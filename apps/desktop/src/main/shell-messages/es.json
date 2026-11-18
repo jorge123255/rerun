@@ -144,6 +144,8 @@
         "declineFailed": "No se pudo rechazar la solicitud de vinculación.",
         "revokeFailed": "No se pudo revocar el acceso de este iPhone.",
         "decide": "Aprobar solicitudes",
+        "voice": "Cambiar la voz del espacio de trabajo",
+        "voiceLabel": "Permitir a {name} elegir la voz de las llamadas y la lectura en voz alta",
         "decideLabel": "Permitir que {name} apruebe solicitudes",
         "decideHint": "Permite que un teléfono apruebe solicitudes solo si debe poder aprobar o rechazar lo que un compañero pide antes de actuar. Las acciones de apps retenidas y las solicitudes de secretos siempre se deciden en este Mac.",
         "sendFailed": "Abre el espacio de trabajo de este iPhone y activa el acceso en la red local para cambiar el permiso de envío.",

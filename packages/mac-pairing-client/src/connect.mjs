@@ -275,6 +275,14 @@ export function createMacPairingClient({ storage, fetch: fetchImpl = fetch, pinn
         // A voice conversation with the Chief of Staff on one of its conversations: a short-lived token
         // for the phone's own WebRTC session with ElevenLabs, its id and when it lapses. Needs the send
         // permission and the Mac's own switch for it. The token is handed back, never kept here.
+        async readVoiceChoices(signal) {
+            const session = await sessionOrThrow()
+            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/voice/choice`, { credential: session.credential, fetchImpl, pinnedFetch, signal })
+        },
+        async chooseVoice(voiceId, signal) {
+            const session = await sessionOrThrow()
+            return request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/voice/choice`, { method: 'POST', body: { voiceId }, credential: session.credential, fetchImpl, pinnedFetch, signal })
+        },
         async startVoice(chatId, signal) {
             const session = await sessionOrThrow()
             const result = await request(session, `/workspaces/${encodeURIComponent(session.workspaceId)}/voice/start`, { method: 'POST', body: { chatId }, credential: session.credential, fetchImpl, pinnedFetch, signal })

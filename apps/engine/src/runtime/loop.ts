@@ -20,6 +20,7 @@ import { refreshCodexPlanLimits } from '../connections/codex-plan-limits.js'
 import { parkRefusedScheduledRun } from '../desktop/usage-gate.js'
 import { buildSystemPrompt, nowBlock, recallMemories, recallSection, systemPromptText, userLanguageBlock } from '../agents/systemPrompt.js'
 import type { LoadedAgent } from '../agents/types.js'
+import { desktopSetupAgentForTurn } from '../agents/setup.js'
 import { turnOrder } from '../agents/turn-order.js'
 import { answeringModel } from '../agents/rerun-upstream.js'
 import { listAgentIndex, setAgentStatus } from '../db/repos/agents.js'
@@ -513,6 +514,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             } } } }
         }
         const nativeSubagentSignal = nativeParent && provider === 'claude' && agent.config.tools.desktopToolGrants?.claudeSubagents === true ? controller.signal : undefined
+        if (desktopApp()) agent = desktopSetupAgentForTurn(agent, sessionId, trigger)
         const effort = await desktopCodexEffort(resolved)
         const t0 = Date.now()
         const order = turnOrder(provider, await answeringModel(provider, model))

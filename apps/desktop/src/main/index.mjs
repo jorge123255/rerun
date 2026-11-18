@@ -689,6 +689,7 @@ async function launch() {
     ipcMain.handle('desktop:phone-pairing-decline', (event, deviceId) => trustedPhonePairing(event).declineDevice(deviceId))
     ipcMain.handle('desktop:phone-pairing-send-permission', (event, deviceId, enabled) => trustedPhonePairing(event).setSendMessages(deviceId, enabled === true))
     ipcMain.handle('desktop:phone-pairing-approve-permission', (event, deviceId, enabled) => trustedPhonePairing(event).setApproveRequests(deviceId, enabled === true))
+    ipcMain.handle('desktop:phone-pairing-voice-permission', (event, deviceId, enabled) => trustedPhonePairing(event).setChangeVoice(deviceId, enabled === true))
     ipcMain.handle('desktop:phone-pairing-revoke', (event, deviceId) => trustedPhonePairing(event).revokeDevice(deviceId))
     ipcMain.handle('desktop:remote-machines-actor', event => remoteMachineIpc.actor(event))
     ipcMain.handle('desktop:remote-machines-execute', (event, command) => remoteMachineIpc.execute(event, command))

@@ -25,10 +25,20 @@ function json(response, status, body) {
 // Stands in for the Mac app's /api/desktop/phone-pairing/voice/start route.
 async function appFixture(t) {
     const calls = []
-    const state = { status: 200 }
+    const state = { status: 200, voiceId: 'VoiceOnly1234' }
     const server = createServer((request, response) => {
         const url = new URL(request.url, 'http://127.0.0.1')
         if (request.headers.cookie !== `rerun-desktop-session=${SESSION_COOKIE}`) return json(response, 401, { error: 'Unauthorized' })
+        if (url.pathname === '/api/desktop/phone-pairing/voice/choice') {
+            if (request.method === 'GET') return json(response, 200, { voiceId: state.voiceId, voices: [{ id: 'SecondVoice123', name: 'Second' }] })
+            const chunks = []
+            request.on('data', chunk => chunks.push(chunk))
+            request.on('end', () => {
+                state.voiceId = JSON.parse(Buffer.concat(chunks)).voiceId
+                json(response, 200, { voiceId: state.voiceId })
+            })
+            return
+        }
         if (url.pathname !== '/api/desktop/phone-pairing/voice/start' || request.method !== 'POST') return json(response, 404, { error: 'not found' })
         const chunks = []
         request.on('data', chunk => chunks.push(chunk))
@@ -80,6 +90,16 @@ test('a voice conversation is given only to an approved phone that may send, and
     assert.deepEqual(app.calls, [])
 
     await service.setSendMessages(pending.deviceId, true)
+    await assert.rejects(client.readVoiceChoices(), { status: 403 })
+    await assert.rejects(client.chooseVoice('SecondVoice123'), { status: 403 })
+    assert.equal(app.state.voiceId, 'VoiceOnly1234')
+    await service.setChangeVoice(pending.deviceId, true)
+    assert.deepEqual(await client.readVoiceChoices(), { voiceId: 'VoiceOnly1234', voices: [{ id: 'SecondVoice123', name: 'Second' }] })
+    assert.deepEqual(await client.chooseVoice('SecondVoice123'), { voiceId: 'SecondVoice123' })
+    await service.setChangeVoice(pending.deviceId, false)
+    await assert.rejects(client.chooseVoice('VoiceOnly1234'), { status: 403 })
+    assert.equal(app.state.voiceId, 'SecondVoice123')
+
     const granted = await ask(auth)
     assert.equal(granted.status, 200)
     assert.deepEqual(await granted.json(), GRANT)
@@ -114,6 +134,8 @@ test('a voice conversation is given only to an approved phone that may send, and
     // A removed phone is told so.
     const before = app.calls.length
     await service.revokeDevice(pending.deviceId)
+    await assert.rejects(client.readVoiceChoices(), { status: 401 })
+    await assert.rejects(client.chooseVoice('VoiceOnly1234'), { status: 401 })
     const revoked = await ask(auth)
     assert.equal(revoked.status, 401)
     assert.deepEqual(await revoked.json(), { error: 'revoked' })

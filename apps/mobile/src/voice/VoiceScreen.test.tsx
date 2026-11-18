@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store'
 import { AppState, type AppStateStatus } from 'react-native'
 
 import { resetVoiceOffer, useVoiceOffered } from './availability'
-import type { VoiceEngine, VoiceEngineEvents, VoiceEngineSession } from './engine'
+import { voiceCallbacks, type VoiceEngine, type VoiceEngineEvents, type VoiceEngineSession } from './engine'
 import { PAIRING_CHECK_MS, type VoiceDeps } from './useVoiceSession'
 import { VoiceScreen } from './VoiceScreen'
 
@@ -110,17 +110,76 @@ describe('the voice screen', () => {
     it('goes from listening to thinking to speaking with what the session says, and shows the last lines', async () => {
         const { deps, events } = fakeDeps()
         await open(deps)
-        await act(async () => events().onLine({ from: 'you', text: 'What is on my plate today?' }))
+        await act(async () => events().onLine({ from: 'you', eventId: 1, text: 'What is on my plate today?' }))
         expect(orb()).toBe('thinking')
         expect(caption()).toBe('Thinking')
         await act(async () => events().onMode('speaking'))
-        await act(async () => events().onLine({ from: 'chief', text: 'Two reviews and the launch.' }))
+        await act(async () => events().onLine({ from: 'chief', eventId: 2, text: 'Two reviews and the launch.' }))
         expect(orb()).toBe('speaking')
         expect(caption()).toBe('Speaking')
         expect(screen.getByText(/What is on my plate today\?/)).toBeTruthy()
         expect(screen.getByText(/Two reviews and the launch\./)).toBeTruthy()
         await act(async () => events().onMode('listening'))
         expect(orb()).toBe('listening')
+    })
+
+    it('shows a changing live caption while listening and replaces it with the final words in the call history', async () => {
+        const { deps, events } = fakeDeps()
+        await open(deps)
+        const sdk = voiceCallbacks(events())
+        const partial = (id: number, text: string) => sdk.onIncomingEvent?.({ type: 'tentative_user_transcript', tentative_user_transcription_event: { user_transcript: text, event_id: id } })
+        const final = (id: number, message: string) => sdk.onMessage?.({ source: 'user', role: 'user', event_id: id, message })
+        await act(async () => partial(1, 'Send'))
+        expect(screen.getByText('Send')).toBeTruthy()
+        expect(screen.getByText('You · Live')).toBeTruthy()
+        expect(orb()).toBe('listening')
+        await act(async () => partial(1, 'Send a no'))
+        expect(screen.queryByText('Send')).toBeNull()
+        expect(screen.getByText('Send a no')).toBeTruthy()
+        await act(async () => final(1, 'Send a note.'))
+        expect(screen.queryByTestId('voice-live-transcript')).toBeNull()
+        expect(screen.getAllByText('Send a note.')).toHaveLength(1)
+        expect(orb()).toBe('thinking')
+        await act(async () => {
+            sdk.onMessage?.({ source: 'ai', role: 'agent', event_id: 2, response_id: 'reply', message: 'Who should receive the note?' })
+            partial(1, 'stale draft')
+            final(1, 'Send a note.')
+        })
+        expect(screen.queryByText('stale draft')).toBeNull()
+        expect(orb()).toBe('listening')
+        await act(async () => {
+            sdk.onAgentResponseCorrection?.({ event_id: 2, response_id: 'reply', original_agent_response: 'Who should receive the note?', corrected_agent_response: 'Who should' })
+            final(3, 'The design team.')
+            partial(4, 'unfinished')
+            events().onEnd('agent')
+        })
+        expect(screen.queryByText('unfinished')).toBeNull()
+        expect(screen.queryByText('Who should receive the note?')).toBeNull()
+        expect(screen.getByText('Who should')).toBeTruthy()
+        expect(screen.getByText('The design team.')).toBeTruthy()
+        expect(screen.getAllByText('Send a note.')).toHaveLength(1)
+    })
+
+    it('ignores malformed caption events, noise-only turns, and provisional captions after mute or leaving the chat', async () => {
+        const { deps, events } = fakeDeps()
+        await open(deps)
+        const sdk = voiceCallbacks(events())
+        const draft = { type: 'tentative_user_transcript', tentative_user_transcription_event: { user_transcript: 'a preview', event_id: 9 } }
+        await act(async () => {
+            sdk.onIncomingEvent?.({ ...draft, tentative_user_transcription_event: { user_transcript: undefined, event_id: 4 } })
+            sdk.onIncomingEvent?.({ type: 'user_transcript', tentative_user_transcription_event: draft.tentative_user_transcription_event })
+            sdk.onMessage?.({ source: 'user', role: 'user', event_id: 1, message: '... ' })
+        })
+        expect(screen.queryByTestId('voice-lines')).toBeNull()
+        expect(orb()).toBe('listening')
+        await act(async () => sdk.onIncomingEvent?.(draft))
+        await fireEvent.press(screen.getByLabelText('Mute the microphone'))
+        await act(async () => sdk.onIncomingEvent?.(draft))
+        expect(screen.queryByTestId('voice-lines')).toBeNull()
+        await act(async () => sdk.onError?.('Failed to set input muted state'))
+        expect(screen.queryByTestId('voice-mute')).toBeNull()
+        await act(async () => sdk.onIncomingEvent?.(draft))
+        expect(screen.queryByText('a preview')).toBeNull()
     })
 
     it.each([
@@ -289,7 +348,7 @@ describe('the voice screen', () => {
         const logged = (['log', 'info', 'warn', 'error', 'debug'] as const).map(method => jest.spyOn(console, method).mockImplementation(() => {}))
         const { deps, events } = fakeDeps()
         await open(deps)
-        await act(async () => events().onLine({ from: 'you', text: 'Hello' }))
+        await act(async () => events().onLine({ from: 'you', eventId: 1, text: 'Hello' }))
         await act(async () => events().onEnd('error'))
         expect(JSON.stringify(screen.toJSON())).not.toContain(TOKEN)
         for (const spy of logged) expect(JSON.stringify(spy.mock.calls)).not.toContain(TOKEN)

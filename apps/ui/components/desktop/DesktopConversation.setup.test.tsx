@@ -26,11 +26,20 @@ test.each([
     { title: 'an explicitly skipped fresh setup', claimed: null, current: null, pending: false, skipped: true, gate: null },
 ])('$title uses the setup gate only when required', async ({ claimed, current, pending, skipped, gate }) => {
     const writes: string[] = []
+    let savedSkip = skipped
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), 'http://local')
         if (init?.method && init.method !== 'GET') writes.push(url.pathname)
-        if (url.pathname.endsWith('/setup')) return Response.json({ agentId: 'setup-qa', revision: 'setup-native-regression', required: true,
-            prompt: 'Introduce yourself and wait for Finish setup.', completedAt: null, sessionId: claimed, pending, skipped, defaultPrompt: '' })
+        if (url.pathname.endsWith('/setup')) {
+            if (init?.method === 'POST') {
+                expect(JSON.parse(String(init.body))).toMatchObject({ action: 'skip', expectedRevision: 'setup-native-regression' })
+                savedSkip = true
+            }
+            const view = { agentId: 'setup-qa', revision: savedSkip ? 'after-skip' : 'setup-native-regression', required: true,
+                prompt: 'Introduce yourself and wait for Finish setup.', completedAt: null, sessionId: claimed,
+                pending: pending && !savedSkip, skipped: savedSkip, defaultPrompt: '' }
+            return Response.json(init?.method === 'POST' ? { view } : view)
+        }
         const background = desktopBackgroundRead(input, init); if (background) return background
         if (url.pathname.endsWith('/approvals')) return Response.json({ approval: null })
         if (url.pathname.endsWith('/questions')) return Response.json({ question: null })
@@ -55,4 +64,12 @@ test.each([
         expect(container.querySelector('textarea')?.closest('form')?.hidden).toBe(false)
     }
     expect(writes).toEqual([])
+    if (current && claimed === current && pending) {
+        const skip = [...container.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Skip for now')
+        expect(skip).toBeDefined()
+        await act(async () => { skip!.click() })
+        expect(writes).toEqual(['/api/desktop/coworkers/setup-qa/setup'])
+        expect(container.textContent).toContain('This coworker has not been set up yet')
+        expect(container.querySelector('textarea')?.closest('form')?.hidden).toBe(false)
+    }
 })

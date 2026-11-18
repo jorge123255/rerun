@@ -72,6 +72,8 @@ export function createMacPairingClient(options: {
     readChiefTurn(chatId: string, requestId: string, signal?: AbortSignal): Promise<{ status: 'running' | 'done' | 'error' | 'cancelled' }>
     stopChiefTurn(chatId: string, requestId: string, signal?: AbortSignal): Promise<void>
     streamChiefTurn(chatId: string, requestId: string, onFrame: (frame: MacReplyFrame) => void, signal?: AbortSignal): Promise<void>
+    readVoiceChoices(signal?: AbortSignal): Promise<unknown>
+    chooseVoice(voiceId: string, signal?: AbortSignal): Promise<unknown>
     startVoice(chatId: string, signal?: AbortSignal): Promise<{ conversationToken: string; conversationId: string; expiresAt: string }>
     readMacSession(): Promise<MacSession | null>
     clearMacSession(): Promise<void>

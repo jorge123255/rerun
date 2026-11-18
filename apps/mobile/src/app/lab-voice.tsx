@@ -27,9 +27,10 @@ import { VoiceScreen } from '@/voice/VoiceScreen'
 const CHAT = 'fmc_00000000-0000-4000-8000-000000000000'
 
 const SCRIPT: { after: number; run: (events: VoiceEngineEvents) => void }[] = [
-    { after: 2500, run: events => events.onLine({ from: 'you', text: 'What is on my plate this afternoon?' }) },
+    { after: 1000, run: events => events.onPartial({ eventId: 1, text: 'What is on my plate' }) },
+    { after: 1500, run: events => events.onLine({ from: 'you', eventId: 1, text: 'What is on my plate this afternoon?' }) },
     { after: 2000, run: events => events.onMode('speaking') },
-    { after: 100, run: events => events.onLine({ from: 'chief', text: 'Two reviews before four, then the launch checklist with Ada.' }) },
+    { after: 100, run: events => events.onLine({ from: 'chief', eventId: 2, text: 'Two reviews before four, then the launch checklist with Ada.' }) },
     { after: 3500, run: events => events.onMode('listening') },
 ]
 
@@ -66,7 +67,17 @@ class LabRefusal extends Error {
 const STATUS: Record<string, number> = { not_found: 404, unavailable: 503, send_not_allowed: 403, rate_limited: 429 }
 
 function labDeps(refuse: string | undefined): VoiceDeps {
+    const voices = [{ id: 'VoiceLabOne123', name: 'Ada' }, { id: 'VoiceLabTwo123', name: 'George' }]
+    let voiceId = voices[0].id
     return {
+        voiceChoice: {
+            read: async () => ({ voiceId, voices }),
+            save: async id => {
+                if (!voices.some(voice => voice.id === id)) throw new Error('Unknown lab voice')
+                voiceId = id
+                return { voiceId }
+            },
+        },
         requestSession: async () => {
             await new Promise(resolve => setTimeout(resolve, 900))
             if (refuse) throw new LabRefusal(STATUS[refuse] ?? 500, refuse)

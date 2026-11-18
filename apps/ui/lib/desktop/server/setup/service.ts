@@ -79,7 +79,7 @@ async function kickoffSetup(runtime: DesktopRuntime, db: Client, agent: DesktopA
     }
     if (!receipt || (receipt.status !== 'reserved' && receipt.status !== 'admitted' && receipt.status !== 'existing')) throw new DesktopHttpError(409, 'The saved setup start is damaged.')
     if (receipt.status !== 'reserved') return
-    const started = await startDesktopChat(runtime, { agentId: agent.id, sessionId, text: String(receipt.prompt), requestId: String(receipt.run_id) })
+    const started = await startDesktopChat(runtime, { agentId: agent.id, sessionId, text: String(receipt.prompt), requestId: String(receipt.run_id) }, undefined, { setupKickoff: true })
     if (started.sessionId !== sessionId || started.response.headers.get('x-run-id') !== receipt.run_id) throw new DesktopHttpError(502, 'The engine returned a different setup start.')
     // The run is persisted and continues independently of this observer. Opening its tab reads
     // the same history; no browser callback has permission to submit the kickoff again.
@@ -191,10 +191,11 @@ export function mutateDesktopSetup(runtime: DesktopRuntime, agentId: string, inp
 
 /** Central chat admission uses the engine claim, never a renderer supplied setup flag. This read
  * deliberately does not resume pending UI intents: kickoff itself calls startDesktopChat. */
-export async function assertDesktopSetupChatAllowed(runtime: DesktopRuntime, agentId: string, sessionId?: string): Promise<void> {
+export async function assertDesktopSetupChatAllowed(runtime: DesktopRuntime, agentId: string, sessionId?: string): Promise<'skipped' | void> {
     const { db, agent } = await agentFor(runtime, agentId)
     const setup = await engineSetup(runtime, agent.engineAgentId)
-    if (!setup.pending || await skippedOf(db, agentId)) return
+    if (!setup.pending) return
+    if (await skippedOf(db, agentId)) return 'skipped'
     const session = sessionId ? await findDesktopSession(db, sessionId) : null
     if (!session || session.agentId !== agentId || session.engineSessionId !== setup.sessionId) throw new DesktopSetupPendingError(setup.sessionId !== null)
 }

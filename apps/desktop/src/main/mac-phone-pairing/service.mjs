@@ -119,6 +119,21 @@ export function createMacPhonePairingService({
         }
     }
 
+    function changeGrant(deviceId, grant, enabled) {
+        return exclusive(async () => {
+            const record = await store()
+            const device = record.devices.find(entry => entry.deviceId === deviceId)
+            if (!device || device.status !== DEVICE_STATUS.approved || !device.certificateFingerprint) throw refusal(ERRORS.not_found)
+            if (enabled && (device.credentialIssued === false || !transport?.inScope(device)
+                || !transport.address() || getRuntime()?.workspaceId !== device.workspaceId)) {
+                throw refusal(ERRORS.workspace_not_active)
+            }
+            device[grant] = enabled === true
+            await saveStore(record)
+            return publicDevice(device)
+        })
+    }
+
     return {
         fingerprint, settings, status,
         origin: () => transport?.address()?.origin ?? null,
@@ -167,32 +182,9 @@ export function createMacPhonePairingService({
             if (!transport || !(await settings()).phoneAccessEnabled) throw refusal(ERRORS.disabled)
             return transport.revoke(deviceId, { pendingOnly: true })
         }),
-        setSendMessages: (deviceId, enabled) => exclusive(async () => {
-            const record = await store()
-            const device = record.devices.find(entry => entry.deviceId === deviceId)
-            if (!device || device.status !== DEVICE_STATUS.approved || !device.certificateFingerprint) throw refusal(ERRORS.not_found)
-            if (enabled && (device.credentialIssued === false || !transport?.inScope(device)
-                || !transport.address() || getRuntime()?.workspaceId !== device.workspaceId)) {
-                throw refusal(ERRORS.workspace_not_active)
-            }
-            device.sendMessages = enabled === true
-            await saveStore(record)
-            return publicDevice(device)
-        }),
-        // Deciding a coworker's approval request is its own grant, apart from sending: off until the
-        // person turns it on for this phone, under the same conditions.
-        setApproveRequests: (deviceId, enabled) => exclusive(async () => {
-            const record = await store()
-            const device = record.devices.find(entry => entry.deviceId === deviceId)
-            if (!device || device.status !== DEVICE_STATUS.approved || !device.certificateFingerprint) throw refusal(ERRORS.not_found)
-            if (enabled && (device.credentialIssued === false || !transport?.inScope(device)
-                || !transport.address() || getRuntime()?.workspaceId !== device.workspaceId)) {
-                throw refusal(ERRORS.workspace_not_active)
-            }
-            device.approveRequests = enabled === true
-            await saveStore(record)
-            return publicDevice(device)
-        }),
+        setSendMessages: (deviceId, enabled) => changeGrant(deviceId, 'sendMessages', enabled),
+        setApproveRequests: (deviceId, enabled) => changeGrant(deviceId, 'approveRequests', enabled),
+        setChangeVoice: (deviceId, enabled) => changeGrant(deviceId, 'changeVoice', enabled),
         revokeDevice: deviceId => exclusive(() => (transport ?? newTransport(0)).revoke(deviceId)),
     }
 }

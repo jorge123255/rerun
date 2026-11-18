@@ -24,6 +24,9 @@ export function signSpeechEngineToken(apiKey: string, claims: Record<string, unk
 export function fakeElevenLabsApi(options: { refuseRetentionZero?: boolean; ignorePrivacy?: boolean } = {}) {
     const requests: { url: string; method: string; headers: Record<string, string>; body: unknown }[] = []
     const minted: string[] = []
+    const remoteAudio = {
+        tts: { voice_id: 'LegacyVoice1234' }, conversation: { client_events: ['audio', 'vad_score'] }, vad: { background_voice_detection: false },
+    }
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input))
         const headers = Object.fromEntries(new Headers(init?.headers).entries())
@@ -32,10 +35,15 @@ export function fakeElevenLabsApi(options: { refuseRetentionZero?: boolean; igno
         if (headers['xi-api-key'] !== API_KEY) return Response.json({ detail: { status: 'invalid_api_key', message: 'Invalid API key' } }, { status: 401 })
         if (url.pathname === '/v1/speech-engine' && init?.method === 'POST') {
             if (options.refuseRetentionZero && body.privacy.retention_days === 0) return Response.json({ detail: [{ loc: ['privacy'], msg: 'retention', type: 'value_error' }] }, { status: 422 })
+            Object.assign(remoteAudio, { tts: body.tts, conversation: body.conversation, vad: body.vad })
             return Response.json({
                 speech_engine_id: 'seng_test0001', name: body.name, speech_engine: body.speech_engine,
                 auth: { enable_auth: options.ignorePrivacy ? false : body.auth.enable_auth }, privacy: { record_voice: options.ignorePrivacy ? true : body.privacy.record_voice },
             }, { status: 201 })
+        }
+        if (url.pathname === '/v1/speech-engine/seng_test0001' && (init?.method === 'PATCH' || init?.method === 'GET')) {
+            if (init.method === 'PATCH') Object.assign(remoteAudio, body)
+            return Response.json({ speech_engine_id: 'seng_test0001', auth: { enable_auth: true }, privacy: { record_voice: false }, ...remoteAudio })
         }
         if (url.pathname === '/v1/convai/conversation/token') {
             const conversationId = `conv_${randomUUID().replace(/-/g, '')}`
@@ -44,7 +52,7 @@ export function fakeElevenLabsApi(options: { refuseRetentionZero?: boolean; igno
         }
         return Response.json({ detail: { message: 'not found' } }, { status: 404 })
     }) as typeof fetch
-    return { fetcher, requests, minted }
+    return { fetcher, requests, minted, remoteAudio }
 }
 
 type Sent = { channel: string; message: { type: string; content?: string; event_id?: number; is_final?: boolean } }

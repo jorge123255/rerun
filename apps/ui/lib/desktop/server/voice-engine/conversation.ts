@@ -64,6 +64,7 @@ export function createVoiceConversation(options: {
     // every reply. ElevenLabs waits up to 15 seconds for the first words.
     const fillerMs = options.fillerMs ?? 6_000, retryMs = options.retryMs ?? 400, retries = options.retries ?? 12
     let current: Turn | null = null
+    let lastEventId: number | undefined
     let closed = false
     // Set when this conversation stopped a run: the next message waits for that run to settle.
     let stopping = false
@@ -93,9 +94,17 @@ export function createVoiceConversation(options: {
 
     async function transcript(entries: readonly { role: 'user' | 'agent'; content: string }[], eventId: number | undefined) {
         if (closed) return
-        if (current && eventId !== undefined && current.eventId !== undefined) {
-            // A repeat of the utterance being answered, or one older than it, changes nothing.
-            if (eventId <= current.eventId) return
+        if (eventId !== undefined) {
+            if (lastEventId !== undefined && eventId <= lastEventId) return
+            lastEventId = eventId
+        }
+        const latest = entries.at(-1)
+        const text = latest?.role === 'user' ? latest.content.trim().slice(0, SEND_TEXT_LIMIT) : ''
+        // A silence nudge can arrive while the Chief is working. Acknowledge its own event
+        // without interrupting that work or re-sending an earlier line from the history.
+        if (!/[\p{L}\p{N}]/u.test(text)) {
+            if (eventId !== undefined || !current?.live) respond({ type: 'agent_response', content: '', event_id: eventId, is_final: true })
+            return
         }
         const previous = current
         const turn: Turn = { eventId, requestId: (options.newRequestId ?? randomUUID)(), live: true, spoke: false, started: false }
@@ -109,10 +118,6 @@ export function createVoiceConversation(options: {
             }
         }
         if (turn !== current) return
-        const text = [...entries].reverse().find(entry => entry.role === 'user')?.content.trim().slice(0, SEND_TEXT_LIMIT) ?? ''
-        // ElevenLabs sends "..." (or nothing but punctuation) when it nudges a silent caller. That is not
-        // something the person said: answering it starts a Chief of Staff turn and speaks "Received."
-        if (!/[\p{L}\p{N}]/u.test(text)) return finish(turn)
         turn.filler = setTimeout(() => { if (!turn.spoke) say(turn, VOICE_FILLER) }, fillerMs)
 
         const stream = createSpokenStream()
