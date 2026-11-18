@@ -237,6 +237,7 @@ const mac = {
 export function desktopCoworkerMessages(locale: Locale, source: Source) {
     return {
         ...mac[locale],
+        description: source.agent.skillEditor.description,
         destinations: source.agent.agentCard.destinations,
         boardSettings: source.builder.contextMenu.settings,
         views: source.agent.agentView.views,

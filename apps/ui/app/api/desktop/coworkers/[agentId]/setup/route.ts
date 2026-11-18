@@ -1,13 +1,14 @@
 import { desktopSetupPostSchema } from '@rerun/contracts'
 import { DesktopHttpError } from '@/lib/desktop/server/auth'
 import { desktopRoute } from '@/lib/desktop/server/http'
-import { mutateDesktopSetup, readDesktopSetupView } from '@/lib/desktop/server/setup/service'
+import { mutateDesktopSetup, observeDesktopSetup, readDesktopSetupView } from '@/lib/desktop/server/setup/service'
 
 type Context = { params: Promise<{ agentId: string }> }
 
 export function GET(request: Request, { params }: Context) {
     return desktopRoute(request, async runtime => {
-        const view = await readDesktopSetupView(runtime, (await params).agentId)
+        const read = new URL(request.url).searchParams.get('observe') === '1' ? observeDesktopSetup : readDesktopSetupView
+        const view = await read(runtime, (await params).agentId)
         return Response.json(view, { headers: { 'cache-control': 'no-store' } })
     })
 }

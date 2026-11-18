@@ -29,7 +29,7 @@ import { openDesktopDatabase } from './database'
 import { GENERAL_ALREADY_OPEN, GENERAL_SESSION_TITLE, generalTabUid, openingMessage } from '../general-threads'
 import { desktopPhoneTabUid, discardTabStart, existingTabStart, readTabStart, recoverTabSession, reserveTabStart, type DesktopPhoneFirstTurn } from './tab-starts'
 import type { DesktopRuntime } from './runtime'
-import { GeneralAlreadyOpenError, createDesktopAgentWithinRosterWrite, createDesktopSession, findDesktopAgent, findDesktopGeneralSession, findDesktopSession, regenerationRequestId } from './store'
+import { GeneralAlreadyOpenError, createDesktopAgentWithinRosterWrite, createDesktopSession, findDesktopAgent, findDesktopGeneralSession, findDesktopSession, confirmDesktopDescription, regenerationRequestId } from './store'
 import { withRosterWrite } from './roster-writes'
 import { planDesktopAgentPlacement } from './spaces'
 import { desktopCoworkerCallTargets } from './coworker-calls/targets'
@@ -75,7 +75,15 @@ export async function createDesktopCoworker(runtime: DesktopRuntime, input: { na
 }
 
 export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: string, patch?: DesktopCoworkerPatch): Promise<DesktopCoworkerSettings> {
-    const agent = await findDesktopAgent(await openDesktopDatabase(runtime.dataRoot), id)
+    // Serialize description changes with roster reconciliation so an earlier engine read cannot
+    // replace a newer board label. Other settings keep their ordinary per-coworker path.
+    const readOrSave = () => readOrSaveCoworkerSettings(runtime, id, patch)
+    return patch?.description === undefined ? readOrSave() : withRosterWrite(readOrSave)
+}
+
+async function readOrSaveCoworkerSettings(runtime: DesktopRuntime, id: string, patch?: DesktopCoworkerPatch): Promise<DesktopCoworkerSettings> {
+    const db = await openDesktopDatabase(runtime.dataRoot)
+    const agent = await findDesktopAgent(db, id)
     if (!agent) throw new DesktopHttpError(404, 'Coworker not found')
     // This registry contains only user-created local coworkers. Cloud template agents, whose
     // system prompts can be sealed, cannot be resolved by their engine IDs through this route.
@@ -91,13 +99,24 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
             ...(memoryEnabled !== undefined && { memory: memoryEnabled }),
             ...(suggestedReplies !== undefined && { quickReplies: suggestedReplies }),
         }
+        if (patch?.description !== undefined) {
+            await assertCoworkerNotDeleting(db, id)
+            await assertDesktopCreationSettled(db, id)
+            await db.execute({ sql: 'INSERT INTO desktop_description_checks(agent_id,description) VALUES(?,?) ON CONFLICT(agent_id) DO UPDATE SET description=excluded.description', args: [id, patch.description] })
+        }
         const detail = patch ? await patchAgent(engine, agent.engineAgentId, {
             ...textSettings,
             ...(desktopRepository !== undefined && { desktopRepository }),
             ...(Object.keys(tools).length > 0 && { tools }),
             ...(autoMemory !== undefined && { selfImprovement: { autoMemory } }),
         }) : await getAgent(engine, agent.engineAgentId)
+        if (detail.id !== agent.engineAgentId) throw new Error('Coworker identity changed.')
+        if (patch?.description !== undefined) {
+            if (detail.config.description !== patch.description) throw new Error('Description change was not applied.')
+            await confirmDesktopDescription(db, agent, patch.description)
+        }
         return {
+            description: patch?.description ?? agent.description,
             soul: detail.soul, verbosity: detail.config.verbosity, soulEditable: true,
             workspaceReadEnabled: desktopRerunGrantsOf(detail.config.tools).workspaceRead,
             memoryEnabled: detail.config.tools.memory,
@@ -107,6 +126,7 @@ export async function desktopCoworkerSettings(runtime: DesktopRuntime, id: strin
             repository: detail.config.desktopRepository ? { ...detail.config.desktopRepository, url: desktopGithubRepositoryUrl(detail.config.desktopRepository) } : null,
         }
     } catch (error) {
+        if (error instanceof DesktopHttpError) throw error
         if (error instanceof EngineRequestError && error.status === 404) throw new DesktopHttpError(404, 'Coworker not found')
         throw new DesktopHttpError(502, 'Could not reach this coworker’s settings. Try again.')
     }

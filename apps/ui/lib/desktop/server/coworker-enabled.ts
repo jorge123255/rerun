@@ -6,7 +6,7 @@ import { DesktopHttpError } from './auth'
 import { assertCoworkerNotDeleting } from './coworker-delete'
 import { assertDesktopCreationSettled } from './creation-guard'
 import { withRosterWrite } from './roster-writes'
-import { findDesktopAgent, listDesktopAgents, type DesktopAgent } from './store'
+import { findDesktopAgent, listDesktopAgents, confirmDesktopDescription, type DesktopAgent } from './store'
 
 export const disabledCoworkerMessage = 'This coworker is switched off. Enable it from the board to send a message.'
 const unavailable = 'Could not confirm whether this coworker is enabled. Try again.'
@@ -35,10 +35,14 @@ async function saveEnabled(db: Client, agent: DesktopAgent, enabled: boolean) {
 export function reconcileDesktopEnabled(db: Client, engine: EngineConnection) {
     return withRosterWrite(async () => {
         const agents = await listDesktopAgents(db)
+        const pendingDescriptions = new Map((await db.execute('SELECT agent_id, description FROM desktop_description_checks')).rows.map(row => [String(row.agent_id), String(row.description)]))
         const details = await Promise.all(agents.map(agent => getAgent(engine, agent.engineAgentId).catch(() => null)))
         for (let index = 0; index < agents.length; index++) {
             const agent = agents[index], detail = details[index]
-            if (detail?.id === agent.engineAgentId) await saveEnabled(db, agent, detail.config.enabled)
+            if (detail?.id !== agent.engineAgentId) continue
+            await saveEnabled(db, agent, detail.config.enabled)
+            if (pendingDescriptions.get(agent.id) === detail.config.description && pendingDescriptions.has(agent.id))
+                await confirmDesktopDescription(db, agent, detail.config.description)
         }
     })
 }

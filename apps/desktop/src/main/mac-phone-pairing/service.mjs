@@ -185,6 +185,7 @@ export function createMacPhonePairingService({
         setSendMessages: (deviceId, enabled) => changeGrant(deviceId, 'sendMessages', enabled),
         setApproveRequests: (deviceId, enabled) => changeGrant(deviceId, 'approveRequests', enabled),
         setChangeVoice: (deviceId, enabled) => changeGrant(deviceId, 'changeVoice', enabled),
+        setChangeSettings: (deviceId, enabled) => changeGrant(deviceId, 'changeSettings', enabled),
         revokeDevice: deviceId => exclusive(() => (transport ?? newTransport(0)).revoke(deviceId)),
     }
 }

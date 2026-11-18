@@ -6,6 +6,7 @@ import { API_PREFIX, CREDENTIAL_CLAIM_TTL_MS, DEVICE_STATUS, ERRORS, LOOPBACK_HO
 import { hashSecret, hashesEqual, randomSecret } from './crypto.mjs'
 import { callWorkspace, openWorkspaceStream, readWorkspaceChats, readWorkspaceReply, sendWorkspaceMessage, stopWorkspaceTurn } from './workspace-reads.mjs'
 import { assertDeviceWorkspace, hiddenWorkspaceError } from './workspace-access.mjs'
+import { coworkerSettingsResources } from './coworker-settings.mjs'
 import { publicDevice } from './store.mjs'
 
 const BODY_LIMIT = 16_384
@@ -46,14 +47,15 @@ function fail(response, code, status = 401) {
 // Each is served by the Mac app's route of the same name, and only to a phone that holds `needs`.
 // Anything not listed here does not exist for a phone.
 const RESOURCES = new Map([
+    ...coworkerSettingsResources,
     ['GET inbox', { to: 'inbox' }],
     // Marking a row read changes the Mac's own inbox: a phone that only reads changes nothing.
     ['POST inbox/read', { to: 'inbox', needs: 'sendMessages' }],
-    // The Chief of Staff: General and its task threads, read as text by any approved phone. `grants`
+    // The Chief of Staff: General and its task threads, read as text by any approved phone. `grant`
     // adds what this phone may do to the answer. Sending, answering its question and stopping take
     // the send permission. Its cards that change things are words only: no entry here settles one.
-    ['GET chief', { to: 'chief', grants: true }],
-    ['GET chief/chat', { to: 'chief/chat', grants: true, query: chiefChat }],
+    ['GET chief', { to: 'chief', grant: 'sendMessages' }],
+    ['GET chief/chat', { to: 'chief/chat', grant: 'sendMessages', query: chiefChat }],
     ['GET chief/turn', { to: 'chief/turn', query: chiefTurn }],
     ['GET chief/stream', { to: 'chief/stream', query: chiefTurn, stream: true }],
     ['POST chief/send', { to: 'chief/send', needs: 'sendMessages', limit: MESSAGE_BODY_LIMIT, body: chiefSend }],
@@ -66,7 +68,7 @@ const RESOURCES = new Map([
     ['POST voice/start', { to: 'voice/start', needs: 'sendMessages', limit: 1_000, rate: { count: 3, perMs: 60_000 } }],
 ])
 const RESOURCE_PATH = /^\/workspaces\/([^/]+)\/([a-z-]+(?:\/[a-z-]+)?)$/
-const REFUSALS = { sendMessages: 'send_not_allowed', approveRequests: 'approve_not_allowed', changeVoice: 'voice_change_not_allowed' }
+const REFUSALS = { sendMessages: 'send_not_allowed', approveRequests: 'approve_not_allowed', changeVoice: 'voice_change_not_allowed', changeSettings: 'settings_not_allowed' }
 
 function validDecisions(approval) {
     if (!approval || typeof approval !== 'object' || Array.isArray(approval) || Object.keys(approval).length !== 2) return false
@@ -332,8 +334,15 @@ export function createPairingTransport({
             await workspaceFor(authorized, workspaceId, current)
             return authorized
         }
-        const release = (result, authorized) => result.failure ? fail(response, result.failure.code, result.failure.status)
-            : send(response, 200, spec.grants ? { ...result.payload, permissions: { sendMessages: Boolean(tls && authorized.sendMessages === true) } } : result.payload)
+        const release = (result, authorized) => {
+            if (result.failure) {
+                const { code, status, message } = result.failure
+                return send(response, status, { error: code, ...(message && { message }) })
+            }
+            return send(response, 200, spec.grant
+                ? { ...result.payload, permissions: { [spec.grant]: Boolean(tls && authorized[spec.grant] === true) } }
+                : result.payload)
+        }
         try {
             await workspaceFor(device, workspaceId, current)
             if (!permitted(device)) return fail(response, REFUSALS[spec.needs], 403)
@@ -347,7 +356,7 @@ export function createPairingTransport({
                 }))
             }
             if (request.method === 'GET') {
-                const result = await callWorkspace(current, { resource: spec.to, query })
+                const result = await callWorkspace(current, { resource: spec.to, query, settingsRefusals: spec.settingsRefusals })
                 return await exclusive(async () => { const authorized = await recheck(); if (authorized) release(result, authorized) })
             }
             const body = await readBody(request, spec.limit ?? BODY_LIMIT)
@@ -358,7 +367,10 @@ export function createPairingTransport({
             return await exclusive(async () => {
                 const authorized = await recheck()
                 if (!authorized) return
-                const result = await callWorkspace(current, { resource: spec.to, method: request.method, body: turn.send })
+                const result = await callWorkspace(current, { resource: spec.to, method: request.method, query, body: turn.send, settingsRefusals: spec.settingsRefusals })
+                // Workspace switches run independently of the paired-device queue. A settings
+                // receipt or refusal belongs to the same runtime that admitted the mutation.
+                if (spec.needs === 'changeSettings' && getRuntime() !== current) throw hiddenWorkspaceError()
                 if (result.failure || !turn.receipt) return release(result, authorized)
                 const receipt = turn.receipt(result.payload)
                 return receipt ? send(response, 200, receipt) : fail(response, 'unavailable', 502)
@@ -544,6 +556,7 @@ export function createPairingTransport({
             // A phone that is paired again starts without the right to decide approval requests.
             device.approveRequests = false
             device.changeVoice = false
+            device.changeSettings = false
             device.revokedAt = new Date(now()).toISOString()
             claims.delete(device.deviceId)
             await saveStore(store)

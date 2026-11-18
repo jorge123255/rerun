@@ -67,7 +67,7 @@ export async function stopWorkspaceTurn(runtime, target) {
 // One of the phone's other resources, served by the Mac app's own route of the same name under
 // /api/desktop/phone-pairing. The app's answer is handed back as it is when it is a success; a
 // refusal is reduced to a code, so nothing the app says about itself reaches the phone.
-export async function callWorkspace(runtime, { resource, method = 'GET', body, query }) {
+export async function callWorkspace(runtime, { resource, method = 'GET', body, query, settingsRefusals = false }) {
     if (!runtime?.app?.origin || !runtime.app.sessionToken) throw hiddenWorkspaceError()
     const address = new URL('/api/desktop/phone-pairing/' + resource, runtime.app.origin)
     for (const [name, value] of Object.entries(query ?? {})) address.searchParams.set(name, value)
@@ -78,6 +78,21 @@ export async function callWorkspace(runtime, { resource, method = 'GET', body, q
         ...(mutation && { body: JSON.stringify(body ?? {}) }),
     })
     if (response.ok) return { payload: await response.json() }
+    // Only the settings adapter marks sanitized, owner-facing refusals. Never forward arbitrary
+    // exception text, server logs, raw upstream responses or a workspace/coworker lookup failure.
+    if (settingsRefusals && [400, 403, 409, 413, 422, 502, 503].includes(response.status)
+        && response.headers.get('content-type')?.split(';')[0] === 'application/json') {
+        const safe = await response.json().catch(() => null)
+        // Workspace admission runs before the settings adapter can label a refusal.
+        const switching = 'This workspace is switching. Wait for it to finish.'
+        if (response.status === 409 && safe?.error === switching) {
+            return { failure: { code: 'settings_refused', status: 409, message: switching } }
+        }
+        if (safe?.error === 'settings_refused' && typeof safe.message === 'string'
+            && safe.message.length > 0 && safe.message.length <= 500 && !/[\x00-\x1f\x7f]/.test(safe.message)) {
+            return { failure: { code: 'settings_refused', status: response.status, message: safe.message } }
+        }
+    }
     void response.body?.cancel().catch(() => {})
     switch (response.status) {
         case 400: return { failure: { code: 'invalid_request', status: 400 } }

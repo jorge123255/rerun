@@ -49,9 +49,12 @@ async function ensureSetupDesktopSession(db: Client, agent: DesktopAgent, engine
     if (existing) return String(existing.id)
     return (await createDesktopSession(db, { agentId: agent.id, engineSessionId, title: 'Setup' })).id
 }
+function setupRevision(setup: EngineSetup, skipped: boolean) {
+    return createHash('sha256').update(`${setup.revision}:${skipped ? 1 : 0}`).digest('base64url').slice(0, 24)
+}
 async function viewOf(db: Client, agent: DesktopAgent, setup: EngineSetup, skipped: boolean): Promise<DesktopSetupView> {
     return { agentId: agent.id,
-        revision: createHash('sha256').update(`${setup.revision}:${skipped ? 1 : 0}`).digest('base64url').slice(0, 24),
+        revision: setupRevision(setup, skipped),
         required: setup.required, prompt: setup.prompt, completedAt: setup.completedAt,
         sessionId: setup.sessionId ? await ensureSetupDesktopSession(db, agent, setup.sessionId) : null,
         pending: setup.pending && !skipped, skipped, defaultPrompt: DESKTOP_SETUP_DEFAULT_PROMPT }
@@ -138,6 +141,23 @@ async function finishIntent(runtime: DesktopRuntime, db: Client, agent: DesktopA
         { sql: 'INSERT INTO desktop_setup_events(agent_id,kind,detail,created_at) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM desktop_setup_events WHERE agent_id=? AND kind=? AND detail=?)', args: [agent.id, intent.action, String(row.request_id), now, agent.id, intent.action, String(row.request_id)] },
     ], 'write')
     return result
+}
+
+/** A settings snapshot may be read by a phone that cannot send or edit. Observe the same
+ * revision without replaying an intent, materializing a chat or acknowledging completion. */
+export function observeDesktopSetup(runtime: DesktopRuntime, agentId: string) {
+    return withOwner(runtime, agentId, async () => {
+        const { db, agent } = await agentFor(runtime, agentId)
+        const setup = await engineSetup(runtime, agent.engineAgentId)
+        const skipped = await skippedOf(db, agentId)
+        const changing = !!(await pendingOf(db, agentId))
+        const needsSetup = !changing && agent.enabled && setup.required === true && setup.completedAt === null && !!setup.prompt.trim()
+        return {
+            revision: setupRevision(setup, skipped), required: setup.required, completedAt: setup.completedAt,
+            pending: setup.pending && !skipped, skipped,
+            canStart: needsSetup && !setup.sessionId, canSkip: needsSetup && !skipped,
+        }
+    })
 }
 
 export function readDesktopSetupView(runtime: DesktopRuntime, agentId: string): Promise<DesktopSetupView> {

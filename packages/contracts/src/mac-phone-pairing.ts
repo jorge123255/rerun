@@ -218,5 +218,83 @@ export const macPhoneVoiceChoicesSchema = macPhoneVoiceChoiceSchema.extend({
 })
 export type MacPhoneVoiceChoices = z.infer<typeof macPhoneVoiceChoicesSchema>
 
-// Every refusal is `{ error: code }`. A phone that is not approved, or was removed, gets `unauthorized`.
-export const macPhoneErrorSchema = z.object({ error: z.string() })
+// Only a refusal from an approved settings operation may include a vetted Mac UI message.
+export const macPhoneErrorSchema = z.union([
+    z.object({ error: z.literal('settings_refused'), message: z.string().max(500) }),
+    z.object({ error: z.string() }),
+])
+
+// The listener adds the device's own switch after the Mac projects this coworker. These
+// deliberately small projections also strip unknown fields when reading a newer Mac.
+const phoneModelPick = z.object({ connectionId: z.string().nullable(), model: z.string() })
+const phoneToolRow = z.object({
+    id: z.string(), label: z.string(), description: z.string(), enabled: z.boolean(),
+    available: z.boolean(), unavailableReason: z.string().optional(), parent: z.string().optional(),
+    confirmOnEnable: z.boolean(),
+})
+const phoneVerbosity = z.enum(['minimal', 'concise', 'normal', 'detailed'])
+export const macPhoneCoworkerSettingsViewSchema = z.object({
+    agentId: savedId, name: z.string(), description: z.string(), enabled: z.boolean(),
+    settings: z.object({
+        soul: z.string(), soulEditable: z.boolean(), verbosity: phoneVerbosity, repository: z.string().nullable(),
+        workspaceReadEnabled: z.boolean(), suggestedReplies: z.boolean(), memoryEnabled: z.boolean(),
+        autoMemory: z.boolean(), selfImprovementEnabled: z.boolean(),
+    }),
+    model: z.object({
+        catalog: z.array(z.object({ connectionId: z.string(), name: z.string(), provider: z.string(), models: z.array(z.object({ id: z.string(), label: z.string() })) })),
+        coworker: phoneModelPick.nullable(),
+        effective: z.object({
+            connectionId: z.string().nullable(), provider: z.string().nullable(), model: z.string().nullable(),
+            label: z.string(), available: z.boolean(),
+            reasoning: z.object({ effort: z.string(), source: z.enum(['model', 'workspace', 'model-default']) }).optional(),
+            reasoningOptions: z.array(z.string()).optional(),
+        }),
+    }),
+    tools: z.object({
+        rerun: z.array(phoneToolRow), codex: z.array(phoneToolRow),
+        // Older Macs have no Claude tools group. Never synthesize a permission to fill it.
+        claude: z.array(phoneToolRow.extend({ id: z.literal('claudeSubagents') })).optional(),
+    }),
+    callTargets: z.object({
+        targets: z.array(z.object({ agentId: savedId, name: z.string(), enabled: z.boolean(), callable: z.boolean() })),
+        allowedTargetIds: z.array(savedId),
+    }),
+    setup: z.object({
+        revision: z.string(), required: z.boolean().nullable(), pending: z.boolean(), skipped: z.boolean(), canStart: z.boolean(), canSkip: z.boolean(),
+        completedAt: z.string().nullable(),
+    }),
+    board: z.object({ revision: z.number().int().nonnegative(), spaceId: z.string().nullable(), spaces: z.array(z.object({ id: z.string(), name: z.string() })) }),
+})
+export const macPhoneCoworkerSettingsSchema = macPhoneCoworkerSettingsViewSchema.extend({
+    permissions: z.object({ changeSettings: z.boolean() }),
+})
+export type MacPhoneCoworkerSettings = z.infer<typeof macPhoneCoworkerSettingsSchema>
+
+const settingId = z.string().trim().min(1).max(256)
+const phoneTargets = z.array(z.string().uuid()).max(100)
+const settingsBody = z.strictObject({
+    description: z.string().trim().max(2000).optional(),
+    soul: z.string().trim().min(1).max(100_000).optional(), verbosity: phoneVerbosity.optional(),
+    suggestedReplies: z.boolean().optional(), memoryEnabled: z.boolean().optional(), autoMemory: z.boolean().optional(),
+    repository: z.string().trim().max(300).nullable().optional(),
+}).refine(body => Object.keys(body).length > 0)
+// The URL names the coworker. No variant accepts an engine ID, arbitrary route, credential,
+// conversation override, another coworker's board move, or an operation that edits setup text.
+export const macPhoneCoworkerSettingsChangeSchema = z.discriminatedUnion('field', [
+    z.strictObject({ field: z.literal('name'), body: z.strictObject({ name: z.string().trim().min(1).max(60) }) }),
+    z.strictObject({ field: z.literal('settings'), body: settingsBody }),
+    z.strictObject({ field: z.literal('enabled'), body: z.strictObject({ enabled: z.boolean() }) }),
+    z.strictObject({ field: z.literal('model'), body: z.discriminatedUnion('action', [
+        z.strictObject({ action: z.literal('coworker'), connectionId: settingId, model: settingId }),
+        z.strictObject({ action: z.literal('follow-workspace') }),
+    ]) }),
+    z.strictObject({ field: z.literal('effort'), body: z.strictObject({ connectionId: settingId, model: settingId, effort: z.string().trim().min(1).max(32).nullable() }) }),
+    z.strictObject({ field: z.literal('tools'), body: z.union([
+        z.strictObject({ group: z.enum(['rerun', 'codex']), id: settingId.refine(id => id !== 'claudeSubagents'), enabled: z.boolean() }),
+        z.strictObject({ group: z.literal('claude'), id: z.literal('claudeSubagents'), enabled: z.boolean() }),
+    ]) }),
+    z.strictObject({ field: z.literal('call-targets'), body: z.strictObject({ targetAgentIds: phoneTargets, expectedTargetAgentIds: phoneTargets }) }),
+    z.strictObject({ field: z.literal('box'), body: z.strictObject({ spaceId: z.uuid(), requestId: z.uuid(), expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }) }),
+    z.strictObject({ field: z.literal('setup'), body: z.strictObject({ action: z.enum(['start', 'skip']), requestId: z.uuid(), expectedRevision: z.string().min(1).max(256) }) }),
+])
+export type MacPhoneCoworkerSettingsChange = z.infer<typeof macPhoneCoworkerSettingsChangeSchema>

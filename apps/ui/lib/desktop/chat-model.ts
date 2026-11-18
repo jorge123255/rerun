@@ -54,6 +54,8 @@ export const desktopModelViewSchema = z.object({
     }).nullable(),
     effective: z.object({
         source: z.enum(['conversation', 'coworker', 'workspace']),
+        // Resolved from the same active plans as a turn; an unavailable preset has none.
+        presetProvider: desktopProvider.optional(),
         connectionId: z.string().nullable(),
         provider: z.string().nullable(),
         brand: brandSchema,
@@ -215,6 +217,7 @@ export function buildDesktopModelView(input: {
             source,
             connectionId: preset ? DESKTOP_PRESET_CONNECTION_ID : selectedConnection?.id ?? (selected?.connectionId || null),
             provider: preset ? 'rerun' : selectedConnection?.provider ?? coworker?.provider ?? null,
+            ...(preset && available && selectedConnection && { presetProvider: selectedConnection.provider }),
             ...(!preset && brandOf(selectedConnection)),
             name: preset ? 'Rerun' : selectedConnection?.name ?? providerName(selectedConnection?.provider ?? coworker?.provider ?? null),
             model,

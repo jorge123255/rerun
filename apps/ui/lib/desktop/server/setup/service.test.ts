@@ -7,7 +7,7 @@ import { parseInstallMessage } from '@rerun/contracts'
 import { closeDesktopDatabase, openDesktopDatabase } from '../database'
 import { createDesktopAgent, createDesktopSession } from '../store'
 import type { DesktopRuntime } from '../runtime'
-import { assertDesktopSetupChatAllowed, mutateDesktopSetup, readDesktopSetupView } from './service'
+import { assertDesktopSetupChatAllowed, mutateDesktopSetup, observeDesktopSetup, readDesktopSetupView } from './service'
 import { ensureDesktopSetupSchema } from './schema'
 
 const mocks = vi.hoisted(() => ({ request: vi.fn(), chat: vi.fn(), messages: vi.fn() }))
@@ -163,4 +163,22 @@ test('later panel reads do not rerun schema DDL on the shared connection', async
             await tx.commit()
         } finally { tx.close() }
     } finally { ddl.mockRestore() }
+})
+
+test('a paired-phone read of an interrupted Start does not replay it, create a chat or acknowledge completion', async () => {
+    const db = await openDesktopDatabase(root)
+    setup.sessionId = 'engine-claimed'
+    await db.execute({ sql: "INSERT INTO desktop_setup_intents(request_id,agent_id,action,fingerprint,intent,status,created_at) VALUES(?,?,'start','prior',?,'pending',?)",
+        args: [crypto.randomUUID(), owner, JSON.stringify({ action: 'start', engineRevision: 'before', claimedEngineSessionId: setup.sessionId, required: true }), new Date().toISOString()] })
+    mocks.request.mockClear()
+    const view = await observeDesktopSetup(runtime, owner)
+    expect(view).toMatchObject({ pending: true, canStart: false, canSkip: false })
+    setup.completedAt = new Date().toISOString()
+    expect((await observeDesktopSetup(runtime, owner)).completedAt).toBe(setup.completedAt)
+    expect(mocks.request.mock.calls.map(([, , init]) => init.method)).toEqual(['GET', 'GET'])
+    expect(mocks.chat).not.toHaveBeenCalled()
+    expect((await db.execute('SELECT status FROM desktop_setup_intents')).rows[0].status).toBe('pending')
+    for (const table of ['desktop_sessions', 'desktop_setup_events', 'desktop_setup_kickoffs']) {
+        expect((await db.execute('SELECT COUNT(*) AS count FROM ' + table)).rows[0].count).toBe(0)
+    }
 })
