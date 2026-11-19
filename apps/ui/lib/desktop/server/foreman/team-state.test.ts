@@ -1,3 +1,4 @@
+import type { DesktopTeamCoworkerState } from './team-state'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
@@ -20,6 +21,25 @@ const runtime = {} as never, db = {} as never
 
 beforeEach(() => { getAgent.mockReset(); readDesktopSetupView.mockReset(); listDesktopAgents.mockReset() })
 afterEach(() => { vi.useRealTimers() })
+
+test('a compact team brief still identifies whose GitHub permission was applied', () => {
+    const person = { on: true, model: 'workspace default', setup: 'done' as const, repository: 'example/client' }
+    const team: DesktopTeamCoworkerState[] = [
+        { ...person, name: 'iOS Developer', allowed: ['githubWrite', 'services', 'callAgent', 'webFetch', 'teamRead'] },
+        { ...person, name: 'iOS QA', allowed: ['services', 'callAgent'] },
+        { ...person, name: 'iOS Release manager', allowed: null },
+    ]
+    const full = desktopTeamChangesInstruction([], team)!
+    const brief = desktopTeamChangesInstruction([], team, full.length - 1)!
+    const names = desktopTeamChangesInstruction([], team, brief.length - 1)!
+    for (const text of [brief, names]) {
+        const line = text.split('\n').find(line => line.startsWith('The coworkers now'))!
+        const rows = JSON.parse(line.slice(line.indexOf('): ') + 3))
+        expect(rows.map((row: { name: string; githubWrite?: boolean }) => [row.name, row.githubWrite])).toEqual([
+            ['iOS Developer', true], ['iOS QA', false], ['iOS Release manager', undefined],
+        ])
+    }
+})
 
 test('tells the Chief a skipped or retired setup chat no longer blocks work', async () => {
     listDesktopAgents.mockResolvedValue([agent('skipped', 'Ada'), agent('retired', 'Ben')])

@@ -94,6 +94,27 @@ test('a permission that cannot be read is an off permission', async () => {
     expect(answer).toMatchObject({ handled: true, answer: DESKTOP_GITHUB_WRITE_OFF_MESSAGE })
 })
 
+test('Chief can read through a shared GitHub connection but cannot borrow a coworker grant for direct or wrapped writes', async () => {
+    const owner = { owner: 'foreman', sessionId: 'chief-chat' }
+    const ports = { granted: vi.fn(async () => true), decide: vi.fn(async (call: Parameters<typeof decideConnectorCall>[1]) => decideConnectorCall(db, call)) }
+    const wrapper = (slugs: string[]) => ({
+        ...owner, tool: 'COMPOSIO_MULTI_EXECUTE_TOOL', arguments: { tools: slugs.map(tool_slug => ({ tool_slug, arguments: {} })) },
+    })
+    expect(await admitGithubCall(wrapper(['GITHUB_GET_A_PULL_REQUEST']), ports)).toEqual({ handled: false })
+    for (const call of [
+        { ...owner, tool: 'github_pull_request_review_write', arguments: {} },
+        wrapper(['GITHUB_GET_A_PULL_REQUEST', 'GITHUB_REQUEST_REVIEWERS_FOR_A_PULL_REQUEST']),
+    ]) {
+        const decision = await admitGithubCall(call, ports)
+        expect(decision).toMatchObject({
+            handled: true, answer: expect.stringContaining('Chief of Staff has read-only GitHub access'),
+            trail: { outcome: 'refused-no-permission', rule: 'permission:githubWrite' },
+        })
+    }
+    expect(ports.granted).not.toHaveBeenCalled()
+    expect(ports.decide).not.toHaveBeenCalled()
+})
+
 test('with the permission on, a change asks first and runs only after the person allows it', async () => {
     granted = true
     const held = await run('github_create_pull_request', pr)

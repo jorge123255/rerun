@@ -1,5 +1,5 @@
 import 'server-only'
-import { desktopGithubCall, DESKTOP_GITHUB_WRITE_GRANT, DESKTOP_GITHUB_WRITE_OFF_MESSAGE, type DesktopActivityDecision, type DesktopGithubToolServer } from '@rerun/contracts'
+import { desktopGithubCall, DESKTOP_GITHUB_WRITE_GRANT, DESKTOP_GITHUB_WRITE_OFF_MESSAGE, FOREMAN_AGENT_ID, type DesktopActivityDecision, type DesktopGithubToolServer } from '@rerun/contracts'
 import type { ConnectorCall } from './store'
 
 /**
@@ -17,9 +17,13 @@ export async function admitGithubCall(
 ): Promise<{ handled: false } | { handled: true; answer: string | null; trail: DesktopActivityDecision }> {
     const change = desktopGithubCall(call.tool, call.arguments, call.server)
     if (!change) return { handled: false }
-    const granted = await ports.granted(call.owner).catch(() => false)
+    const chief = call.owner === FOREMAN_AGENT_ID
+    const granted = !chief && await ports.granted(call.owner).catch(() => false)
     if (!granted) {
-        return { handled: true, answer: DESKTOP_GITHUB_WRITE_OFF_MESSAGE, trail: { outcome: 'refused-no-permission', rule: `permission:${DESKTOP_GITHUB_WRITE_GRANT}`, kind: 'repository', app: 'GitHub', action: change.tool } }
+        const answer = chief
+            ? 'The Chief of Staff has read-only GitHub access. No repository change ran. Each coworker has its own GitHub permissions. If the person assigned this action to a specific coworker, check that its permission is applied and use Call coworkers to ask it. Its GitHub action still follows its own approval rules.'
+            : DESKTOP_GITHUB_WRITE_OFF_MESSAGE
+        return { handled: true, answer, trail: { outcome: 'refused-no-permission', rule: `permission:${DESKTOP_GITHUB_WRITE_GRANT}`, kind: 'repository', app: 'GitHub', action: change.tool } }
     }
     const decided = await ports.decide({ owner: call.owner, sessionId: call.sessionId, tool: change.tool, kind: 'repository', arguments: change.subject ?? call.arguments })
     return { handled: true, answer: decided.answer, trail: { ...decided.trail, app: 'GitHub' } }

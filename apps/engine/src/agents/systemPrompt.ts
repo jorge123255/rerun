@@ -295,6 +295,11 @@ function turnOrderSection(order: TurnOrder, closers: TurnClosers): string {
 const foremanEnvironmentNote = (foremanId: string) =>
     `You run on the workspace's own server, the one every coworker of this workspace lives on. Your own workspace is ${workspaceDir(foremanId)}: it is the working directory of shell_exec and your fs_ tools are rooted there, so it is where your scratch work and your own deliverables go. Your shared_ tools are rooted in the shared space at ${sharedDir()}, which every coworker reads and writes. Each coworker's own files are reached with the agent_files_ tools, passing its handle: agent_files_list and agent_files_search to find a file, agent_files_read before you change anything, agent_files_edit for a surgical change and agent_files_write only for a new file or a full rewrite the user asked for. A coworker may be working in those files while you edit them, so change only what you were asked to. Never treat /opt/rerun or the engine source tree as anyone's workspace.`
 
+const DESKTOP_PR_REVIEW_NOTE = [
+    'When someone asks you to review a pull request yourself, read it and return findings in the conversation. Preserve the requested PR order and omit any they said to skip.',
+    'To invite a reviewer on GitHub, use an available tool whose schema accepts the intended GitHub user or team as a requested reviewer. If the destination or reviewer is unclear, ask who should review and where. Never substitute a comment, a submitted review or marking a draft ready. In particular, pull_request_review_write with event COMMENT posts your own review. Report which requests the tool actually confirmed.',
+].join(' ')
+
 const FOREMAN_OPERATING_NOTES =
     'Use tools to act. Discover sources with web_search, read static pages with web_fetch, and use browser_navigate for JavaScript-heavy pages (optionally saving a screenshot to inspect with vision_analyze). delegate_tasks hands self-contained subtasks to fresh sub-coworkers, several in one call to run them in parallel: they get your files, shell and web, but none of the account tools, so creating, changing or installing anything on the account stays with you. To put a question to one of the coworkers and wait for its answer inside this turn, use call_agent with wait set to true. Nothing keeps running once your turn ends: there is no background task and no later notification, so never tell the user you will come back when something finishes.'
 
@@ -317,6 +322,10 @@ async function buildForemanPrompt(agent: LoadedAgent, provider: Provider, order:
         section('environment', foremanEnvironmentNote(agent.id)),
         CLI_PROVIDERS.has(provider) ? section('bridged_tools', cliBridgeNote(provider, cfg.web)) : '',
         section('operating_notes', FOREMAN_OPERATING_NOTES),
+        desktopApp() ? section('pull_request_reviews', [
+            DESKTOP_PR_REVIEW_NOTE,
+            'For an internal review by a Rerun coworker you may contact, use call_agent with that coworker and the PRs to review. Reading a diff needs no GitHub write permission. A permission card applies only after approval and only to the named coworker. If it is still pending, point to the card. If the user assigned a GitHub action to that coworker, send it to them with call_agent and let their own tools enforce their permissions and any action approval.',
+        ].join(' ')) : '',
         cfg.cards ? section('showing_files', FOREMAN_SHOWING_FILES_NOTE) : '',
         section('asking_the_user', `${askingNote(cfg)} ${showBeforeAskingNote(cfg.cards)}`),
         turnOrderSection(order, turnClosers(agent, offersTakeover(agent.config))),
@@ -384,7 +393,10 @@ export async function buildSystemPrompt(agent: LoadedAgent, trigger: RunTrigger 
         section('vocabulary', vocabularyNote()),
         section('environment', desktop ? desktopToolInstruction(agent.config) : environmentNote(agent.id, cfg.sharedDb)),
         // The Mac app: the one repository the person set for this coworker, as a labelled fact.
-        desktop && agent.config.desktopRepository ? section('repository', hasDesktopToolGrant(agent.config, 'repositoryWorkspace') ? desktopRepositoryWorkspaceNote(agent.config.desktopRepository) : desktopGithubRepositoryNote(agent.config.desktopRepository)) : '',
+        desktop && agent.config.desktopRepository ? section('repository', [
+            hasDesktopToolGrant(agent.config, 'repositoryWorkspace') ? desktopRepositoryWorkspaceNote(agent.config.desktopRepository) : desktopGithubRepositoryNote(agent.config.desktopRepository),
+            DESKTOP_PR_REVIEW_NOTE,
+        ].join(' ')) : '',
         CLI_PROVIDERS.has(provider) ? section('bridged_tools', cliBridgeNote(provider, cfg.web)) : '',
         section('operating_notes', desktop ? desktopOperatingNotes(skillCapture, calledCoworker) : operatingNotes(skillCapture)),
         section('untrusted_content', UNTRUSTED_CONTENT_NOTE),

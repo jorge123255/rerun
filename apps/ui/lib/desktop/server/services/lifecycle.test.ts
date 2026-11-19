@@ -152,3 +152,31 @@ it('stores each Chief call against its owned turn and rejects duplicate, foreign
         expect((await db.execute('SELECT * FROM desktop_service_calls')).rows).toEqual([])
     } finally { await bridge.shutdown(); db.close(); await rm(root, {recursive:true,force:true}) }
 })
+
+it('offers direct GitHub writes only to ordinary coworkers and keeps shared reads and dynamic wrappers visible to Chief', async () => {
+    const { store, service } = await setup()
+    const execute = vi.fn(async () => ({ source: 'remote_mcp', untrusted: true, result: { content: [] } }))
+    const fixture = { description: 'Fixture tool', inputSchema: { type: 'object' }, execute }
+    const bridge = serviceEngineBridge(store, service, async run => run.engineAgentId, undefined, async () => [
+        { ...fixture, name: 'github_pull_request_read' },
+        { ...fixture, name: 'github_pull_request_review_write' },
+        { ...fixture, name: 'work_update', server: { name: 'work', host: 'api.githubcopilot.com', tool: 'update_pull_request' } },
+        { ...fixture, name: 'COMPOSIO_MULTI_EXECUTE_TOOL' },
+        { ...fixture, name: 'linear_read' },
+    ])
+    const post = (owner: string, body: object) => bridge.api(new Request('http://127.0.0.1/api/desktop/internal/services', {
+        method: 'POST', headers: { authorization: 'Bearer fixture-engine' },
+        body: JSON.stringify({ engineAgentId: owner, sessionId: 'chat', runId: 'run', ...body }),
+    }))
+    try {
+        const chief = await (await post('foreman', { action: 'catalog' })).json()
+        const coworker = await (await post('owner', { action: 'catalog' })).json()
+        expect(chief.tools.map((tool: { name: string }) => tool.name)).toEqual(['github_pull_request_read', 'COMPOSIO_MULTI_EXECUTE_TOOL', 'linear_read'])
+        expect(coworker.tools.map((tool: { name: string }) => tool.name)).toContain('work_update')
+        const write = coworker.tools.find((tool: { name: string }) => tool.name === 'github_pull_request_review_write')
+        expect(write).toBeDefined()
+        const call = { action: 'call', catalogId: chief.catalogId, capabilityId: write.capabilityId, toolCallId: 'write', arguments: {} }
+        expect((await post('foreman', call)).status).toBe(400)
+        expect(execute).not.toHaveBeenCalled()
+    } finally { await bridge.shutdown() }
+})
