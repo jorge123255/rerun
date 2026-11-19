@@ -34,3 +34,27 @@ it('Change GitHub repositories is off by default and advertises no tool of its o
     expect(hasDesktopToolGrant(granted, 'githubWrite')).toBe(true)
     expect(desktopToolInstruction(granted)).toBe(desktopToolInstruction(plain))
 })
+
+it('keeps the two review destinations distinct for Chief even without optional team instructions', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    const chief = coworker({ kind: 'foreman' })
+    const prompt = systemPromptText(await buildSystemPrompt(chief))
+    const review = prompt.match(/<pull_request_reviews>([\s\S]*?)<\/pull_request_reviews>/)?.[1]
+    expect(review).toContain('internal review by a Rerun coworker you may contact, use call_agent')
+    expect(review).toContain('GitHub user or team as a requested reviewer')
+    expect(review).toContain('ask who should review and where')
+    expect(review).toContain('only after approval and only to the named coworker')
+    expect(review).toContain('omit any they said to skip')
+
+    vi.stubEnv('RERUN_DESKTOP_APP', '0')
+    expect(systemPromptText(await buildSystemPrompt(chief))).not.toContain('<pull_request_reviews>')
+})
+
+it.each([false, true])('gives a repository coworker the reviewer-invitation instruction with repositoryWorkspace=%s', async repositoryWorkspace => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    const agent = coworker({ desktopRepository: { owner: 'acme', name: 'mobile' }, tools: { ...off, desktopToolGrants: { repositoryWorkspace } } })
+    const prompt = systemPromptText(await buildSystemPrompt(agent))
+    expect(prompt).toContain('GitHub user or team as a requested reviewer')
+    expect(prompt).toContain('Never substitute a comment, a submitted review or marking a draft ready')
+    expect(hasDesktopToolGrant(agent.config, 'githubWrite')).toBe(false)
+})

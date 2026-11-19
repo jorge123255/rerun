@@ -7,7 +7,7 @@ import type {ServiceStore} from './store'
 import type {LocalServices,ServiceRun} from './lifecycle'
 import type {remoteMcpTools} from '../mcp/tools'
 import type {DesktopMcpCallAdmission} from '../mcp/bridge'
-import {FOREMAN_AGENT_ID,type DesktopActivityDecision} from '@rerun/contracts'
+import {desktopGithubToolAccess,FOREMAN_AGENT_ID,type DesktopActivityDecision} from '@rerun/contracts'
 type RemoteTool = Awaited<ReturnType<typeof remoteMcpTools>>[number]
 type VaultTool = Omit<RemoteTool, 'execute' | 'destructive' | 'server'> & { destructive?: boolean; server?: RemoteTool['server'] } & {
  execute(args:Record<string,unknown>,signal:AbortSignal,toolCallId:string):ReturnType<RemoteTool['execute']>
@@ -43,6 +43,8 @@ export function serviceEngineBridge(store:ServiceStore,service:LocalServices,own
       for(const tool of result.tools){const name=`${record.plan.serverName}_${tool.name}`;if(names.has(name)||names.size>=256)throw new Error('Service tool collision');names.add(name);const capabilityId=randomUUID();tools.set(capabilityId,{key:record.key,revision:record.revision,name:tool.name,serverName:record.plan.serverName});output.push({capabilityId,name,description:tool.description??tool.name,inputSchema:tool.inputSchema})}
      }
      for(const tool of await abortable(vaultTools?.(owner,body,controller.signal) ?? Promise.resolve([]),signal)){
+      // The Chief can read shared GitHub accounts. Wrapped actions are checked when their arguments are known.
+      if(owner===FOREMAN_AGENT_ID && desktopGithubToolAccess(tool.name,tool.server)==='write')continue
       if(names.has(tool.name)||names.size>=256)throw new Error('Service tool collision')
       names.add(tool.name)
       const capabilityId=randomUUID()
