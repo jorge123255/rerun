@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
-import { connectorSkillReadOnlyError, skillProposalInputSchema, type SkillProposalInput } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, connectorSkillReadOnlyError, skillProposalInputSchema, type SkillProposalInput } from '@rerun/contracts'
 import { readAgentConfig } from '../agents/loader.js'
 import { skillsDir, workspaceDir } from '../config/paths.js'
 import { appendSkillProposalInstruction, findSkillProposalByFingerprint, insertSkillProposal, openSkillProposalForSession } from '../db/repos/skill-proposals.js'
@@ -11,7 +11,7 @@ import type { RunContext } from '../runtime/context.js'
 import { assertDesktopAgentNotDeleted, beginDesktopAgentWork } from './agent-lifecycle.js'
 import { requireDesktopToolGrant } from './tool-grants.js'
 import { desktopSkillProposeAllowed, desktopSkillToolsAllowed } from './skill-grant.js'
-import { syncDesktopVaultSkillVisibility } from './service-skills/authority.js'
+import { syncDesktopVaultSkillVisibility, reservedServiceSkill } from './service-skills/authority.js'
 import {
     SkillBoundaryError,
     deleteConfinedFile,
@@ -121,17 +121,25 @@ function drafted(markdown: string, name: string | undefined, description: string
     }
 }
 
-export function desktopSkillTools(ctx: RunContext): ToolSet {
+export function desktopSkillTools(ctx: RunContext, assertCurrent?: () => Promise<void>): ToolSet {
     if (!desktopSkillToolsAllowed(ctx.agent.config)) return {}
     const id = ctx.agent.id
+    const personal = id === FOREMAN_AGENT_ID
+    if (personal && (!assertCurrent || ctx.agent.config.kind !== 'foreman' || ctx.agent.config.ephemeral)) return {}
+    async function runReviewed(propose: boolean, work: () => Promise<string>) {
+        await assertCurrent?.()
+        const result = await runSkillTool(ctx, propose, work)
+        await assertCurrent?.()
+        return result
+    }
     const tools: ToolSet = {
         skill_list: tool({
             description: 'List your skills with their descriptions.',
             inputSchema: z.object({}),
-            execute: () => runSkillTool(ctx, false, async () => {
+            execute: () => runReviewed(false, async () => {
                 const hidden = await syncDesktopVaultSkillVisibility(workspaceDir(id), ctx.abortSignal)
                 const allSkills = await listPublishedSkills(skillsDir(id), { signal: ctx.abortSignal, beforeCommit: () => requireDesktopToolGrant(ctx, 'skills') })
-                const skills = allSkills.filter(skill => !hidden.has(skill.slug))
+                const skills = allSkills.filter(skill => !hidden.has(skill.slug) && !(personal && reservedServiceSkill(skill.slug)))
                 if (skills.length === 0) return 'No skills yet.'
                 const owners = await ownersInWorkspace(workspaceDir(id))
                 return skills.map(skill => {
@@ -144,9 +152,9 @@ export function desktopSkillTools(ctx: RunContext): ToolSet {
         skill_read: tool({
             description: 'Read the full procedure of a skill before using it.',
             inputSchema: z.object({ slug: z.string() }),
-            execute: ({ slug }) => runSkillTool(ctx, false, async () => {
+            execute: ({ slug }) => runReviewed(false, async () => {
                 const hidden = await syncDesktopVaultSkillVisibility(workspaceDir(id), ctx.abortSignal)
-                if (hidden.has(slug)) return `Skill not found: ${slug}`
+                if (hidden.has(slug) || personal && reservedServiceSkill(slug)) return `Skill not found: ${slug}`
                 const skill = await readPublishedSkill(skillsDir(id), slug, { signal: ctx.abortSignal, beforeCommit: () => requireDesktopToolGrant(ctx, 'skills') })
                 if (!skill) return `Skill not found: ${slug}`
                 const service = (await ownersInWorkspace(workspaceDir(id))).get(slug)
@@ -164,9 +172,9 @@ export function desktopSkillTools(ctx: RunContext): ToolSet {
                 path: z.string().describe('Path of the file relative to the skill folder, e.g. references/checklist.md'),
                 offset: z.number().int().nonnegative().default(0).describe('Character offset to start at. Use the offset named in the previous page to continue.'),
             }),
-            execute: ({ slug, path, offset = 0 }) => runSkillTool(ctx, false, async () => {
+            execute: ({ slug, path, offset = 0 }) => runReviewed(false, async () => {
                 const hidden = await syncDesktopVaultSkillVisibility(workspaceDir(id), ctx.abortSignal)
-                if (hidden.has(slug)) return `Skill not found: ${slug}`
+                if (hidden.has(slug) || personal && reservedServiceSkill(slug)) return `Skill not found: ${slug}`
                 if (!await skillManifestExists(skillsDir(id), slug, { signal: ctx.abortSignal, beforeCommit: () => requireDesktopToolGrant(ctx, 'skills') })) return `Skill not found: ${slug}`
                 if (!Number.isInteger(offset) || offset < 0) return 'offset must be a non-negative integer.'
                 try {
@@ -308,7 +316,8 @@ export function desktopSkillTools(ctx: RunContext): ToolSet {
         tools.skill_propose = tool({
             description: 'Propose capturing a settled way of working as a skill, so the user approves it from a small row in the chat: a single standing rule they just gave you, or a whole flow you built together once they have validated it, never a step of a flow still being shaped. This does NOT pause you and does NOT write anything: finish your turn normally and mention the proposal in one short sentence of your message. Give the rule itself, or the whole flow as it ended up, in instruction, in your own words, as an instruction to your future self. Do not draft the skill body: once the user accepts, the writing happens on its own, reading the skill as it is at that moment. Use mode "edit" with the slug of the skill that already covers that ground, and mode "create" only when nothing in your index does.',
             inputSchema: skillProposalInputSchema,
-            execute: input => runSkillTool(ctx, true, async () => {
+            execute: input => runReviewed(true, async () => {
+                if (personal && reservedServiceSkill(input.slug ?? slugify(input.title))) return 'App-managed skills cannot be changed.'
                 const refusal = await proposalRefusal(id, input)
                 if (refusal) return refusal
                 try {
@@ -321,6 +330,7 @@ export function desktopSkillTools(ctx: RunContext): ToolSet {
                         await requireDesktopToolGrant(ctx, 'skills')
                         ctx.abortSignal?.throwIfAborted()
                         if (!desktopSkillProposeAllowed(await readAgentConfig(id).catch(() => null))) throw new Error(TURNED_OFF)
+                        await assertCurrent?.()
                         const merged = await appendSkillProposalInstruction(id, open.id, { ...billedBy, instruction: input.instruction, summary: input.summary, fingerprint })
                         if (!merged) return NOT_SAVED
                         ctx.skillProposals?.push({ proposalId: merged.id, mode: merged.mode, title: merged.title })
@@ -329,6 +339,7 @@ export function desktopSkillTools(ctx: RunContext): ToolSet {
                     await requireDesktopToolGrant(ctx, 'skills')
                     ctx.abortSignal?.throwIfAborted()
                     if (!desktopSkillProposeAllowed(await readAgentConfig(id).catch(() => null))) throw new Error(TURNED_OFF)
+                    await assertCurrent?.()
                     const row = await insertSkillProposal(id, {
                         ...billedBy,
                         sessionId: ctx.sessionId,
@@ -351,6 +362,10 @@ export function desktopSkillTools(ctx: RunContext): ToolSet {
             }),
         })
     }
+    // Managed Chief can propose and read approved procedures. Direct publication and file edits
+    // belong to ordinary coworkers with separate Skills permission and are never exposed here.
+    if (personal) return Object.fromEntries(['skill_list', 'skill_read', 'skill_read_file', 'skill_propose']
+        .filter(name => tools[name]).map(name => [name, tools[name]]))
     return tools
 }
 

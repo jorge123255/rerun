@@ -598,3 +598,17 @@ describe('paid data section', () => {
         expect(await paidDataSection()).toContain('never paid_data, a capability id or a catalog')
     })
 })
+
+it('the verified desktop Chief discovers saved skills and leaves publication to the person', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    try {
+        const chief = (skills: boolean) => ({...agent, id:'foreman', config:agentConfigSchema.parse({
+            name:'foreman',kind:'foreman',selfImprovement:{enabled:true},tools:{skills:true,desktopToolGrants:{skills}},
+        })})
+        const prompt = await buildSystemPrompt(chief(true),{source:'chat'})
+        expect(prompt).toContain('Use skill_list to see your saved procedures, then skill_read')
+        expect(prompt).toContain('Only the person can accept a proposal')
+        expect(prompt).not.toContain('skill_write_file')
+        expect(await buildSystemPrompt(chief(false),{source:'chat'})).not.toContain('skill_propose')
+    } finally { vi.unstubAllEnvs() }
+})

@@ -23,3 +23,11 @@ it('only uses historical cards when saved output proves a result', () => {
     expect(foremanHistoryParts('m', [{ ...good, state: 'output-error', errorText: 'failed' }])[0]?.kind).toBe('tool')
     expect(foremanHistoryParts('m', [{ ...good, output: undefined }])[0]?.kind).not.toBe('card')
 })
+
+it('links only successful skill_propose results that actually raised a proposal to its saved review', () => {
+    const tool = { type: 'tool-skill_propose', toolCallId: 'bridge-id', state: 'output-available', output: { status: 'shown', proposalId: 'proposal-id' } }
+    const [shown, merged, unavailable] = foremanHistoryParts('message', [tool, { ...tool, output: { status: 'merged', proposalId: 'proposal-id' } }, { ...tool, state: 'output-error' }])
+    expect(shown).toMatchObject({ kind: 'skill-proposal', proposalId: 'proposal-id' })
+    expect(merged.kind).toBe('tool')
+    expect(unavailable.kind).toBe('tool')
+})

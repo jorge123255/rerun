@@ -79,3 +79,16 @@ test('the person can switch the Chief of Staff\'s work register off and on, with
     expect((await f.app.request('/file-permissions', patch({ ...body, expectedGrants: { ...off, workRegister: true } }))).status).toBe(200)
     expect(f.config().tools.desktopToolGrants).toEqual({ workRegister: false })
 })
+
+test('the person can switch the Chief of Staff\'s skills off and on, with the exact prior state', async () => {
+    const f = fixture()
+    const body = { ...context, workspaceId: '1', id: 'skills', enabled: false }
+    expect(await (await f.app.request('/file-permissions')).json()).toMatchObject({ grants: { skills: false } })
+    expect((await f.app.request('/file-permissions', patch({ ...body, enabled: true, expectedGrants: off }))).status).toBe(409)
+    expect((await f.app.request('/file-permissions', patch({ ...body, enabled: true, expectedGrants: { ...off, skills: false } }))).status).toBe(200)
+    expect(f.config().tools.desktopToolGrants).toEqual({ skills: true })
+    expect((await f.app.request('/file-permissions', patch({ ...body, expectedGrants: { ...off, skills: false } }))).status).toBe(409)
+    expect((await f.app.request('/file-permissions', patch({ ...body, expectedGrants: { ...off, skills: true } }))).status).toBe(200)
+    expect(f.config().tools.desktopToolGrants).toEqual({ skills: false })
+    expect(f.writes()).toBe(2)
+})

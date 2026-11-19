@@ -176,3 +176,33 @@ test('a verified Chief chat can use shared catalog tools through Codex without g
         expect(actions).toEqual(['catalog', 'call', 'release'])
     } finally { network.mockRestore() }
 })
+
+test('only personal reads and a proposal reach a verified Chief provider, with no direct writes or copied tools', async () => {
+    vi.stubEnv('RERUN_DESKTOP_APP', '1')
+    const runtime = { launchNonce: '00000000-0000-4000-8000-000000000001', app: { origin: 'http://127.0.0.1:44000' }, engine: { apiKey: 'a'.repeat(64) } }
+    const binding = { workspaceId: '1', chatId: 'fmc_chat-0001', runId: 'run', model: { connectionId: 'mac-chatgpt', model: 'fixture' } }
+    close = bindDesktopForeman(runtime, vi.fn(async () => Response.json({ binding, discovery: false })) as typeof fetch).close
+    for (const granted of [true, false]) {
+        const agent: LoadedAgent = {
+            id: 'foreman', config: agentConfigSchema.parse({ name: 'Foreman', kind: 'foreman', provider: 'codex', model: 'fixture',
+                tools: { skills: true, desktopToolGrants: { skills: granted } }, selfImprovement: {enabled:true} }), soul: '', install: '', env: {},
+            resolved: { provider: 'codex', model: 'fixture', connection: { id: 'mac-chatgpt', config: connectionConfigSchema.parse({ name: 'ChatGPT', provider: 'codex', createdAt: '2026-11-04T00:00:00.000Z' }), env: { RERUN_CHATGPT_CONNECTED: '1' } } },
+        }
+        captured.agent = agent
+        const ctx = { agent, model:'fixture', sessionId:'session', runId:'run', abortSignal:new AbortController().signal } as RunContext
+        const built = await buildTools(ctx)
+        try {
+            const expected = granted ? ['skill_list','skill_propose','skill_read','skill_read_file'] : []
+            const skills = (list:string[]) => list.filter(n => n.startsWith('skill_')).sort()
+            expect(skills(Object.keys(built.tools))).toEqual(expected)
+            const model = resolveModel(agent, undefined, built.tools)
+            expect(skills(names())).toEqual(expected)
+            await model.close()
+            if (granted) {
+                const copied = resolveModel(agent, undefined, {skill_propose: {...built.tools.skill_propose!}, skill_create: built.tools.skill_propose!})
+                expect(skills(names())).toEqual([])
+                await copied.close()
+            }
+        } finally { await built.close() }
+    }
+})

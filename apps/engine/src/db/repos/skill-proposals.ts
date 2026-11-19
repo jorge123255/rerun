@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, like } from 'drizzle-orm'
+import { and, desc, eq, inArray, like, sql } from 'drizzle-orm'
 import type { Provider, SkillProposal, SkillProposalMode, SkillProposalStatus } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
 import { skillProposals, type SkillProposalRow } from '../schema.js'
@@ -141,13 +141,17 @@ export async function transitionSkillProposal(
     id: string,
     from: SkillProposalStatus[],
     to: SkillProposalStatus,
-    patch: { appliedSlug?: string | null; error?: string | null } = {}
+    patch: { appliedSlug?: string | null; error?: string | null } = {},
+    reviewed?: SkillProposalRow
 ): Promise<boolean> {
     const { db } = await getSystemDb(agentId)
     const updated = await db
         .update(skillProposals)
         .set({ status: to, decidedAt: nowIso(), ...patch })
-        .where(and(eq(skillProposals.id, id), inArray(skillProposals.status, from)))
+        .where(and(eq(skillProposals.id, id), inArray(skillProposals.status, from),
+            reviewed ? and(eq(skillProposals.agentId,agentId), eq(skillProposals.sessionId,reviewed.sessionId),
+                eq(skillProposals.status,reviewed.status), eq(skillProposals.fingerprintsJson,reviewed.fingerprintsJson),
+                sql`${skillProposals.decidedAt} IS ${reviewed.decidedAt}`) : undefined))
         .returning({ id: skillProposals.id })
     return updated.length > 0
 }

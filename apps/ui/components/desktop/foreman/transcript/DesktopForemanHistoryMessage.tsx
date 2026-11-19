@@ -67,7 +67,8 @@ function SavedSource({ url, title }: { url: string; title: string }) {
 }
 
 /** Saved parts and user-initiated copy. Tool cards stay read-only. */
-export function DesktopForemanHistoryMessage({ history, userLinks, draftActions, onOpenSetup }: {
+export function DesktopForemanHistoryMessage({ history, userLinks, draftActions, onOpenSetup, skillCard }: {
+    skillCard?: (id: string) => ReactNode
     history: readonly ForemanHistoryPart[]
     onOpenSetup?: OpenOwnerSetup
     userLinks?: boolean
@@ -85,6 +86,7 @@ export function DesktopForemanHistoryMessage({ history, userLinks, draftActions,
         {blocks.map(part => {
             switch (part.kind) {
                 case 'text': return <div key={part.key} data-chat-find-message className="contents"><DesktopForemanMarkdown text={part.text} userLinks={userLinks} draftActions={draftActions} /></div>
+                case 'skill-proposal': return skillCard ? <div className="contents" key={part.key}>{skillCard(part.proposalId)}</div> : null
                 case 'owner-setup': return onOpenSetup && <DesktopChiefSetupHandoff key={JSON.stringify([part.key, part.agentId, part.sessionId, part.questionId])} target={part} open={onOpenSetup} />
                 case 'reasoning': return <details key={part.key} className="text-xs text-muted-foreground"><summary>Thinking</summary><DesktopForemanMarkdown text={part.text} /></details>
                 case 'link': return <SavedSource key={part.key} url={part.url} title={part.title} />

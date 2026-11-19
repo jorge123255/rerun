@@ -136,11 +136,16 @@ test('desktop Skills permits proposal reads and exact review decisions, but neve
     const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
     for (const [path, allowed] of [
         ['/agents/owner/skill-proposals', ['GET']],
+        ['/agents/foreman/skill-proposals', ['GET']],
+        ['/agents/foreman/skill-proposals/own-1/accept', ['POST']],
+        ['/agents/foreman/skill-proposals/own-1/dismiss', ['POST']],
+        ['/agents/foreman/skills', ['GET']],
+        ['/agents/foreman/skills/personal-review', ['GET']],
         ['/agents/owner/skill-proposals/proposal-id/accept', ['POST']],
         ['/agents/owner/skill-proposals/proposal-id/dismiss', ['POST']],
     ] as const) for (const method of methods) expect(desktopRouteAllowed(method, path), `${method} ${path}`).toBe((allowed as readonly string[]).includes(method))
     for (const path of [
-        '/agents/foreman/skill-proposals', '/agents/a%2Fb/skill-proposals', '/skill-proposals',
+        '/agents/foreman/skills/svc-a', '/agents/foreman/skills/SVC-a', '/agents/foreman/skills/personal/files', '/agents/foreman/skills/../other', '/agents/a%2Fb/skill-proposals', '/skill-proposals',
         '/agents/owner/skill-proposals/proposal-id', '/agents/owner/skill-proposals/proposal-id/accept/more',
         '/agents/owner/skill-proposals/../accept', '/agents/owner/skills', '/agents/owner/skills/qa-review',
     ]) for (const method of methods) expect(desktopRouteAllowed(method, path)).toBe(false)

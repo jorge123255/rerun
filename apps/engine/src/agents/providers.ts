@@ -308,7 +308,7 @@ function claudeProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers: RunMcpS
     const desktop = desktopApp()
     if (desktop && !desktopRuntime) throw new Error('The isolated Claude runtime is unavailable.')
     const grants = desktopRerunGrantsOf(agent.config.tools)
-    const allowed = new Set(desktopRerunToolCatalog.filter(entry => entry.available && grants[entry.id as keyof typeof grants]).flatMap(entry => entry.tools))
+    const allowed = new Set(desktopRerunToolCatalog.filter(entry => entry.available && grants[entry.id as keyof typeof grants] && !(agent.config.kind === 'foreman' && entry.id === 'skills')).flatMap(entry => entry.tools))
     const admitted = desktop ? Object.fromEntries(Object.entries(bridgeableTools(tools ?? {})).filter(([name, tool]) => allowed.has(name) || isDesktopForemanTool(tool, name, agent.id, agent.config.kind) || name === 'install_complete' && isDesktopSetupTool(tool, agent.id) || grants.mcp && isDesktopMcpTool(tool) || grants.mcp && isDesktopMcpLoginTool(tool, name, agent.id) || grants.localMcpStdio && isDesktopStdioTool(tool) || grants.services && isDesktopServiceTool(tool, agent.id, name))) : tools
     const { mcpServers: servers, allowedTools } = claudeMcpConfig(admitted, desktop ? [] : mcpServers, options.screenshots)
     const { cwd, env: agentEnv } = agentProcessEnv(agent)
@@ -393,7 +393,7 @@ function codexAppServerProvider(agent: LoadedAgent, tools?: ToolSet, mcpServers:
     const desktop = desktopApp()
     const shared = codexShared(agent)
     const grants = desktopRerunGrantsOf(agent.config.tools)
-    const allowed = new Set(desktopRerunToolCatalog.filter(entry => entry.available && grants[entry.id as keyof typeof grants]).flatMap(entry => entry.tools))
+    const allowed = new Set(desktopRerunToolCatalog.filter(entry => entry.available && grants[entry.id as keyof typeof grants] && !(agent.config.kind === 'foreman' && entry.id === 'skills')).flatMap(entry => entry.tools))
     const localTools = desktop ? Object.fromEntries(Object.entries(bridgeableTools(tools ?? {})).filter(([name, tool]) => allowed.has(name) || isDesktopForemanTool(tool, name, agent.id, agent.config.kind) || name === 'install_complete' && isDesktopSetupTool(tool, agent.id) || grants.mcp && isDesktopMcpTool(tool) || grants.mcp && isDesktopMcpLoginTool(tool, name, agent.id) || grants.localMcpStdio && isDesktopStdioTool(tool) || grants.services && isDesktopServiceTool(tool, agent.id, name))) : {}
     const names = Object.keys(localTools)
     const native = desktopCodexGrantsOf(agent.config.tools)

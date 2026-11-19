@@ -116,7 +116,7 @@ export function DesktopForemanChatLayer({
     replyRetry,
     readAloud,
     threads, onOpenThread,
-    renderChildWork,
+    renderChildWork, skillCard,
     children,
     className,
 }: {
@@ -162,6 +162,7 @@ export function DesktopForemanChatLayer({
     /** General's saved tasks, each drawn under the message it started after. Only General has them. */
     threads?: readonly DesktopForemanGeneralThread[]
     onOpenThread?: (thread: DesktopForemanGeneralThread) => void
+    skillCard?: (id: string) => ReactNode
     renderChildWork?: (slots: ReadonlyMap<string, HTMLDivElement>) => ReactNode
     children?: ReactNode
     className?: string
@@ -234,7 +235,7 @@ export function DesktopForemanChatLayer({
                             {restored && message.history ? <>
                                 {message.role === 'user' && message.coworkerMentions?.length
                                     ? <div data-chat-find-message className="whitespace-pre-wrap wrap-anywhere"><DesktopSelectedMentionText text={message.text} metadata={message} /></div>
-                                    : <DesktopForemanHistoryMessage history={message.history} userLinks={message.role === 'user'}
+                                    : <DesktopForemanHistoryMessage history={message.history} skillCard={message.role === 'assistant' ? skillCard : undefined} userLinks={message.role === 'user'}
                                         draftActions={active && !streaming && message.role === 'assistant'}
                                         onOpenSetup={active && !streaming && message.role === 'assistant' ? onOpenSetup : undefined} />}
                                 {message.role === 'assistant' && message.text.trim() && (

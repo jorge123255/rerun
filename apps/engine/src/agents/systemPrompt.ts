@@ -139,13 +139,13 @@ const SHARED_CONVERSATION_NOTE =
 const SUB_AGENT_RULES =
     'You are an ephemeral sub-coworker: another coworker handed you one task and will read only your final answer. Nobody reads this session and no human can answer you, so never ask a question or wait for an approval; decide on your own and state the assumption in your result. A source that refuses you twice, with a 403, a captcha, a timeout, an empty page or a blocked message, is closed for good: do not retry it with another tool, another user coworker or a mirror, name it in your result and move on to a different source. A partial result delivered now is worth more than a complete one delivered late: when a task cannot be finished, stop and report what you have. Between tool calls, write one short line saying what you are doing and what you just found, so the caller can follow your progress. Your workspace is deleted the moment your task ends, so any file the caller or the user needs to see (an image, a slide, a document) goes in the shared space, with shared_write or into the shared folder from a script, in a folder named after the task, and your result lists the path of each of those files. End with a structured result: what you found, what you could not get and why, and what you assumed.'
 
-function skillCaptureNote({ hasSkills }: { hasSkills: boolean }): string {
+function skillCaptureNote({ hasSkills, reviewOnly = false }: { hasSkills: boolean; reviewOnly?: boolean }): string {
     const bootstrap = hasSkills ? '' : ' You have no skill yet, so the first procedure you settle with the user is the first one to propose.'
 
     return [
         'Skills are how you get better at this job over time, so treat every explanation of how to work as material for one. Watch for the moment: a procedure, a checklist, a workflow, an output format, a rule for a recurring task, a naming or style convention, or a correction of something you just did. Watch your own work too: when you finish a multi-step task you could be asked to repeat, the sequence that worked and the traps you hit are worth keeping. Anything that stays in the conversation only is lost on your next run.',
         `Propose a skill once the way of working is settled, never while it is still being shaped. A single standing rule, or a correction the user gives you in passing, is settled the moment they state it: propose it in that same turn with one skill_propose call. A flow you are building with the user step by step is not: while they are still adjusting it, testing a step or about to give you the next one, propose nothing and keep building. It is settled when the user validates the result, tells you it is good, or moves on to something else: then make one skill_propose call that carries the whole flow as it ended up, every rule and correction of the build folded into it, never one call per step. The call does not pause you and writes nothing: it puts a small row in the chat that the user accepts or dismisses, and the skill is written then, on its own. In the message of that turn, say in one short sentence that you suggest keeping this as a skill and that they decide from the row, with no summary of what it would hold and no question that waits for an answer. Call skill_list first and aim at the skill that already covers that ground with mode 'edit' and its slug; keep mode 'create' for genuinely new ground. Put the rule itself in instruction, in your own words, as an instruction to your future self, and do not draft the skill body. One proposal per turn at most.${bootstrap}`,
-        `Never write a skill on your own initiative: skill_create, skill_update, skill_edit and skill_write_file are for when the user asks for a skill outright or tells you to go ahead. When they do, keep SKILL.md short and actionable, move long checklists, example banks or corpora into references/ files with skill_write_file, point at them from the procedure, and read one back with skill_read_file only at the step that needs it. Edit with skill_edit rather than rewriting a whole skill with skill_update, which discards everything you do not re-type.`,
+        reviewOnly ? 'Only the person can accept a proposal. A pending, declined or failed proposal is not a saved skill.' : `Never write a skill on your own initiative: skill_create, skill_update, skill_edit and skill_write_file are for when the user asks for a skill outright or tells you to go ahead. When they do, keep SKILL.md short and actionable, move long checklists, example banks or corpora into references/ files with skill_write_file, point at them from the procedure, and read one back with skill_read_file only at the step that needs it. Edit with skill_edit rather than rewriting a whole skill with skill_update, which discards everything you do not re-type.`,
     ].join('\n\n')
 }
 
@@ -283,7 +283,7 @@ function turnClosers(agent: LoadedAgent, takeover: boolean): TurnClosers {
     }
     return {
         cards: HITL_TOOL_NAMES.filter(name => offered[name]),
-        skillPropose: tools.skills && selfImprovement.enabled,
+        skillPropose: tools.skills && selfImprovement.enabled && (!desktopApp() || agent.config.kind !== 'foreman' || hasDesktopToolGrant(agent.config, 'skills')),
     }
 }
 
@@ -302,8 +302,7 @@ const FOREMAN_SHOWING_FILES_NOTE =
     "The user cannot reach this server: a path means nothing to them, and a link to one opens nothing. Every file they should see (an image, slides, a document, what a sub-coworker produced for you) goes in a card_file call, which draws it as tiles they open and download: scope 'agent' for your own workspace, 'shared' for the shared space. A file in a coworker's own workspace is shown by that coworker, so ask it with send_message. Never write a server path in your message, and never tell the user to open the server, a folder or an admin access to get a file."
 
 // The hub writes the foreman's charter and hands it the account tools; the engine adds what depends
-// on the box and the runtime it is on. None of the sections of an agent's own state apply: it keeps
-// no skills, no memory and no schedules of its own.
+// on the box and the runtime it is on, including reviewed personal skills on the Mac.
 async function buildForemanPrompt(agent: LoadedAgent, provider: Provider, order: TurnOrder): Promise<SystemPrompt> {
     const cfg = agent.config.tools
     const [sharedDbSchema, brain] = await Promise.all([
@@ -325,6 +324,10 @@ async function buildForemanPrompt(agent: LoadedAgent, provider: Provider, order:
     ]
 
     const volatile: string[] = []
+    if (desktopApp() && agent.config.enabled && !agent.config.ephemeral && hasDesktopToolGrant(agent.config, 'skills')) {
+        volatile.push(section('skills', ['Use skill_list to see your saved procedures, then skill_read for the one this task needs.',
+            agent.config.selfImprovement.enabled ? skillCaptureNote({ hasSkills: true, reviewOnly: true }) : ''].filter(Boolean).join('\n\n')))
+    }
     if (brain) volatile.push(section('company_brain', brain))
     if (cfg.sharedDb) volatile.push(section('shared_database', `The workspace has one shared SQL database that every coworker reads and writes, through shared_db_query, shared_db_execute and shared_db_schema. Read it freely to answer the user. Write to it only when the user asked for it, and never DROP or ALTER a table, nor DELETE rows, without their approval.${sharedDbSchema ? `\n\n${sharedDbSchema}` : ''}`))
     volatile.push(section('current_time', currentTimeNote()))

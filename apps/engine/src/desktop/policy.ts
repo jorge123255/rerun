@@ -26,6 +26,12 @@ export function assertDesktopProvider(provider: string, id?: string): void {
     if (desktopApp() && !desktopProviderAllowed(provider, id)) throw badRequest('This connection is unavailable in the desktop preview.')
 }
 
+export function desktopForemanSkillsRouteAllowed(method: string, path: string): boolean {
+    if (path === '/agents/foreman/skill-proposals' || /^\/agents\/foreman\/skills(?:\/(?!svc-)[a-z0-9-]{1,64})?$/.test(path)) return method === 'GET'
+    if (/^\/agents\/foreman\/skill-proposals\/[A-Za-z0-9_-]+\/(?:accept|dismiss)$/.test(path)) return method === 'POST'
+    return false
+}
+
 export function desktopRouteAllowed(method: string, path: string): boolean {
     // Named API changes require F's revision/receipt authority, including on
     // case-insensitive filesystems. Encoded aliases also fail the strict id below.
@@ -62,6 +68,7 @@ export function desktopRouteAllowed(method: string, path: string): boolean {
     if (/^\/desktop\/templates\/foreman-import\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(path)) return method === 'GET'
     // Delegation and coworker calls read Foreman's current grants from its engine details.
     if (path === '/agents/foreman') return method === 'GET'
+    if (desktopForemanSkillsRouteAllowed(method, path)) return true
     // Only the private Foreman chat adapter may admit runs. Its observer reads these exact routes.
     if (/^\/agents\/foreman\/(?:sessions\/[A-Za-z0-9_-]+(?:\/messages)?|runs\/[A-Za-z0-9_-]+(?:\/stream)?)$/.test(path)) return method === 'GET'
     if (/^\/agents\/foreman\/runs\/[A-Za-z0-9_-]+\/cancel$/.test(path)) return method === 'POST'
