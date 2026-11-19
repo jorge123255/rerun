@@ -75,3 +75,14 @@ test('the managed Foreman route forwards the workspace metadata opt-in with the 
         workspaceId: chat.workspaceId, id: 'foremanWorkspaceRead', enabled: true, expectedGrants,
     })
 })
+
+test('the managed Foreman route forwards the skills switch with the prior value', async () => {
+    const expectedGrants = { ...off, skills: true }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ ...snapshot, grants: { ...off, skills: false } }))
+    const response = await PATCH(request('PATCH', { ...body, id: 'skills', enabled: false, expectedGrants }))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ grants: { ...off, skills: false } })
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body))).toMatchObject({
+        workspaceId: chat.workspaceId, id: 'skills', enabled: false, expectedGrants,
+    })
+})
